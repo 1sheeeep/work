@@ -73,6 +73,13 @@ app:
     lease-duration: ${APP_SCHEDULER_LEASE_DURATION:45s}
     cadence: ${APP_SCHEDULER_CADENCE:1m}
     batch-size: ${APP_SCHEDULER_BATCH_SIZE:20}
+  auto-reply:
+    enabled: ${APP_AUTO_REPLY_ENABLED:true}
+    instance-id: ${APP_AUTO_REPLY_INSTANCE_ID:${HOSTNAME:auto-reply-local}}
+    poll-interval: ${APP_AUTO_REPLY_POLL_INTERVAL:15s}
+    initial-delay: ${APP_AUTO_REPLY_INITIAL_DELAY:15s}
+    lease-duration: ${APP_AUTO_REPLY_LEASE_DURATION:45s}
+    batch-size: ${APP_AUTO_REPLY_BATCH_SIZE:20}
   gateway:
     timeout: ${APP_GATEWAY_TIMEOUT:3s}
     max-concurrent: ${APP_GATEWAY_MAX_CONCURRENT:8}

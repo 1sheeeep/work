@@ -32,6 +32,8 @@
 26. AI 辅助支持 JD 结构化解析和候选人建议，默认 Mock、可切换 OpenAI-compatible Provider，记录输入摘要、模型/提示版本及审计。
 27. HR 通知支持 HMAC-SHA256 签名 Webhook、时间戳、幂等键、试运行白名单和 Gateway 弹性保护，真实载荷仅含匿名候选人引用。
 28. 提供独立预发布编排和内置签名校验接收器，可执行不含候选人个人信息的真实 HTTP 通知试运行。
+29. 超时未处理的候选人来信可按 BOSS 账号独立生成待审核草稿或自动发送，受时段、日配额、最小间隔、人工接管、连续失败暂停、租约和幂等唯一键保护。
+30. Chrome 伴随端骨架已实现失败关闭的 DOM 适配、超时复核和自动发送安全阀，默认不启用且不包含任何猜测的真实 BOSS 选择器。
 
 ## M2–M8 实现
 
@@ -71,11 +73,11 @@
 
 ## 验证状态
 
-- Flyway V1–V14 在 PostgreSQL 17 真实容器中迁移成功。
-- 后端 Java 21 + Maven 编译成功，59/59 测试通过，覆盖调度、CSV/XLSX 解析、AI Mock、Webhook 签名和试运行白名单。
+- Flyway V1–V15 在 PostgreSQL 17 真实容器中迁移成功。
+- 后端 Java 21 + Maven 编译成功，62/62 测试通过，覆盖调度、CSV/XLSX 解析、AI Mock、Webhook 签名、自动跟进配额/失败暂停和试运行白名单。
 - 前端 TypeScript 检查和 Vite 标准生产构建通过。
 - 前端 Vitest 8/8 通过。
-- 前端 Vitest 8/8 通过；默认 Mock 配置下 Playwright 16/16 通过，预发布 Webhook 配置下新增导入、AI 与真实签名通知 2/2 通过；任务流程会真实等待后台租约调度执行。
+- 前端 Vitest 8/8 通过；默认 Mock 配置下 Playwright 18/18 通过，包含桌面/移动多账号超时回复与人工接管阻断；预发布 Webhook 配置下新增导入、AI 与真实签名通知 2/2 通过。
 - Docker Compose 本地试运行栈中 db、backend、web、webhook-sink 健康，入口为 <http://localhost:8088>，接收器为 <http://127.0.0.1:8090/events>。
 - 数据库核对确认 BOSS 账号表不含密码、Cookie、Token、Secret 或 Credential 字段。
 - 数据库核对确认跨企业职位绑定为 0，已启用职位的无效 BOSS/Capability 绑定为 0。
@@ -93,6 +95,14 @@
 - AI 辅助：Mock 与 OpenAI-compatible Gateway、外部候选人数据显式开关、超时/限流/断路、模型/提示版本与成功/失败追踪。
 - HR 通知：Mock/Webhook 模式切换、HTTPS 默认要求、HMAC 签名与时间戳、幂等投递、试运行开关/人员白名单和无个人信息测试载荷。
 - 预发布：独立数据卷、只读容器、Docker secrets、Prometheus、签名校验接收器、发布/停止条件和本地 trial overlay。
+
+## M14 实现
+
+- Flyway `V15` 新增账号级自动跟进策略和幂等尝试记录，每条候选人来信最多一条尝试。
+- 后台调度仅扫描“最新消息仍为超时来信”的活跃会话，用原子 claim、owner 和过期租约支持多实例接管。
+- 默认仅生成人工审核草稿；自动发送必须显式开启，且仅经 `BossGateway` 调用。
+- 每账号独立日配额、时区/时段、最小间隔和连续失败 24 小时暂停；人工接管会话不进入尝试表。
+- 前端“自动跟进”页可分账号配置并查看最近尝试，明确展示第三方平台风控不可绝对保证的边界。
 
 ## 安全与范围边界
 

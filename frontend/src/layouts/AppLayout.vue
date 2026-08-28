@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Briefcase, Calendar, Connection, DataAnalysis, Expand, MagicStick, Monitor, OfficeBuilding, Operation, SwitchButton, UploadFilled, User, UserFilled } from '@element-plus/icons-vue'
+import { Briefcase, Calendar, ChatDotRound, Connection, DataAnalysis, Expand, MagicStick, Monitor, OfficeBuilding, Operation, SwitchButton, UploadFilled, User, UserFilled } from '@element-plus/icons-vue'
 import { authStore } from '../stores/auth'
 
 const route = useRoute()
@@ -19,6 +19,7 @@ const navigation = computed(() => [
   { path: '/candidates', label: '候选人工作台', icon: UserFilled },
   { path: '/candidate-imports', label: '批量导入', icon: UploadFilled },
   { path: '/ai-assistant', label: 'AI 辅助', icon: MagicStick },
+  { path: '/auto-replies', label: '自动跟进', icon: ChatDotRound },
   { path: '/interviews', label: '面试协调', icon: Calendar },
   ...(user.value?.role === 'SYSTEM_ADMIN' ? [
     { path: '/hr-users', label: 'HR 用户', icon: User },
@@ -27,7 +28,7 @@ const navigation = computed(() => [
   ] : []),
 ])
 const roleLabel = computed(() => ({ SYSTEM_ADMIN: '系统管理员', RECRUITMENT_ADMIN: '招聘管理员', RECRUITER: '招聘专员' }[user.value?.role ?? 'SYSTEM_ADMIN']))
-const workspaceLabel = computed(() => ({ organization: '组织管理', 'boss-accounts': 'BOSS 账号', 'job-positions': '职位管理', 'recruitment-tasks': '招聘任务', candidates: '候选人工作台', 'candidate-imports': '候选人批量导入', 'ai-assistant': 'AI 招聘辅助', interviews: '面试协调', 'hr-users': 'HR 用户', 'audit-logs': '操作日志', operations: '运行保障' }[String(route.name)] ?? '招聘工作台'))
+const workspaceLabel = computed(() => ({ organization: '组织管理', 'boss-accounts': 'BOSS 账号', 'job-positions': '职位管理', 'recruitment-tasks': '招聘任务', candidates: '候选人工作台', 'candidate-imports': '候选人批量导入', 'ai-assistant': 'AI 招聘辅助', 'auto-replies': '多账号自动跟进', interviews: '面试协调', 'hr-users': 'HR 用户', 'audit-logs': '操作日志', operations: '运行保障' }[String(route.name)] ?? '招聘工作台'))
 
 function navigate(path: string) {
   mobileNavOpen.value = false

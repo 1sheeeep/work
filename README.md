@@ -24,6 +24,8 @@
 - 候选人按企业、来源和不可逆摘要去重，原始外部候选人 ID 不落库，联系方式不采集
 - 硬规则、AI 建议和人工覆盖结论分开留痕，保存规则/模型/提示版本和理由
 - 会话消息按外部消息 ID 幂等入库，AI/HR 外发草稿均先进入人工审核，支持人工接管和匿名化
+- 候选人来信超时未处理时可按 BOSS 账号独立生成跟进草稿或自动发送，具备时段、日配额、最小间隔、人工接管阻断、失败暂停和数据库租约幂等保护
+- `boss-browser-extension` 提供无官方招聘消息 API 时的 Chrome Manifest V3 页面伴随端骨架：可配置 DOM 适配器、超时检测、发送前二次复核、配额/时段保护和风险提示停机；真实招聘端选择器待测试账号到位后学习
 - 面试安排支持 2–5 个带 IANA 时区的候选时间，处理过期、同一负责 HR 时间冲突、重复确认和重新约定
 - 面试确认后经 `NotificationGateway` 通知负责 HR；支持 Mock 与 HMAC 签名 Webhook，幂等重试且已送达通知不会重复发送
 - 运行中任务由后台调度器自动扫描，数据库租约、过期接管和 fencing token 保证多实例不会重复执行
@@ -34,7 +36,7 @@
 - Gateway 统一超时、并发/频率限制、连续失败断路、Prometheus 指标和人工降级状态
 - 管理员运行保障页可查看 Flyway、审计防篡改和 Gateway 保护状态
 - 登录、组织、HR 用户、BOSS 账号、职位、招聘任务、候选人和面试关键操作审计
-- PostgreSQL Flyway V1–V14 迁移和 Docker Compose 本地/预发布/生产编排
+- PostgreSQL Flyway V1–V15 迁移和 Docker Compose 本地/预发布/生产编排
 - 桌面与移动端响应式管理界面
 
 企业、HR 用户、BOSS 账号、职位和招聘任务均不提供物理删除，停用、关闭或进入终态后保留历史数据和关联边界。
@@ -104,5 +106,7 @@ npm.cmd run test:e2e
 - 正式环境必须设置 `APP_SECURE_COOKIE=true` 并通过 HTTPS 访问。
 - 当前已完成从组织、职位、后台任务、候选人导入/AI 辅助、候选人沟通到“确认面试并通知 HR”的自动化主链路。
 - BOSS 能力暂时只能使用 Mock Gateway；不保存 Cookie、Token 或真实凭据。
+- 多账号自动跟进只能经已授权的 `BossGateway` 发送；禁止 Cookie 自动化、指纹伪装、风控规避或网页内部接口。配额和频控只能降低风险，不能保证第三方平台账号绝不被限制。
+- 浏览器伴随端不导出 Cookie、不绕过验证码且默认关闭自动发送；加载和开启方式见 `boss-browser-extension/README.md`。
 - M9–M13 已完成仓库内实现与本地预发布试运行；真实域名/TLS 签发、真实 HR Webhook 地址、真实 AI Provider 与外部 BOSS 授权仍需在目标环境配置和审批。
 - 详细的分阶段实施和验收边界见 `IMPLEMENTATION_ROADMAP.md`。

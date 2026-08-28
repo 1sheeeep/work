@@ -16,6 +16,7 @@ const router = createRouter({
         { path: 'candidates', name: 'candidates', component: () => import('./views/CandidatesView.vue') },
         { path: 'candidate-imports', name: 'candidate-imports', component: () => import('./views/CandidateImportsView.vue') },
         { path: 'ai-assistant', name: 'ai-assistant', component: () => import('./views/AiAssistantView.vue') },
+        { path: 'auto-replies', name: 'auto-replies', component: () => import('./views/AutoRepliesView.vue') },
         { path: 'interviews', name: 'interviews', component: () => import('./views/InterviewsView.vue') },
         { path: 'hr-users', name: 'hr-users', component: () => import('./views/HrUsersView.vue'), meta: { role: 'SYSTEM_ADMIN' } },
         { path: 'audit-logs', name: 'audit-logs', component: () => import('./views/AuditLogView.vue'), meta: { role: 'SYSTEM_ADMIN' } },

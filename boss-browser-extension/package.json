@@ -1,0 +1,6 @@
+{
+  "name": "recruitment-boss-browser-companion",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test", "check": "node --check content-script.js && node --check service-worker.js && node --check options.js && node --check popup.js" }
+}

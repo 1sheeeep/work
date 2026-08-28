@@ -52,7 +52,7 @@ test('administrator can import candidates, use AI assistance and send a signed H
   await expect(page.locator('.screen-result')).toContainText('MOCK')
 
   await navigate('运行保障')
-  await expect(page.getByText('V14', { exact: true })).toBeVisible()
+  await expect(page.getByText('V15', { exact: true })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'HR 通知渠道' })).toBeVisible()
   await page.getByRole('button', { name: '发送 HR 试运行通知' }).click()
   await expect(page.getByText('试运行通知已送达')).toBeVisible()

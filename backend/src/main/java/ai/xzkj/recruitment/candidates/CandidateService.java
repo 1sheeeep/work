@@ -23,6 +23,8 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import java.time.Instant;
+import java.time.Duration;
 
 @Service
 public class CandidateService {
@@ -139,9 +141,11 @@ public class CandidateService {
         String externalId = cleanRequired(request.externalMessageId());
         var existing = messageRepository.findByContactIdAndExternalMessageId(id, externalId);
         if (existing.isPresent()) return new MessageMutationResponse(ConversationMessageResponse.from(existing.get()), true);
+        Instant receivedAt=request.receivedAt()==null?Instant.now():request.receivedAt();
+        if(receivedAt.isAfter(Instant.now().plusSeconds(300))||receivedAt.isBefore(Instant.now().minus(Duration.ofDays(365))))throw new ApiException(HttpStatus.BAD_REQUEST,"INVALID_RECEIVED_AT","候选人消息时间必须在最近一年内且不能晚于当前时间");
         ConversationMessage message = messageRepository.save(new ConversationMessage(contact, externalId,
                 MessageDirection.INBOUND, MessageSenderType.CANDIDATE, MessageDeliveryStatus.RECEIVED,
-                cleanRequired(request.content()), null, null, user));
+                cleanRequired(request.content()), null, null, user,receivedAt));
         auditService.success("IMPORT_CANDIDATE_MESSAGE", "CANDIDATE_CONTACT", id, auditLabel(contact.getCandidate()),
                 "按外部消息 ID 幂等写入候选人消息");
         return new MessageMutationResponse(ConversationMessageResponse.from(message), false);

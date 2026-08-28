@@ -89,7 +89,7 @@ class CandidateServiceTest {
         when(contactRepository.findWithDetailsById(contact.getId())).thenReturn(Optional.of(contact));
         when(messageRepository.findByContactIdAndExternalMessageId(contact.getId(), "boss-msg-1")).thenReturn(Optional.of(existing));
 
-        MessageMutationResponse response = service.inbound(contact.getId(), new InboundMessageRequest("boss-msg-1", "重复内容"));
+        MessageMutationResponse response = service.inbound(contact.getId(), new InboundMessageRequest("boss-msg-1", "重复内容", null));
 
         assertThat(response.replayed()).isTrue();
         verify(messageRepository, never()).save(any());

@@ -30,6 +30,12 @@ public class ConversationMessage {
         this.content = content; this.modelVersion = modelVersion; this.promptVersion = promptVersion;
         this.createdBy = createdBy; this.createdAt = Instant.now();
     }
+    public ConversationMessage(CandidateJobContact contact, String externalMessageId, MessageDirection direction,
+                               MessageSenderType senderType, MessageDeliveryStatus deliveryStatus, String content,
+                               String modelVersion, String promptVersion, SystemUser createdBy, Instant createdAt) {
+        this(contact, externalMessageId, direction, senderType, deliveryStatus, content, modelVersion, promptVersion, createdBy);
+        this.createdAt = createdAt;
+    }
     public void sent() { deliveryStatus = MessageDeliveryStatus.SENT; approvedAt = Instant.now(); }
     public void failed() { deliveryStatus = MessageDeliveryStatus.FAILED; approvedAt = Instant.now(); }
     public void reject() { deliveryStatus = MessageDeliveryStatus.REJECTED; approvedAt = Instant.now(); }

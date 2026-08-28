@@ -19,7 +19,7 @@ test('administrator can inspect hardening state and mutation without CSRF is rej
   await navigate('运行保障')
   await expect(page.getByRole('heading',{name:'运行保障'})).toBeVisible()
   await expect(page.getByText('READY',{exact:true})).toBeVisible()
-  await expect(page.getByText('V14',{exact:true})).toBeVisible()
+  await expect(page.getByText('V15',{exact:true})).toBeVisible()
   await expect(page.getByText('只追加',{exact:true})).toBeVisible()
 
   const csrfResult=await page.evaluate(async()=>{

@@ -12,4 +12,5 @@ public interface ConversationMessageRepository extends JpaRepository<Conversatio
     List<ConversationMessage> findByContactIdOrderByCreatedAtAsc(UUID contactId);
     Optional<ConversationMessage> findByContactIdAndExternalMessageId(UUID contactId, String externalMessageId);
     Optional<ConversationMessage> findByIdAndContactId(UUID id, UUID contactId);
+    Optional<ConversationMessage> findFirstByContactIdOrderByCreatedAtDescIdDesc(UUID contactId);
 }

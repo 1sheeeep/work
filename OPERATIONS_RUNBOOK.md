@@ -24,6 +24,7 @@ Caddy 自动申请和续期 TLS 证书；应用 Session Cookie 在生产配置�
 - 启用 Prometheus：`docker compose -f compose.production.yaml --env-file .env.production --profile monitoring up -d`。
 - Prometheus 仅绑定 `127.0.0.1:9090`，不直接公开。
 - 建议告警：就绪检查连续 3 次失败、5xx 比例 > 2%、Gateway 超时/断路计数增长、PostgreSQL 磁盘 > 80%。
+- 自动跟进额外告警：`FAILED` 尝试连续增长、账号 `pausedUntil` 非空、`CLAIMED` 租约长期不完成、单账号日配额提前耗尽。
 - 管理员可访问 `/api/operations/gateways` 查看各 Gateway 操作的连续失败数和断路截止时间。
 - 管理员运行保障页还会显示调度租约、待运行任务和 HR 通知渠道配置状态。
 
@@ -56,3 +57,4 @@ scripts/restore-drill.sh
 - 候选人保留期尚待产品/法务确认；在此之前不自动删除，使用已有匿名化功能处理合法删除请求。
 - BOSS、AI 或 Notification Gateway 超时、限流或断路时，操作返回可恢复失败；任务进入“需人工介入”，消息/通知保留为失败状态供后续幂等重试。
 - 不得将 Cookie、Token、密码、候选人消息正文写入审计或普通日志。
+- 新账号自动跟进必须先使用“仅草稿”试运行，确认线上授权、发送限额和人工停止流程后再单账号开启自动发送。任何平台告警、授权异常或投诉都应立即关闭该账号策略，不允许使用规避风控手段。
