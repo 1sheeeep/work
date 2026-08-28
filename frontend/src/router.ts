@@ -11,6 +11,7 @@ const router = createRouter({
         { path: '', redirect: '/organization' },
         { path: 'organization', name: 'organization', component: () => import('./views/OrganizationView.vue') },
         { path: 'boss-accounts', name: 'boss-accounts', component: () => import('./views/BossAccountsView.vue') },
+        { path: 'job-positions', name: 'job-positions', component: () => import('./views/JobPositionsView.vue') },
         { path: 'hr-users', name: 'hr-users', component: () => import('./views/HrUsersView.vue'), meta: { role: 'SYSTEM_ADMIN' } },
         { path: 'audit-logs', name: 'audit-logs', component: () => import('./views/AuditLogView.vue'), meta: { role: 'SYSTEM_ADMIN' } },
       ],

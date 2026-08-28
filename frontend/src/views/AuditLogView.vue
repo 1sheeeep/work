@@ -14,6 +14,8 @@ const actionLabels: Record<string, string> = {
   CHANGE_HR_USER_STATUS: '变更 HR 用户状态', RESET_HR_USER_PASSWORD: '重置 HR 用户密码',
   CREATE_BOSS_ACCOUNT: '新增 BOSS 账号', UPDATE_BOSS_ACCOUNT: '更新 BOSS 账号',
   CHANGE_BOSS_ACCOUNT_STATUS: '变更 BOSS 账号状态', CHECK_BOSS_CAPABILITIES: '检查 BOSS 账号能力',
+  CREATE_JOB_POSITION: '新增职位', UPDATE_JOB_POSITION: '更新职位',
+  CHANGE_JOB_POSITION_STATUS: '变更职位状态',
 }
 
 async function loadLogs() {
