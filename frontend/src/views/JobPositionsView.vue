@@ -147,7 +147,7 @@ onMounted(loadData)
 
 <template>
   <div class="page-shell">
-    <header class="page-heading"><div><h1>职位管理</h1><p>统一管理企业职位、筛选要求和 BOSS 账号绑定，为自动招聘任务提供可审计的输入。</p></div><el-button v-if="canManage" type="primary" :icon="Plus" @click="openCreate">新增职位</el-button></header>
+    <header class="page-heading"><div><h1>职位管理</h1><p>统一管理企业职位、筛选要求和 BOSS 账号绑定，为候选人会话与回复模板提供上下文。</p></div><el-button v-if="canManage" type="primary" :icon="Plus" @click="openCreate">新增职位</el-button></header>
     <el-alert title="职位只能绑定同企业、已启用且通过能力检查的 BOSS 账号；关闭后保留历史且不可重新启用。" type="info" :closable="false" show-icon class="scope-alert" />
     <div v-if="loading" class="surface-panel skeleton-stack"><el-skeleton :rows="7" animated /></div>
     <div v-else-if="loadError" class="surface-panel error-state" role="alert"><span class="error-state__icon"><el-icon><Refresh /></el-icon></span><strong>职位暂时无法加载</strong><span>{{ loadError }}</span><el-button :icon="Refresh" @click="loadData">重新加载</el-button></div>

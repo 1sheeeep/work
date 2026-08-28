@@ -40,7 +40,7 @@ async function submit() {
       <div class="context-inner">
         <div class="product-lockup"><span class="product-mark">招</span><span>集团 HR 内部系统</span></div>
         <h1 id="product-title">把多企业招聘账号，放进一个清晰的工作台</h1>
-        <p>统一管理企业、账号、职位与自动招聘任务。当前版本从组织和权限底座开始。</p>
+        <p>统一管理企业、BOSS 账号、职位、候选人会话与超时自动回复。</p>
         <dl class="context-points">
           <div><dt>集中</dt><dd>集团范围统一管理</dd></div>
           <div><dt>可控</dt><dd>能力按真实授权启用</dd></div>

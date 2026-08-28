@@ -23,7 +23,7 @@ test('administrator can inspect hardening state and mutation without CSRF is rej
   await expect(page.getByText('只追加',{exact:true})).toBeVisible()
 
   const csrfResult=await page.evaluate(async()=>{
-    const response=await fetch('/api/interviews',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
+    const response=await fetch('/api/candidate-contacts',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
     return {status:response.status,body:await response.json()}
   })
   expect(csrfResult.status).toBe(403)

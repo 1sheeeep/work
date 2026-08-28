@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Briefcase, Calendar, ChatDotRound, Connection, DataAnalysis, Expand, MagicStick, Monitor, OfficeBuilding, Operation, SwitchButton, UploadFilled, User, UserFilled } from '@element-plus/icons-vue'
+import { Briefcase, ChatDotRound, Connection, DataAnalysis, Expand, Monitor, OfficeBuilding, SwitchButton, User, UserFilled } from '@element-plus/icons-vue'
 import { authStore } from '../stores/auth'
 
 const route = useRoute()
@@ -15,12 +15,8 @@ const navigation = computed(() => [
   { path: '/organization', label: '集团与企业', icon: OfficeBuilding },
   { path: '/boss-accounts', label: 'BOSS 账号', icon: Connection },
   { path: '/job-positions', label: '职位管理', icon: Briefcase },
-  { path: '/recruitment-tasks', label: '招聘任务', icon: Operation },
   { path: '/candidates', label: '候选人工作台', icon: UserFilled },
-  { path: '/candidate-imports', label: '批量导入', icon: UploadFilled },
-  { path: '/ai-assistant', label: 'AI 辅助', icon: MagicStick },
   { path: '/auto-replies', label: '自动跟进', icon: ChatDotRound },
-  { path: '/interviews', label: '面试协调', icon: Calendar },
   ...(user.value?.role === 'SYSTEM_ADMIN' ? [
     { path: '/hr-users', label: 'HR 用户', icon: User },
     { path: '/audit-logs', label: '操作日志', icon: DataAnalysis },
@@ -28,7 +24,7 @@ const navigation = computed(() => [
   ] : []),
 ])
 const roleLabel = computed(() => ({ SYSTEM_ADMIN: '系统管理员', RECRUITMENT_ADMIN: '招聘管理员', RECRUITER: '招聘专员' }[user.value?.role ?? 'SYSTEM_ADMIN']))
-const workspaceLabel = computed(() => ({ organization: '组织管理', 'boss-accounts': 'BOSS 账号', 'job-positions': '职位管理', 'recruitment-tasks': '招聘任务', candidates: '候选人工作台', 'candidate-imports': '候选人批量导入', 'ai-assistant': 'AI 招聘辅助', 'auto-replies': '多账号自动跟进', interviews: '面试协调', 'hr-users': 'HR 用户', 'audit-logs': '操作日志', operations: '运行保障' }[String(route.name)] ?? '招聘工作台'))
+const workspaceLabel = computed(() => ({ organization: '组织管理', 'boss-accounts': 'BOSS 账号', 'job-positions': '职位管理', candidates: '候选人工作台', 'auto-replies': '多账号自动跟进', 'hr-users': 'HR 用户', 'audit-logs': '操作日志', operations: '运行保障' }[String(route.name)] ?? '招聘工作台'))
 
 function navigate(path: string) {
   mobileNavOpen.value = false
@@ -66,7 +62,7 @@ async function handleLogout() {
           <el-icon :size="20"><component :is="item.icon" /></el-icon><span>{{ item.label }}</span>
         </button>
       </nav>
-      <div class="sidebar-foot"><span>V1 主链路</span><strong>面试确认与 HR 通知</strong></div>
+      <div class="sidebar-foot"><span>核心主链路</span><strong>BOSS 超时自动回复</strong></div>
     </aside>
 
     <section class="workspace">

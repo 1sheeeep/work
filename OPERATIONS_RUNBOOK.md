@@ -3,7 +3,7 @@
 ## 上线前必做
 
 1. 复制 `.env.production.example` 为 `.env.production`，填写真实 HTTPS 域名，不在文件中放密码。
-2. 从 `secrets/*.example` 创建无 `.example` 后缀的数据库、管理员、AI API Key 和通知 Webhook 签名密钥文件，权限设为 `0600`；这些文件已被 Git 忽略。Mock AI/Mock 通知下也保留非空占位文件，禁止放真实值到 Git。
+2. 从 `secrets/*.example` 创建无 `.example` 后缀的数据库和管理员密码文件，权限设为 `0600`；这些文件已被 Git 忽略，禁止把真实值写入 Git。
 3. 域名 A/AAAA 记录指向主机，防火墙仅开放 80/443 和受控管理入口。
 4. 执行 `docker compose -f compose.production.yaml --env-file .env.production config`，检查结果中无明文密码。
 5. 执行 `scripts/release-check.sh` 和全量 Playwright，再创建数据库备份。
@@ -27,7 +27,7 @@ Caddy 自动申请和续期 TLS 证书；应用 Session Cookie 在生产配置�
 - 自动跟进额外告警：`FAILED` 尝试连续增长、账号 `pausedUntil` 非空、`CLAIMED` 租约长期不完成、单账号日配额提前耗尽。
 - 浏览器设备告警：活跃设备超过 2 分钟无心跳、运行状态为 `PAUSED`、停机原因出现验证码/风险提示或设备反复重新配对。
 - 管理员可访问 `/api/operations/gateways` 查看各 Gateway 操作的连续失败数和断路截止时间。
-- 管理员运行保障页还会显示调度租约、待运行任务和 HR 通知渠道配置状态。
+- 管理员运行保障页显示 Flyway、审计只追加和 Gateway 保护状态；浏览器设备心跳与停机原因在“自动跟进”页查看。
 
 ## 备份与恢复
 
@@ -56,6 +56,6 @@ scripts/restore-drill.sh
 ## 数据保留与人工降级
 
 - 候选人保留期尚待产品/法务确认；在此之前不自动删除，使用已有匿名化功能处理合法删除请求。
-- BOSS、AI 或 Notification Gateway 超时、限流或断路时，操作返回可恢复失败；任务进入“需人工介入”，消息/通知保留为失败状态供后续幂等重试。
+- BOSS Gateway 或浏览器伴随端超时、限流或断路时，自动回复必须失败关闭，保留失败状态供人工检查和后续幂等重试。
 - 不得将 Cookie、Token、密码、候选人消息正文写入审计或普通日志。
 - 新账号必须依次通过“DOM 适配与只监测”、“仅草稿”和“单账号小配额试发”，确认页面识别、发送限额、人工接管和紧急停止流程后才可开启自动发送。任何验证码、风险提示、登录异常、平台告警或投诉都应立即关闭该账号策略，不允许使用规避风控手段。
