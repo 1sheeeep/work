@@ -15,6 +15,9 @@
       if (config.requireVisibleTab && document.visibilityState !== 'visible') return heartbeat('PAUSED', '会话页不在前台')
       const snapshot = readSnapshot(config.selectors)
       if (!snapshot.ok) return heartbeat('PAUSED', snapshot.reason)
+      const synced = await chrome.runtime.sendMessage({ type: 'SYNC_MESSAGE', payload: { externalChatId: snapshot.chatId, externalMessageId: snapshot.messageId, direction: snapshot.direction, createdAt: new Date(snapshot.createdAt).toISOString(), content: config.syncMessageContent ? snapshot.content : null } })
+      if (!synced?.ok) return heartbeat('PAUSED', synced?.action === 'DEVICE_NOT_PAIRED' ? '扩展尚未与招聘系统配对' : '招聘系统连接失败或设备已撤销')
+      if (!synced.bound) return heartbeat('PAUSED', '当前网页会话尚未与候选人人工绑定')
       await heartbeat('RUNNING', '')
       if (!config.automaticSend || snapshot.direction !== 'INBOUND') return
       if (Date.now() - snapshot.createdAt < config.timeoutMinutes * 60_000) return
@@ -48,7 +51,7 @@
     const rawDirection = (last.getAttribute(s.directionAttribute) || '').toUpperCase()
     const direction = ['INBOUND', 'RECEIVED', 'GEEK'].includes(rawDirection) ? 'INBOUND' : 'OUTBOUND'
     const parsed = Date.parse(last.getAttribute(s.timeAttribute) || '')
-    return { ok: true, messageKey: `${chatId}:${messageId}`, direction, createdAt: Number.isFinite(parsed) ? parsed : Date.now(),
+    return { ok: true, chatId, messageId, content:last.textContent?.trim()||'', messageKey: `${chatId}:${messageId}`, direction, createdAt: Number.isFinite(parsed) ? parsed : Date.now(),
       candidateName: text(s.candidateName), jobTitle: text(s.jobTitle), editor, sendButton }
   }
 

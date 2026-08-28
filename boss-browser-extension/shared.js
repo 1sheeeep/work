@@ -2,6 +2,8 @@ export const DEFAULTS = Object.freeze({
   enabled: false,
   automaticSend: false,
   accountAlias: '',
+  backendUrl: 'http://localhost:8088',
+  syncMessageContent: false,
   timeoutMinutes: 120,
   dailyLimit: 20,
   minimumIntervalSeconds: 180,
@@ -38,5 +40,6 @@ export function validateConfig(config) {
   if (missing.length) return `页面适配器未配置：${missing.join(', ')}`
   if (config.automaticSend && !config.enabled) return '开启自动发送前必须先启用监测'
   if (config.timeoutMinutes < 5 || config.dailyLimit < 1 || config.minimumIntervalSeconds < 30) return '超时、配额或最小间隔低于安全下限'
+  try { const url = new URL(config.backendUrl); if (!['http:', 'https:'].includes(url.protocol)) throw new Error() } catch { return '后端地址无效' }
   return null
 }

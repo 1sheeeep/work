@@ -36,7 +36,7 @@
 - Gateway 统一超时、并发/频率限制、连续失败断路、Prometheus 指标和人工降级状态
 - 管理员运行保障页可查看 Flyway、审计防篡改和 Gateway 保护状态
 - 登录、组织、HR 用户、BOSS 账号、职位、招聘任务、候选人和面试关键操作审计
-- PostgreSQL Flyway V1–V15 迁移和 Docker Compose 本地/预发布/生产编排
+- PostgreSQL Flyway V1–V16 迁移和 Docker Compose 本地/预发布/生产编排
 - 桌面与移动端响应式管理界面
 
 企业、HR 用户、BOSS 账号、职位和招聘任务均不提供物理删除，停用、关闭或进入终态后保留历史数据和关联边界。

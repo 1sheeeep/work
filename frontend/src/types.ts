@@ -39,6 +39,7 @@ export interface AiCandidateScreenResponse {runId:string;provider:'MOCK'|'OPENAI
 export interface AutoReplyPolicy {accountId:string;accountName:string;companyId:string;companyName:string;accountStatus:BossAccountStatus;connectionStatus:BossConnectionStatus;messageSendCapable:boolean;configured:boolean;enabled:boolean;autoSendEnabled:boolean;responseTimeoutMinutes:number;dailyLimit:number;minimumIntervalSeconds:number;sendingWindowStart:string;sendingWindowEnd:string;timezone:string;maxConsecutiveFailures:number;consecutiveFailures:number;pausedUntil?:string;lastSentAt?:string;sentToday:number;quotaDate?:string;replyTemplate:string;version:number}
 export type AutoReplyAttemptStatus='CLAIMED'|'PENDING_REVIEW'|'SENT'|'FAILED'|'SKIPPED'
 export interface AutoReplyAttempt {id:string;accountId:string;accountName:string;contactId:string;candidateName:string;jobTitle:string;status:AutoReplyAttemptStatus;resultMessage?:string;outboundMessageId?:string;attemptCount:number;createdAt:string;completedAt?:string}
+export interface BrowserDevice {id:string;accountId:string;accountName:string;displayName:string;status:'ACTIVE'|'REVOKED';runtimeState:'DISABLED'|'RUNNING'|'PAUSED'|'OFFLINE';stopReason?:string;lastHeartbeatAt?:string;createdAt:string;revokedAt?:string}
 export type InterviewStatus = 'PROPOSING' | 'CONFIRMED' | 'RESCHEDULE_REQUIRED' | 'CANCELLED'
 export type InterviewSlotStatus = 'AVAILABLE' | 'CONFIRMED' | 'DECLINED' | 'EXPIRED'
 export type MockNotificationOutcome = 'SUCCESS' | 'FAILURE'

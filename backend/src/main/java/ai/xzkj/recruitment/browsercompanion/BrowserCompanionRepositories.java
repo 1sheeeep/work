@@ -1,0 +1,5 @@
+package ai.xzkj.recruitment.browsercompanion;
+import org.springframework.data.jpa.repository.*;import java.util.*;
+interface BrowserDeviceRepository extends JpaRepository<BrowserDevice,UUID>{@EntityGraph(attributePaths={"bossAccount","bossAccount.company"})Optional<BrowserDevice> findByTokenHashAndStatus(String hash,String status);@EntityGraph(attributePaths={"bossAccount","bossAccount.company"})List<BrowserDevice> findAllByOrderByCreatedAtDesc();Optional<BrowserDevice> findFirstByBossAccountIdAndStatus(UUID id,String status);}
+interface BrowserPairingCodeRepository extends JpaRepository<BrowserPairingCode,UUID>{@EntityGraph(attributePaths={"account","account.company","createdBy"})Optional<BrowserPairingCode> findByTokenHash(String hash);}
+interface BrowserConversationBindingRepository extends JpaRepository<BrowserConversationBinding,UUID>{@EntityGraph(attributePaths={"account","contact","contact.candidate","contact.jobPosition"})Optional<BrowserConversationBinding> findByAccountIdAndExternalChatKey(UUID accountId,String key);boolean existsByContactId(UUID contactId);}

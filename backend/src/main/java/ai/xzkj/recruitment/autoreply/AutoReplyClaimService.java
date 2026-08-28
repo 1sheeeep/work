@@ -25,6 +25,7 @@ public class AutoReplyClaimService {
           AND m.created_at <= CAST(? AS timestamptz) - (p.response_timeout_minutes * interval '1 minute')
           AND m.id=(SELECT latest.id FROM conversation_messages latest WHERE latest.contact_id=c.id ORDER BY latest.created_at DESC,latest.id DESC LIMIT 1)
           AND EXISTS (SELECT 1 FROM boss_account_capabilities cap WHERE cap.account_id=a.id AND cap.capability='MESSAGE_SEND')
+          AND NOT EXISTS (SELECT 1 FROM browser_conversation_bindings binding WHERE binding.contact_id=c.id)
           AND NOT EXISTS (SELECT 1 FROM auto_reply_attempts ar WHERE ar.inbound_message_id=m.id AND (ar.status<>'CLAIMED' OR ar.lease_until>?))
         ORDER BY m.created_at ASC LIMIT ?
         """,(rs,row)->new DueMessage(rs.getObject("message_id",UUID.class),rs.getObject("contact_id",UUID.class),rs.getObject("policy_id",UUID.class),rs.getObject("account_id",UUID.class)),Timestamp.from(now),Timestamp.from(now),limit);}
