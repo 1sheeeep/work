@@ -1,6 +1,8 @@
 package ai.xzkj.recruitment.organization;
 
 import ai.xzkj.recruitment.audit.AuditService;
+import ai.xzkj.recruitment.auth.CurrentUserService;
+import ai.xzkj.recruitment.auth.UserRole;
 import ai.xzkj.recruitment.common.ApiException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -10,6 +12,7 @@ import java.time.DateTimeException;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -17,15 +20,18 @@ public class OrganizationService {
     private final GroupProfileRepository groupRepository;
     private final CompanyRepository companyRepository;
     private final AuditService auditService;
+    private final CurrentUserService currentUserService;
 
     public OrganizationService(
             GroupProfileRepository groupRepository,
             CompanyRepository companyRepository,
-            AuditService auditService
+            AuditService auditService,
+            CurrentUserService currentUserService
     ) {
         this.groupRepository = groupRepository;
         this.companyRepository = companyRepository;
         this.auditService = auditService;
+        this.currentUserService = currentUserService;
     }
 
     @Transactional(readOnly = true)
@@ -51,7 +57,12 @@ public class OrganizationService {
     public List<CompanyResponse> listCompanies(String keyword, CompanyStatus status) {
         GroupProfile group = requireGroup();
         String normalizedKeyword = keyword == null ? "" : keyword.trim().toLowerCase(Locale.ROOT);
+        var currentUser = currentUserService.requireCurrentUser();
+        Set<UUID> allowedCompanyIds = currentUser.getRole() == UserRole.SYSTEM_ADMIN
+                ? null
+                : currentUser.getCompanyScopes().stream().map(Company::getId).collect(java.util.stream.Collectors.toSet());
         return companyRepository.findByGroupIdOrderByCreatedAtDesc(group.getId()).stream()
+                .filter(company -> allowedCompanyIds == null || allowedCompanyIds.contains(company.getId()))
                 .filter(company -> status == null || company.getStatus() == status)
                 .filter(company -> normalizedKeyword.isBlank()
                         || company.getName().toLowerCase(Locale.ROOT).contains(normalizedKeyword)

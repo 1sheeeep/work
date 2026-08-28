@@ -5,7 +5,8 @@ test('administrator can create, edit, deactivate and revisit a company', async (
   const password = process.env.E2E_PASSWORD
   if (!username || !password) throw new Error('E2E credentials are not configured')
 
-  const suffix = `${testInfo.project.name.replace(/\W/g, '').slice(0, 7)}${Date.now().toString().slice(-6)}`
+  // 每个端口复用一个固定测试企业，避免每次 E2E 都向数据库追加时间戳数据。
+  const suffix = testInfo.project.name === 'mobile-chrome' ? 'MOBILE' : 'DESKTOP'
   const companyName = `浏览器验证企业${suffix}`
   const companyCode = `UI_${suffix}`.toUpperCase().slice(0, 32)
 
@@ -15,15 +16,6 @@ test('administrator can create, edit, deactivate and revisit a company', async (
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await expect(page.getByRole('heading', { name: '集团与企业' })).toBeVisible()
 
-  await page.getByRole('button', { name: '新增企业' }).first().click()
-  const dialog = page.getByRole('dialog', { name: '新增企业' })
-  await dialog.getByLabel('企业名称').fill(companyName)
-  await dialog.getByLabel('企业编码').fill(companyCode)
-  await dialog.getByLabel('所在地').fill('上海市静安区')
-  await dialog.getByLabel('备注').fill('桌面与移动端真实流程验证')
-  await dialog.getByRole('button', { name: '确认新增' }).click()
-  await expect(page.getByText('企业已新增')).toBeVisible()
-
   const search = page.getByLabel('搜索企业')
   await search.fill(companyCode)
   await page.getByRole('button', { name: '查询' }).click()
@@ -32,6 +24,21 @@ test('administrator can create, edit, deactivate and revisit a company', async (
   const companyContainer = isMobile
     ? page.locator('.company-card', { hasText: companyName })
     : page.locator('.el-table__row', { hasText: companyName })
+  if (await companyContainer.count() === 0) {
+    await page.getByRole('button', { name: '新增企业' }).first().click()
+    const dialog = page.getByRole('dialog', { name: '新增企业' })
+    await dialog.getByLabel('企业名称').fill(companyName)
+    await dialog.getByLabel('企业编码').fill(companyCode)
+    await dialog.getByLabel('所在地').fill('上海市静安区')
+    await dialog.getByLabel('备注').fill('桌面与移动端真实流程验证')
+    await dialog.getByRole('button', { name: '确认新增' }).click()
+    await expect(page.getByText('企业已新增')).toBeVisible()
+    await search.fill(companyCode)
+    await page.getByRole('button', { name: '查询' }).click()
+  } else if (await companyContainer.getByText('已停用').count()) {
+    await companyContainer.getByRole('button', { name: '启用' }).click()
+    await expect(page.getByText('企业已启用')).toBeVisible()
+  }
   await expect(companyContainer).toBeVisible()
   await companyContainer.getByRole('button', { name: '编辑' }).click()
   const editDialog = page.getByRole('dialog', { name: '编辑企业' })

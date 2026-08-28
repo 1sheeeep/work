@@ -1,6 +1,9 @@
 package ai.xzkj.recruitment.organization;
 
 import ai.xzkj.recruitment.audit.AuditService;
+import ai.xzkj.recruitment.auth.CurrentUserService;
+import ai.xzkj.recruitment.auth.SystemUser;
+import ai.xzkj.recruitment.auth.UserRole;
 import ai.xzkj.recruitment.common.ApiException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -10,6 +13,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -26,13 +30,15 @@ class OrganizationServiceTest {
     private CompanyRepository companyRepository;
     @Mock
     private AuditService auditService;
+    @Mock
+    private CurrentUserService currentUserService;
 
     private OrganizationService service;
     private GroupProfile group;
 
     @BeforeEach
     void setUp() {
-        service = new OrganizationService(groupRepository, companyRepository, auditService);
+        service = new OrganizationService(groupRepository, companyRepository, auditService, currentUserService);
         group = new GroupProfile("测试集团", "测试总部");
     }
 
@@ -86,5 +92,20 @@ class OrganizationServiceTest {
 
         assertThat(group.getName()).isEqualTo("测试集团");
         verify(auditService, never()).success(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void recruiterOnlySeesCompaniesInAssignedScope() {
+        Company allowed = new Company(group, "已授权企业", "ALLOWED", null, null);
+        Company hidden = new Company(group, "未授权企业", "HIDDEN", null, null);
+        SystemUser recruiter = new SystemUser("recruiter", "hash", "招聘专员", UserRole.RECRUITER);
+        recruiter.assignCompanyScopes(Set.of(allowed));
+        when(groupRepository.findAll()).thenReturn(List.of(group));
+        when(currentUserService.requireCurrentUser()).thenReturn(recruiter);
+        when(companyRepository.findByGroupIdOrderByCreatedAtDesc(group.getId())).thenReturn(List.of(hidden, allowed));
+
+        List<CompanyResponse> response = service.listCompanies(null, null);
+
+        assertThat(response).extracting(CompanyResponse::code).containsExactly("ALLOWED");
     }
 }

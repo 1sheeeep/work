@@ -1,3 +1,51 @@
 # DEV_STATE
 
-更新时间：2026-08-27。当前目标是严格按已确认交接顺序完成 BOSS 多账号 AI 自动招聘控制台 V1，现阶段仍处于 Phase 1 基础控制台；当前分支为 `main`，最新功能提交是 `768c0c7`（`feat: complete organization management loop`），本次核对前工作树干净且没有未提交的功能代码。已完成的第一个真实闭环为“系统管理员登录 → 维护单一集团资料 → 新增、查询、编辑、启用/停用企业 → 刷新或重新登录后确认持久化 → 查看操作日志”，后端已实现服务端 Session、CSRF、固定三角色枚举、统一校验和错误响应、集团/企业接口、企业名称与编码唯一约束及审计，前端已实现登录、路由守卫、集团与企业管理、操作日志和桌面/移动响应式页面，PostgreSQL 通过 Flyway `V1__foundation_console.sql` 建立 `system_users`、`group_profiles`、`companies`、`audit_logs`，企业采用 `ACTIVE/INACTIVE` 软停用而不物理删除；整体坚持 Spring Boot + Vue 3/TypeScript/Vite/Element Plus + PostgreSQL/Flyway 的模块化单体，未取得合法 BOSS 授权前不得接网页内部接口、Cookie 自动化或爬虫，后续 BOSS 能力必须经 Gateway/Adapter 并先用 Mock 实现。核心入口与文件为 `compose.yaml`、`backend/src/main/resources/db/migration/V1__foundation_console.sql`、`backend/src/main/java/ai/xzkj/recruitment/config/SecurityConfig.java`、`backend/src/main/java/ai/xzkj/recruitment/auth/`、`backend/src/main/java/ai/xzkj/recruitment/organization/`、`backend/src/main/java/ai/xzkj/recruitment/audit/`、`frontend/src/stores/auth.ts`、`frontend/src/views/OrganizationView.vue`、`frontend/src/views/AuditLogView.vue` 和 `frontend/e2e/organization-flow.spec.ts`。2026-08-27 重新验证结果为后端 Maven 测试 5/5 通过、前端 Vitest 1/1 通过、前端生产构建通过；2026-08-23 留存的 Playwright 结果为通过且无失败项，并有 1440×960 桌面与 390×844 移动端截图；当前本地 PostgreSQL、后端、Web 三个 Docker 服务均为 healthy，`/actuator/health` 返回 `UP`，`http://localhost:8088/` 返回 200。已知未完成项是 HR 用户管理、企业授权范围、角色操作闭环、BOSS 账号、职位及其后全部 V1 阶段均尚未开发，当前自动化覆盖仅有 5 个后端测试、1 个前端组件测试和组织闭环 E2E，且该 E2E 会创建时间戳企业但没有自动清理逻辑；项目尚未部署正式环境，本地 Compose 的非安全 Cookie 配置不能直接用于 HTTPS 正式环境。已确认的失败方案包括使用不存在的 Spring Boot `4.1.1.RELEASE`、在 Spring Boot 4 中继续引用旧 `com.fasterxml.jackson.databind.ObjectMapper`，以及在本机直接依赖不存在的 Java/Maven；当前正确做法分别是使用 `4.1.1`、`tools.jackson.databind.ObjectMapper`，并通过固定 Maven/Java 21 Docker 环境执行后端构建和测试。下一步应只完成“HR 用户 + 固定角色 + 企业授权范围”的真实闭环，同时补齐数据库迁移、后端权限与审计、前端管理界面、错误处理、自动化测试、E2E 测试数据回收和桌面/移动实际验证；验证可用后再进入 BOSS 账号与 Capability 管理，不提前建设招聘任务、候选人、会话、Offer 或入职功能。
+更新时间：2026-08-28。当前分支为 `main`。
+
+## 已完成的业务闭环
+
+1. 系统管理员登录、退出和 Session 恢复。
+2. 单一集团资料与多企业管理，企业采用 `ACTIVE/INACTIVE` 软停用。
+3. HR 用户新增、编辑、查询、启停、密码重置。
+4. HR 用户固定为 `RECRUITMENT_ADMIN` 或 `RECRUITER`；系统管理员不在 HR 用户模块中维护。
+5. 每名 HR 至少授权一家有效企业，登录后只能查看授权范围内的企业。
+6. 关键组织和用户操作写入审计日志，不记录密码明文。
+7. BOSS 账号按企业归属，支持新增、编辑、软停用和 Capability 检查。
+8. BOSS 外部能力统一通过 `BossGateway`，当前仅实现不保存真实凭据的 Mock Gateway。
+
+## M2 和 M3 实现
+
+- Flyway `V2__hr_users_and_company_scopes.sql`：新增用户-企业授权关系和大小写不敏感用户名唯一索引。
+- 后端 `users` 模块：列表筛选、新增、编辑、启停、重置密码、角色和授权校验、审计。
+- 组织数据范围：非系统管理员查询企业时使用自己的授权集合过滤。
+- 前端 HR 用户页：桌面/移动响应式列表、筛选、表单校验、企业多选、启停和重置密码。
+- 导航和组织页按当前角色隐藏无权操作。
+- E2E 夹具改为桌面/移动各复用一组固定企业和 HR 用户，结束后停用，不再每次追加时间戳数据。
+- Flyway `V3__boss_accounts_and_capabilities.sql`：新增 BOSS 账号、连接状态和 Capability 持久化。
+- 后端 `boss` 模块：企业数据范围、角色权限、新增/编辑/启停、能力检查与审计。
+- `MockBossGateway`：提供 FULL、READ_ONLY、UNAVAILABLE 可重复验证的模拟情景。
+- 前端 BOSS 账号页：响应式列表、筛选、统计、表单、连接状态、Capability 展示和按角色禁用操作。
+- BOSS E2E 夹具同样复用固定数据，验证全能力、只读降级、软停用和桌面/移动无水平溢出。
+
+## 验证状态
+
+- Flyway V1–V3 在 PostgreSQL 17 真实容器中迁移成功。
+- 后端 Java 21 + Maven 编译成功，17/17 测试通过。
+- 前端 TypeScript 检查和 Vite 标准生产构建通过。
+- 前端 Vitest 3/3 通过。
+- Playwright 组织、HR 用户和 BOSS 账号的桌面/移动回归 6/6 通过。
+- Docker Compose 中 db、backend、web 三个服务健康，入口为 <http://localhost:8088>。
+- 数据库核对确认 BOSS 账号表不含密码、Cookie、Token、Secret 或 Credential 字段。
+
+## 安全与范围边界
+
+- 未取得合法 BOSS 授权前，不得连接网页内部接口、自动化 Cookie 或实施爬虫。
+- 后续 BOSS 能力必须继续通过 Gateway/Adapter；真实集成前需先确认合法授权方式。
+- 不提前建设 ATS、Offer 或入职模块。
+- 正式环境必须使用 HTTPS 并设置 `APP_SECURE_COOKIE=true`。
+
+## 下一步
+
+1. 进入 M4 “职位管理”：先确认字段、状态机、BOSS 账号绑定规则和角色操作边界。
+2. 实现 Flyway V4、后端职位模块、前端职位页及完整测试。
+3. 详细顺序和每阶段验收标准见 `IMPLEMENTATION_ROADMAP.md`。

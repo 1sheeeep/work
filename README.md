@@ -8,11 +8,18 @@
 - 初始化并维护单一集团资料
 - 新增、编辑、查询、启用和停用企业
 - 集团内企业名称、企业编码唯一校验
-- 登录、集团修改和企业操作审计
-- PostgreSQL Flyway V1 迁移和 Docker Compose 本地运行
+- 新增、编辑、查询、启用和停用 HR 用户
+- 固定的招聘管理员/招聘专员角色与企业授权范围
+- HR 用户只能查看自己授权范围内的企业
+- HR 用户密码重置，密码内容不进入审计日志
+- 按企业管理 BOSS 账号，支持新增、编辑、启停和能力检查
+- `BossGateway` 隔离外部能力，当前仅提供 FULL、READ_ONLY 和 UNAVAILABLE 三种 Mock 情景
+- 不同角色按企业授权隔离 BOSS 账号，招聘专员仅可查看
+- 登录、组织、HR 用户和 BOSS 账号关键操作审计
+- PostgreSQL Flyway V1–V3 迁移和 Docker Compose 本地运行
 - 桌面与移动端响应式管理界面
 
-企业不提供物理删除，停用后保留历史数据和关联边界。
+企业、HR 用户和 BOSS 账号均不提供物理删除，停用后保留历史数据和关联边界。
 
 ## 技术栈
 
@@ -75,5 +82,7 @@ npm.cmd run test:e2e
 
 - `.env` 不进入 Git，不要把真实密码、Token 或授权密钥写入代码和普通日志。
 - 正式环境必须设置 `APP_SECURE_COOKIE=true` 并通过 HTTPS 访问。
-- 当前仅完成第一个真实业务闭环，不代表 Phase 1 或 V1 已全部完成。
-- 下一开发项继续按交接顺序进入 HR 用户、权限和 BOSS 账号管理，不提前建设 ATS、Offer 或入职功能。
+- 当前已完成组织管理、HR 用户/企业授权和 BOSS 账号/Capability 三个基础闭环，不代表 Phase 1 或 V1 已全部完成。
+- BOSS 能力暂时只能使用 Mock Gateway；不保存 Cookie、Token 或真实凭据。
+- 下一开发项按顺序进入职位管理，不提前建设 ATS、Offer 或入职功能。
+- 详细的分阶段实施和验收边界见 `IMPLEMENTATION_ROADMAP.md`。

@@ -10,7 +10,9 @@ const router = createRouter({
       children: [
         { path: '', redirect: '/organization' },
         { path: 'organization', name: 'organization', component: () => import('./views/OrganizationView.vue') },
-        { path: 'audit-logs', name: 'audit-logs', component: () => import('./views/AuditLogView.vue') },
+        { path: 'boss-accounts', name: 'boss-accounts', component: () => import('./views/BossAccountsView.vue') },
+        { path: 'hr-users', name: 'hr-users', component: () => import('./views/HrUsersView.vue'), meta: { role: 'SYSTEM_ADMIN' } },
+        { path: 'audit-logs', name: 'audit-logs', component: () => import('./views/AuditLogView.vue'), meta: { role: 'SYSTEM_ADMIN' } },
       ],
     },
     { path: '/:pathMatch(.*)*', redirect: '/organization' },
@@ -24,6 +26,7 @@ router.beforeEach(async (to) => {
     return true
   }
   if (!user) return { name: 'login', query: { redirect: to.fullPath } }
+  if (to.meta.role && user.role !== to.meta.role) return { name: 'organization' }
   return true
 })
 

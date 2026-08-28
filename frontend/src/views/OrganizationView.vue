@@ -4,6 +4,7 @@ import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { EditPen, OfficeBuilding, Plus, Refresh, Search } from '@element-plus/icons-vue'
 import { api, apiErrorMessage, apiFieldErrors, ensureCsrf } from '../services/api'
+import { authStore } from '../stores/auth'
 import type { Company, CompanyFormValue, CompanyStatus, GroupProfile } from '../types'
 
 interface GroupFormValue { name: string; shortName: string; timezone: string; description: string }
@@ -47,6 +48,7 @@ const companyRules: FormRules<CompanyFormValue> = {
 }
 
 const dialogTitle = computed(() => editingCompany.value ? '编辑企业' : '新增企业')
+const canManage = computed(() => authStore.state.user?.role === 'SYSTEM_ADMIN')
 
 function assignFieldErrors(target: Record<string, string>, source: Record<string, string>) {
   Object.keys(target).forEach((key) => delete target[key])
@@ -222,7 +224,7 @@ onMounted(loadAll)
   <div class="page-shell">
     <header class="page-heading">
       <div><h1>集团与企业</h1><p>维护集团统一资料和企业用工主体，为后续 BOSS 账号与职位归属提供可靠边界。</p></div>
-      <el-button type="primary" :icon="Plus" @click="openCreateCompany">新增企业</el-button>
+      <el-button v-if="canManage" type="primary" :icon="Plus" @click="openCreateCompany">新增企业</el-button>
     </header>
 
     <div v-if="loading" class="surface-panel skeleton-stack" aria-label="正在加载组织资料">
@@ -236,7 +238,7 @@ onMounted(loadAll)
       <section class="surface-panel group-panel" aria-labelledby="group-heading">
         <div class="section-title-row">
           <div><h2 id="group-heading">集团资料</h2><p>集团是当前系统的最高管理层级</p></div>
-          <el-button v-if="!groupEditing" :icon="EditPen" @click="beginGroupEdit">编辑集团资料</el-button>
+          <el-button v-if="canManage && !groupEditing" :icon="EditPen" @click="beginGroupEdit">编辑集团资料</el-button>
         </div>
         <div v-if="groupEditing" class="group-form-wrap">
           <el-alert v-if="groupError" :title="groupError" type="error" :closable="false" show-icon />
@@ -285,7 +287,7 @@ onMounted(loadAll)
         <div v-if="companiesLoading && companies.length === 0" class="skeleton-stack"><el-skeleton :rows="4" animated /></div>
         <div v-else-if="companies.length === 0" class="empty-state">
           <span class="empty-state__icon"><el-icon><OfficeBuilding /></el-icon></span><strong>还没有符合条件的企业</strong><span>新增企业后，后续账号和职位才能建立明确归属。</span>
-          <el-button type="primary" :icon="Plus" @click="openCreateCompany">新增企业</el-button>
+          <el-button v-if="canManage" type="primary" :icon="Plus" @click="openCreateCompany">新增企业</el-button>
         </div>
         <template v-else>
           <el-table v-loading="companiesLoading" :data="companies" class="company-table">
@@ -293,13 +295,13 @@ onMounted(loadAll)
             <el-table-column prop="location" label="所在地" min-width="140"><template #default="{ row }">{{ row.location || '未填写' }}</template></el-table-column>
             <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'" effect="light">{{ row.status === 'ACTIVE' ? '正常' : '已停用' }}</el-tag></template></el-table-column>
             <el-table-column label="更新时间" min-width="180"><template #default="{ row }">{{ formatDate(row.updatedAt) }}</template></el-table-column>
-            <el-table-column label="操作" width="180" fixed="right"><template #default="{ row }"><el-button link type="primary" @click="openEditCompany(row as Company)">编辑</el-button><el-button link :type="row.status === 'ACTIVE' ? 'danger' : 'success'" @click="toggleCompanyStatus(row as Company)">{{ row.status === 'ACTIVE' ? '停用' : '启用' }}</el-button></template></el-table-column>
+            <el-table-column v-if="canManage" label="操作" width="180" fixed="right"><template #default="{ row }"><el-button link type="primary" @click="openEditCompany(row as Company)">编辑</el-button><el-button link :type="row.status === 'ACTIVE' ? 'danger' : 'success'" @click="toggleCompanyStatus(row as Company)">{{ row.status === 'ACTIVE' ? '停用' : '启用' }}</el-button></template></el-table-column>
           </el-table>
           <div class="company-cards">
             <article v-for="company in companies" :key="company.id" class="company-card">
               <header><div><strong>{{ company.name }}</strong><span>{{ company.code }}</span></div><el-tag :type="company.status === 'ACTIVE' ? 'success' : 'info'" size="small">{{ company.status === 'ACTIVE' ? '正常' : '已停用' }}</el-tag></header>
               <dl><div><dt>所在地</dt><dd>{{ company.location || '未填写' }}</dd></div><div><dt>更新时间</dt><dd>{{ formatDate(company.updatedAt) }}</dd></div></dl>
-              <footer><el-button @click="openEditCompany(company)">编辑</el-button><el-button :type="company.status === 'ACTIVE' ? 'danger' : 'success'" plain @click="toggleCompanyStatus(company)">{{ company.status === 'ACTIVE' ? '停用' : '启用' }}</el-button></footer>
+              <footer v-if="canManage"><el-button @click="openEditCompany(company)">编辑</el-button><el-button :type="company.status === 'ACTIVE' ? 'danger' : 'success'" plain @click="toggleCompanyStatus(company)">{{ company.status === 'ACTIVE' ? '停用' : '启用' }}</el-button></footer>
             </article>
           </div>
         </template>

@@ -1,6 +1,7 @@
 package ai.xzkj.recruitment.config;
 
 import ai.xzkj.recruitment.auth.SystemUserRepository;
+import ai.xzkj.recruitment.auth.EnabledUserFilter;
 import ai.xzkj.recruitment.common.ApiError;
 import tools.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletResponse;
@@ -19,6 +20,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 import org.springframework.security.web.context.SecurityContextRepository;
+import org.springframework.security.web.context.SecurityContextHolderFilter;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 
 import java.time.Instant;
@@ -57,7 +59,8 @@ public class SecurityConfig {
     SecurityFilterChain securityFilterChain(
             HttpSecurity http,
             ObjectMapper objectMapper,
-            SecurityContextRepository securityContextRepository
+            SecurityContextRepository securityContextRepository,
+            SystemUserRepository userRepository
     ) throws Exception {
         CookieCsrfTokenRepository csrfRepository = CookieCsrfTokenRepository.withHttpOnlyFalse();
         csrfRepository.setCookiePath("/");
@@ -78,6 +81,7 @@ public class SecurityConfig {
                                 response, objectMapper, HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "登录已失效，请重新登录"))
                         .accessDeniedHandler((request, response, exception) -> writeError(
                                 response, objectMapper, HttpStatus.FORBIDDEN, "FORBIDDEN", "当前账号没有此操作权限")));
+        http.addFilterAfter(new EnabledUserFilter(userRepository, objectMapper), SecurityContextHolderFilter.class);
         return http.build();
     }
 

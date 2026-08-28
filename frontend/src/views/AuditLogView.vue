@@ -10,6 +10,10 @@ const logs = ref<AuditLog[]>([])
 const actionLabels: Record<string, string> = {
   LOGIN: '登录系统', LOGOUT: '退出系统', UPDATE_GROUP: '更新集团资料',
   CREATE_COMPANY: '新增企业', UPDATE_COMPANY: '更新企业资料', CHANGE_COMPANY_STATUS: '变更企业状态',
+  CREATE_HR_USER: '新增 HR 用户', UPDATE_HR_USER: '更新 HR 用户',
+  CHANGE_HR_USER_STATUS: '变更 HR 用户状态', RESET_HR_USER_PASSWORD: '重置 HR 用户密码',
+  CREATE_BOSS_ACCOUNT: '新增 BOSS 账号', UPDATE_BOSS_ACCOUNT: '更新 BOSS 账号',
+  CHANGE_BOSS_ACCOUNT_STATUS: '变更 BOSS 账号状态', CHECK_BOSS_CAPABILITIES: '检查 BOSS 账号能力',
 }
 
 async function loadLogs() {

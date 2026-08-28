@@ -18,7 +18,11 @@ public class CurrentUserService {
         if (authentication == null || !authentication.isAuthenticated()) {
             throw new ApiException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "请先登录");
         }
-        return repository.findByUsernameIgnoreCase(authentication.getName())
+        SystemUser user = repository.findByUsernameIgnoreCase(authentication.getName())
                 .orElseThrow(() -> new ApiException(HttpStatus.UNAUTHORIZED, "USER_NOT_FOUND", "登录用户不存在"));
+        if (!user.isEnabled()) {
+            throw new ApiException(HttpStatus.UNAUTHORIZED, "ACCOUNT_DISABLED", "当前账号已停用，请联系管理员");
+        }
+        return user;
     }
 }

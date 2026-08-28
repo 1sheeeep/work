@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { DataAnalysis, Expand, OfficeBuilding, SwitchButton, UserFilled } from '@element-plus/icons-vue'
+import { Connection, DataAnalysis, Expand, OfficeBuilding, SwitchButton, User, UserFilled } from '@element-plus/icons-vue'
 import { authStore } from '../stores/auth'
 
 const route = useRoute()
@@ -11,10 +11,16 @@ const mobileNavOpen = ref(false)
 const loggingOut = ref(false)
 const activePath = computed(() => route.path)
 const user = computed(() => authStore.state.user)
-const navigation = [
+const navigation = computed(() => [
   { path: '/organization', label: '集团与企业', icon: OfficeBuilding },
-  { path: '/audit-logs', label: '操作日志', icon: DataAnalysis },
-]
+  { path: '/boss-accounts', label: 'BOSS 账号', icon: Connection },
+  ...(user.value?.role === 'SYSTEM_ADMIN' ? [
+    { path: '/hr-users', label: 'HR 用户', icon: User },
+    { path: '/audit-logs', label: '操作日志', icon: DataAnalysis },
+  ] : []),
+])
+const roleLabel = computed(() => ({ SYSTEM_ADMIN: '系统管理员', RECRUITMENT_ADMIN: '招聘管理员', RECRUITER: '招聘专员' }[user.value?.role ?? 'SYSTEM_ADMIN']))
+const workspaceLabel = computed(() => ({ organization: '组织管理', 'boss-accounts': 'BOSS 账号', 'hr-users': 'HR 用户', 'audit-logs': '操作日志' }[String(route.name)] ?? '招聘工作台'))
 
 function navigate(path: string) {
   mobileNavOpen.value = false
@@ -52,7 +58,7 @@ async function handleLogout() {
           <el-icon :size="20"><component :is="item.icon" /></el-icon><span>{{ item.label }}</span>
         </button>
       </nav>
-      <div class="sidebar-foot"><span>当前闭环</span><strong>基础组织控制台</strong></div>
+      <div class="sidebar-foot"><span>当前闭环</span><strong>账号与权限控制台</strong></div>
     </aside>
 
     <section class="workspace">
@@ -60,10 +66,10 @@ async function handleLogout() {
         <button class="mobile-menu-button" type="button" aria-label="打开导航" @click="mobileNavOpen = true">
           <el-icon :size="22"><Expand /></el-icon>
         </button>
-        <div class="topbar-context"><span>工作空间</span><strong>{{ route.name === 'audit-logs' ? '操作日志' : '组织管理' }}</strong></div>
+        <div class="topbar-context"><span>工作空间</span><strong>{{ workspaceLabel }}</strong></div>
         <div class="user-area">
           <div class="user-avatar" aria-hidden="true"><el-icon><UserFilled /></el-icon></div>
-          <div class="user-copy"><strong>{{ user?.displayName }}</strong><span>系统管理员</span></div>
+          <div class="user-copy"><strong>{{ user?.displayName }}</strong><span>{{ roleLabel }}</span></div>
           <el-button :loading="loggingOut" :icon="SwitchButton" text @click="handleLogout">退出</el-button>
         </div>
       </header>
