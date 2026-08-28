@@ -47,6 +47,10 @@ public class RecruitmentTask {
     @Column(name = "quota_date") private LocalDate quotaDate;
     @Column(name = "last_run_at") private Instant lastRunAt;
     @Column(name = "last_error", length = 1000) private String lastError;
+    @Column(name = "scheduler_enabled", nullable = false) private boolean schedulerEnabled;
+    @Column(name = "next_run_at") private Instant nextRunAt;
+    @Column(name = "last_scheduled_at") private Instant lastScheduledAt;
+    @Column(name = "last_scheduler_owner", length = 120) private String lastSchedulerOwner;
     @Version private long version;
     @Column(name = "created_at", nullable = false) private Instant createdAt;
     @Column(name = "updated_at", nullable = false) private Instant updatedAt;
@@ -70,6 +74,7 @@ public class RecruitmentTask {
         this.requireManualReview = requireManualReview;
         this.mockOutcome = mockOutcome;
         this.status = RecruitmentTaskStatus.DRAFT;
+        this.schedulerEnabled = true;
         this.createdAt = Instant.now();
         this.updatedAt = this.createdAt;
     }
@@ -87,7 +92,17 @@ public class RecruitmentTask {
         this.mockOutcome = mockOutcome;
     }
 
-    public void changeStatus(RecruitmentTaskStatus status) { this.status = status; }
+    public void changeStatus(RecruitmentTaskStatus status) {
+        this.status = status;
+        if (status == RecruitmentTaskStatus.RUNNING) nextRunAt = Instant.now();
+        else if (status != RecruitmentTaskStatus.READY) nextRunAt = null;
+    }
+
+    public void scheduleNext(Instant scheduledAt, Instant nextRunAt, String owner) {
+        this.lastScheduledAt = scheduledAt;
+        this.nextRunAt = nextRunAt;
+        this.lastSchedulerOwner = owner;
+    }
 
     public void prepareQuota(LocalDate today) {
         if (!today.equals(quotaDate)) {
@@ -134,6 +149,10 @@ public class RecruitmentTask {
     public LocalDate getQuotaDate() { return quotaDate; }
     public Instant getLastRunAt() { return lastRunAt; }
     public String getLastError() { return lastError; }
+    public boolean isSchedulerEnabled() { return schedulerEnabled; }
+    public Instant getNextRunAt() { return nextRunAt; }
+    public Instant getLastScheduledAt() { return lastScheduledAt; }
+    public String getLastSchedulerOwner() { return lastSchedulerOwner; }
     public long getVersion() { return version; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }

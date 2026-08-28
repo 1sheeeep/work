@@ -20,8 +20,8 @@ public class HrNotification {
     @Column(name="created_at",nullable=false) private Instant createdAt;
     @Column(name="updated_at",nullable=false) private Instant updatedAt;
     protected HrNotification() {}
-    public HrNotification(InterviewSchedule schedule,int round,SystemUser recipient){
-        id=UUID.randomUUID();this.schedule=schedule;confirmationRound=round;this.recipient=recipient;channel=NotificationChannel.IN_APP_MOCK;
+    public HrNotification(InterviewSchedule schedule,int round,SystemUser recipient,NotificationChannel channel){
+        id=UUID.randomUUID();this.schedule=schedule;confirmationRound=round;this.recipient=recipient;this.channel=channel;
         status=NotificationStatus.PENDING;createdAt=Instant.now();updatedAt=createdAt;
     }
     public void apply(boolean succeeded,String message){attemptCount++;if(succeeded){status=NotificationStatus.SENT;sentAt=Instant.now();lastError=null;}else{status=NotificationStatus.FAILED;lastError=message;}}

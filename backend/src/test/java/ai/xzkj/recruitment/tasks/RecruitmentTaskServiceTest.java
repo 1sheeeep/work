@@ -29,6 +29,8 @@ import java.util.Set;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -145,6 +147,28 @@ class RecruitmentTaskServiceTest {
 
         assertThat(response.task().status()).isEqualTo(RecruitmentTaskStatus.FAILED);
         assertThat(response.task().lastError()).isEqualTo("temporary failure");
+    }
+
+    @Test
+    void scheduledCycleRunsWithoutInteractiveUserAndRecordsSchedulerOwner() {
+        RecruitmentTask task = task(MockExecutionOutcome.SUCCESS, 10);
+        task.changeStatus(RecruitmentTaskStatus.RUNNING);
+        when(taskRepository.findWithDetailsById(task.getId())).thenReturn(Optional.of(task));
+        when(jobRepository.findWithDetailsById(job.getId())).thenReturn(Optional.of(job));
+        when(executionRepository.findByTaskIdAndIdempotencyKey(task.getId(), "scheduled-1")).thenReturn(Optional.empty());
+        when(executionRepository.countByTaskId(task.getId())).thenReturn(0L);
+        when(executionRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(gateway.executeRecruitmentCycle(any(), any())).thenReturn(new BossGateway.RecruitmentCycleResult(
+                BossGateway.RecruitmentCycleOutcome.SUCCEEDED, 5, "ok"));
+        Instant next = Instant.now().plusSeconds(60);
+
+        service.runScheduled(task.getId(), "scheduled-1", "node-a", next);
+
+        assertThat(task.getLastSchedulerOwner()).isEqualTo("node-a");
+        assertThat(task.getNextRunAt()).isEqualTo(next);
+        verify(currentUserService, never()).requireCurrentUser();
+        verify(auditService).systemSuccess(eq("SCHEDULE_RECRUITMENT_TASK"), eq("RECRUITMENT_TASK"),
+                eq(task.getId()), eq(task.getName()), anyString());
     }
 
     private RecruitmentTask task(MockExecutionOutcome outcome, int quota) {

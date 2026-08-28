@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 test('administrator can configure, run and retry an automatic recruitment task', async ({ page }, testInfo) => {
+  test.setTimeout(60_000)
   const adminUsername = process.env.E2E_USERNAME
   const adminPassword = process.env.E2E_PASSWORD
   if (!adminUsername || !adminPassword) throw new Error('E2E credentials are not configured')
@@ -58,6 +59,16 @@ test('administrator can configure, run and retry an automatic recruitment task',
 
   await taskContainer().getByRole('button', { name: '暂停' }).click()
   await expect(taskContainer().getByText('已暂停', { exact: true })).toBeVisible()
+  const beforeScheduledRun = await fetchTask()
+  await taskContainer().getByRole('button', { name: '恢复' }).click()
+  await expect.poll(async () => (await fetchTask()).processedToday, { timeout: 25_000, intervals: [1_000] })
+    .toBeGreaterThan(beforeScheduledRun.processedToday)
+  const afterScheduledRun = await fetchTask()
+  expect(afterScheduledRun.lastSchedulerOwner).toBeTruthy()
+  expect(afterScheduledRun.nextRunAt).toBeTruthy()
+  await queryTasks()
+  await taskContainer().getByRole('button', { name: '暂停' }).click()
+  await expect(taskContainer().getByText('已暂停', { exact: true })).toBeVisible()
   const dimensions = await page.evaluate(() => ({ width: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth }))
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.width)
   await expect(page.locator('.el-message')).toHaveCount(0, { timeout: 10_000 })
@@ -73,6 +84,15 @@ test('administrator can configure, run and retry an automatic recruitment task',
       }),
       page.getByRole('button', { name: '查询' }).click(),
     ])
+  }
+
+  async function fetchTask() {
+    return page.evaluate(async (name) => {
+      const response = await fetch(`/api/recruitment-tasks?keyword=${encodeURIComponent(name)}`)
+      if (!response.ok) throw new Error(`任务读取失败：${response.status}`)
+      const tasks = await response.json()
+      return tasks.find((task: { name: string }) => task.name === name)
+    }, taskName)
   }
 
   async function editOutcome(option: '成功' | '失败') {

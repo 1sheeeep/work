@@ -1,0 +1,60 @@
+name: recruitment-console-staging
+services:
+  db:
+    image: postgres:17-alpine
+    env_file: ${APP_ENV_FILE:-.env.staging}
+    environment: { POSTGRES_PASSWORD_FILE: /run/secrets/db_password }
+    secrets: [db_password]
+    volumes: [staging_postgres_data:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"], interval: 5s, timeout: 5s, retries: 12 }
+    restart: unless-stopped
+  webhook-sink:
+    build: { context: ./staging/webhook-sink }
+    environment: { WEBHOOK_SECRET_FILE: /run/secrets/notification_webhook_secret }
+    secrets: [notification_webhook_secret]
+    healthcheck: { test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"], interval: 5s, timeout: 3s, retries: 12 }
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+  backend:
+    build: { context: ./backend }
+    env_file: ${APP_ENV_FILE:-.env.staging}
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/${POSTGRES_DB}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      SPRING_CONFIG_IMPORT: optional:configtree:/run/secrets/
+      APP_SECURE_COOKIE: "true"
+    secrets:
+      - { source: db_password, target: spring.datasource.password }
+      - { source: admin_password, target: app.bootstrap.admin-password }
+      - { source: ai_api_key, target: app.ai.api-key }
+      - { source: notification_webhook_secret, target: app.notification.webhook-secret }
+    depends_on: { db: { condition: service_healthy }, webhook-sink: { condition: service_healthy } }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health/readiness"], interval: 5s, timeout: 5s, retries: 12 }
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+  web:
+    build: { context: ./frontend }
+    env_file: ${APP_ENV_FILE:-.env.staging}
+    ports: ["80:80", "443:443"]
+    volumes: [./frontend/Caddyfile.production:/etc/caddy/Caddyfile:ro, staging_caddy_data:/data, staging_caddy_config:/config]
+    depends_on: { backend: { condition: service_healthy } }
+    healthcheck: { test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8081/healthz"], interval: 5s, timeout: 5s, retries: 12 }
+    restart: unless-stopped
+    read_only: true
+    security_opt: [no-new-privileges:true]
+  prometheus:
+    image: prom/prometheus:v3.7.3
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus"]
+    volumes: [./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro, staging_prometheus_data:/prometheus]
+    ports: ["127.0.0.1:9091:9090"]
+    restart: unless-stopped
+volumes: { staging_postgres_data: {}, staging_caddy_data: {}, staging_caddy_config: {}, staging_prometheus_data: {} }
+secrets:
+  db_password: { file: "${DB_PASSWORD_FILE:-./secrets/db_password}" }
+  admin_password: { file: "${ADMIN_PASSWORD_FILE:-./secrets/admin_password}" }
+  ai_api_key: { file: "${AI_API_KEY_FILE:-./secrets/ai_api_key}" }
+  notification_webhook_secret: { file: "${NOTIFICATION_WEBHOOK_SECRET_FILE:-./secrets/notification_webhook_secret}" }

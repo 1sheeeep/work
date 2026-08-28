@@ -1,0 +1,15 @@
+services:
+  webhook-sink:
+    build: { context: ./staging/webhook-sink }
+    environment: { WEBHOOK_SECRET: local-trial-signing-key-not-for-production }
+    ports: ["127.0.0.1:8090:8080"]
+    healthcheck: { test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"], interval: 2s, timeout: 2s, retries: 10 }
+  backend:
+    environment:
+      APP_NOTIFICATION_MODE: WEBHOOK
+      APP_NOTIFICATION_WEBHOOK_URL: http://webhook-sink:8080/hooks/hr
+      APP_NOTIFICATION_WEBHOOK_SECRET: local-trial-signing-key-not-for-production
+      APP_NOTIFICATION_ALLOW_INSECURE_HTTP: "true"
+      APP_NOTIFICATION_TRIAL_ENABLED: "true"
+      APP_NOTIFICATION_TRIAL_RECIPIENT_IDS: "*"
+    depends_on: { webhook-sink: { condition: service_healthy } }

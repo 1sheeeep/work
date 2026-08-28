@@ -27,6 +27,11 @@
 21. 登录失败按来源地址和用户名摘要限流；请求 ID 贯穿响应与新审计记录，审计内容自动脱敏。
 22. 审计表由 PostgreSQL trigger 禁止更新/删除；Gateway 具备超时、并发/频率限制、断路、指标和人工降级。
 23. 仓库提供 HTTPS/Secure Cookie 生产编排、Prometheus、只读容器、密钥文件、备份/恢复/隔离演练、smoke test 和回滚手册。
+24. 运行中招聘任务由后台轮询器自动执行，数据库租约支持过期接管和 fencing token，多实例共享幂等执行边界。
+25. 候选人支持 CSV/XLSX 预览后确认导入，校验格式/公式/字段并执行文件内和存量去重，原始外部 ID 不落库。
+26. AI 辅助支持 JD 结构化解析和候选人建议，默认 Mock、可切换 OpenAI-compatible Provider，记录输入摘要、模型/提示版本及审计。
+27. HR 通知支持 HMAC-SHA256 签名 Webhook、时间戳、幂等键、试运行白名单和 Gateway 弹性保护，真实载荷仅含匿名候选人引用。
+28. 提供独立预发布编排和内置签名校验接收器，可执行不含候选人个人信息的真实 HTTP 通知试运行。
 
 ## M2–M8 实现
 
@@ -66,12 +71,12 @@
 
 ## 验证状态
 
-- Flyway V1–V8 在 PostgreSQL 17 真实容器中迁移成功。
-- 后端 Java 21 + Maven 编译成功，48/48 测试通过。
+- Flyway V1–V14 在 PostgreSQL 17 真实容器中迁移成功。
+- 后端 Java 21 + Maven 编译成功，59/59 测试通过，覆盖调度、CSV/XLSX 解析、AI Mock、Webhook 签名和试运行白名单。
 - 前端 TypeScript 检查和 Vite 标准生产构建通过。
 - 前端 Vitest 8/8 通过。
-- Playwright 业务主链路和运行加固的桌面/移动回归共 16 条。
-- Docker Compose 中 db、backend、web 三个服务健康，入口为 <http://localhost:8088>。
+- 前端 Vitest 8/8 通过；默认 Mock 配置下 Playwright 16/16 通过，预发布 Webhook 配置下新增导入、AI 与真实签名通知 2/2 通过；任务流程会真实等待后台租约调度执行。
+- Docker Compose 本地试运行栈中 db、backend、web、webhook-sink 健康，入口为 <http://localhost:8088>，接收器为 <http://127.0.0.1:8090/events>。
 - 数据库核对确认 BOSS 账号表不含密码、Cookie、Token、Secret 或 Credential 字段。
 - 数据库核对确认跨企业职位绑定为 0，已启用职位的无效 BOSS/Capability 绑定为 0。
 - 数据库核对确认任务与职位 BOSS 账号错配为 0，执行幂等键重复为 0，任务关键动作均有审计记录。
@@ -79,6 +84,15 @@
 - 数据库核对确认面试确认记录缺失时段为 0、同一负责 HR 已确认时段冲突为 0、通知轮次与幂等键重复均为 0。
 - 审计更新/删除在真实 PostgreSQL 中均被拒绝，V8 后新审计记录缺失请求 ID 为 0。
 - 实际 `pg_dump` 备份成功，并在隔离数据库 `recruitment_restore_drill` 恢复验证 Flyway V8 和审计数据后自动清理。
+
+## M9–M13 实现
+
+- Flyway `V9`：任务调度字段和租约表；`V10`：导入批次/行；`V11`：AI 运行追踪；`V12`：Webhook 通知渠道；`V13–V14`：PostgreSQL/Hibernate 字段类型兼容。
+- 后台调度：到期扫描、原子租约获取、实例归属、租约过期接管、fencing token、周期幂等键、系统审计和运维快照。
+- 批量导入：Apache Commons CSV/POI 解析、中文/英文表头、文件安全上限、公式拒绝、不可逆去重摘要、两阶段确认和个人字段清理。
+- AI 辅助：Mock 与 OpenAI-compatible Gateway、外部候选人数据显式开关、超时/限流/断路、模型/提示版本与成功/失败追踪。
+- HR 通知：Mock/Webhook 模式切换、HTTPS 默认要求、HMAC 签名与时间戳、幂等投递、试运行开关/人员白名单和无个人信息测试载荷。
+- 预发布：独立数据卷、只读容器、Docker secrets、Prometheus、签名校验接收器、发布/停止条件和本地 trial overlay。
 
 ## 安全与范围边界
 
@@ -90,5 +104,6 @@
 ## 下一步
 
 1. 在目标主机配置真实域名、DNS、防火墙、TLS 签发和离机加密备份存储。
-2. 由产品/法务确认候选人数据保留期、真实 HR 通知渠道和 BOSS 正式授权方式后，才进入真实 Gateway 集成。
-3. 生产发布步骤、告警建议与回滚边界见 `OPERATIONS_RUNBOOK.md`。
+2. 由产品/法务确认候选人数据保留期、外部 AI 数据处理边界和 BOSS 正式授权方式。
+3. 将真实 HR Webhook URL/签名密钥和 1–3 名试运行 HR UUID 配入预发布，观察至少一个工作日后再扩大范围。
+4. 预发布见 `STAGING_RUNBOOK.md`；生产发布、告警与回滚见 `OPERATIONS_RUNBOOK.md`。

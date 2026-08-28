@@ -54,6 +54,7 @@ class InterviewServiceTest {
         recruiter = new SystemUser("recruiter", "hash", "招聘专员", UserRole.RECRUITER);
         recruiter.assignCompanyScopes(Set.of(company));
         when(currentUserService.requireCurrentUser()).thenReturn(recruiter);
+        lenient().when(notificationGateway.channel()).thenReturn(NotificationChannel.IN_APP_MOCK);
     }
 
     @Test void createsScheduleWithTwoFutureSlots() {

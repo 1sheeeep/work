@@ -1,4 +1,8 @@
 spring:
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 6MB
   application:
     name: recruitment-console
   datasource:
@@ -45,6 +49,30 @@ management:
       enabled: true
 
 app:
+  ai:
+    mode: ${APP_AI_MODE:MOCK}
+    base-url: ${APP_AI_BASE_URL:https://api.openai.com/v1}
+    api-key: ${APP_AI_API_KEY:}
+    model: ${APP_AI_MODEL:mock-recruitment-v1}
+    prompt-version: ${APP_AI_PROMPT_VERSION:recruitment-assistant-v1}
+    timeout: ${APP_AI_TIMEOUT:15s}
+    allow-candidate-data: ${APP_AI_ALLOW_CANDIDATE_DATA:false}
+  notification:
+    mode: ${APP_NOTIFICATION_MODE:MOCK}
+    webhook-url: ${APP_NOTIFICATION_WEBHOOK_URL:}
+    webhook-secret: ${APP_NOTIFICATION_WEBHOOK_SECRET:}
+    timeout: ${APP_NOTIFICATION_TIMEOUT:5s}
+    allow-insecure-http: ${APP_NOTIFICATION_ALLOW_INSECURE_HTTP:false}
+    trial-enabled: ${APP_NOTIFICATION_TRIAL_ENABLED:false}
+    trial-recipient-ids: ${APP_NOTIFICATION_TRIAL_RECIPIENT_IDS:}
+  scheduler:
+    enabled: ${APP_SCHEDULER_ENABLED:true}
+    instance-id: ${APP_SCHEDULER_INSTANCE_ID:${HOSTNAME:scheduler-local}}
+    poll-interval: ${APP_SCHEDULER_POLL_INTERVAL:10s}
+    initial-delay: ${APP_SCHEDULER_INITIAL_DELAY:10s}
+    lease-duration: ${APP_SCHEDULER_LEASE_DURATION:45s}
+    cadence: ${APP_SCHEDULER_CADENCE:1m}
+    batch-size: ${APP_SCHEDULER_BATCH_SIZE:20}
   gateway:
     timeout: ${APP_GATEWAY_TIMEOUT:3s}
     max-concurrent: ${APP_GATEWAY_MAX_CONCURRENT:8}

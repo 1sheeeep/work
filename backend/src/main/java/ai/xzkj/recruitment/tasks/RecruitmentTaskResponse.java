@@ -22,6 +22,10 @@ public record RecruitmentTaskResponse(
         LocalDate quotaDate,
         Instant lastRunAt,
         String lastError,
+        boolean schedulerEnabled,
+        Instant nextRunAt,
+        Instant lastScheduledAt,
+        String lastSchedulerOwner,
         long version,
         Instant createdAt,
         Instant updatedAt
@@ -36,7 +40,8 @@ public record RecruitmentTaskResponse(
                 task.getName(), task.getExecutionStrategy(), task.getDailyQuota(), task.getWindowStart(),
                 task.getWindowEnd(), task.getTimezone(), task.isRequireManualReview(), task.getMockOutcome(),
                 task.getStatus(), task.getProcessedToday(), task.getQuotaDate(), task.getLastRunAt(),
-                task.getLastError(), task.getVersion(), task.getCreatedAt(), task.getUpdatedAt());
+                task.getLastError(), task.isSchedulerEnabled(), task.getNextRunAt(), task.getLastScheduledAt(),
+                task.getLastSchedulerOwner(), task.getVersion(), task.getCreatedAt(), task.getUpdatedAt());
     }
 
     public record JobSummary(UUID id, String title, UUID companyId, String companyName, String companyCode) {

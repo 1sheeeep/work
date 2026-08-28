@@ -34,6 +34,11 @@ public class AuditService {
                 AuditResult.FAILURE, sanitize(details, 1000)));
     }
 
+    public void systemSuccess(String action, String targetType, UUID targetId, String targetLabel, String details) {
+        repository.save(new AuditLog("scheduler", action, targetType, sanitize(targetLabel, 160),
+                AuditResult.SUCCESS, sanitize(details, 1000)));
+    }
+
     private String sanitize(String value, int max) {
         if (value == null) return null;
         String clean = SENSITIVE.matcher(value.replace('\n', ' ').replace('\r', ' ')).replaceAll("$1$2[REDACTED]");

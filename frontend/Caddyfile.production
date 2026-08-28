@@ -8,6 +8,13 @@
 		?Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
 		?Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 	}
+	handle /api/candidate-imports/preview {
+		request_body {
+			max_size 6MB
+		}
+		header Cache-Control "no-store"
+		reverse_proxy backend:8080
+	}
 	handle /api/* {
 		request_body {
 			max_size 1MB

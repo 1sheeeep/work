@@ -3,7 +3,7 @@
 ## 上线前必做
 
 1. 复制 `.env.production.example` 为 `.env.production`，填写真实 HTTPS 域名，不在文件中放密码。
-2. 从 `secrets/*.example` 创建无 `.example` 后缀的密钥文件，权限设为 `0600`；这些文件已被 Git 忽略。
+2. 从 `secrets/*.example` 创建无 `.example` 后缀的数据库、管理员、AI API Key 和通知 Webhook 签名密钥文件，权限设为 `0600`；这些文件已被 Git 忽略。Mock AI/Mock 通知下也保留非空占位文件，禁止放真实值到 Git。
 3. 域名 A/AAAA 记录指向主机，防火墙仅开放 80/443 和受控管理入口。
 4. 执行 `docker compose -f compose.production.yaml --env-file .env.production config`，检查结果中无明文密码。
 5. 执行 `scripts/release-check.sh` 和全量 Playwright，再创建数据库备份。
@@ -25,6 +25,7 @@ Caddy 自动申请和续期 TLS 证书；应用 Session Cookie 在生产配置�
 - Prometheus 仅绑定 `127.0.0.1:9090`，不直接公开。
 - 建议告警：就绪检查连续 3 次失败、5xx 比例 > 2%、Gateway 超时/断路计数增长、PostgreSQL 磁盘 > 80%。
 - 管理员可访问 `/api/operations/gateways` 查看各 Gateway 操作的连续失败数和断路截止时间。
+- 管理员运行保障页还会显示调度租约、待运行任务和 HR 通知渠道配置状态。
 
 ## 备份与恢复
 
@@ -53,5 +54,5 @@ scripts/restore-drill.sh
 ## 数据保留与人工降级
 
 - 候选人保留期尚待产品/法务确认；在此之前不自动删除，使用已有匿名化功能处理合法删除请求。
-- BOSS 或 Notification Gateway 超时、限流或断路时，任务进入“需人工介入”，消息/通知保留为失败状态供后续幂等重试。
+- BOSS、AI 或 Notification Gateway 超时、限流或断路时，操作返回可恢复失败；任务进入“需人工介入”，消息/通知保留为失败状态供后续幂等重试。
 - 不得将 Cookie、Token、密码、候选人消息正文写入审计或普通日志。

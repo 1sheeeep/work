@@ -133,7 +133,7 @@ public class RecruitmentTaskService {
     public TaskRunResponse run(UUID id, String idempotencyKey) {
         SystemUser user = requireManager();
         RecruitmentTask task = requireAccessibleTask(id, user);
-        return execute(task, cleanIdempotencyKey(idempotencyKey), user, false);
+        return execute(task, cleanIdempotencyKey(idempotencyKey), user, false, null, null);
     }
 
     @Transactional
@@ -150,12 +150,33 @@ public class RecruitmentTaskService {
             throw new ApiException(HttpStatus.CONFLICT, "TASK_NOT_RETRYABLE", "只有失败或需人工介入的任务可以重试");
         }
         task.changeStatus(RecruitmentTaskStatus.RUNNING);
-        return execute(task, key, user, true);
+        return execute(task, key, user, true, null, null);
     }
 
-    private TaskRunResponse execute(RecruitmentTask task, String key, SystemUser user, boolean retry) {
+    @Transactional
+    public void runScheduled(UUID id, String idempotencyKey, String schedulerOwner, Instant nextAttemptAt) {
+        RecruitmentTask task = taskRepository.findWithDetailsById(id).orElse(null);
+        if (task == null || task.getStatus() != RecruitmentTaskStatus.RUNNING || !task.isSchedulerEnabled()) return;
+        requireEligibleBinding(task.getJobPosition().getId(), task.getBossAccount().getId(), null);
+        ZonedDateTime now = ZonedDateTime.now(requireZone(task.getTimezone()));
+        if (!insideWindow(now.toLocalTime(), task.getWindowStart(), task.getWindowEnd())) {
+            task.scheduleNext(Instant.now(), nextAttemptAt, schedulerOwner);
+            return;
+        }
+        task.prepareQuota(now.toLocalDate());
+        if (task.getDailyQuota() - task.getProcessedToday() <= 0) {
+            task.changeStatus(RecruitmentTaskStatus.COMPLETED);
+            task.scheduleNext(Instant.now(), null, schedulerOwner);
+            return;
+        }
+        execute(task, cleanIdempotencyKey(idempotencyKey), null, false, schedulerOwner, nextAttemptAt);
+    }
+
+    private TaskRunResponse execute(RecruitmentTask task, String key, SystemUser user, boolean retry,
+                                    String schedulerOwner, Instant nextAttemptAt) {
         var existing = executionRepository.findByTaskIdAndIdempotencyKey(task.getId(), key);
         if (existing.isPresent()) {
+            if (schedulerOwner != null) task.scheduleNext(Instant.now(), nextAttemptAt, schedulerOwner);
             return new TaskRunResponse(RecruitmentTaskResponse.from(task), TaskExecutionResponse.from(existing.get()), true);
         }
         if (task.getStatus() != RecruitmentTaskStatus.RUNNING) {
@@ -188,9 +209,15 @@ public class RecruitmentTaskService {
             case FAILED -> task.applyFailure(gatewayResult.message(), Instant.now());
             case NEEDS_ATTENTION -> task.applyNeedsAttention(gatewayResult.message(), Instant.now());
         }
-        auditService.success(retry ? "RETRY_RECRUITMENT_TASK" : "RUN_RECRUITMENT_TASK",
-                "RECRUITMENT_TASK", task.getId(), task.getName(),
-                "Mock 执行结果 " + gatewayResult.outcome().name() + "，处理 " + gatewayResult.processedCount() + " 项");
+        if (schedulerOwner != null) {
+            task.scheduleNext(Instant.now(), task.getStatus() == RecruitmentTaskStatus.RUNNING ? nextAttemptAt : null, schedulerOwner);
+            auditService.systemSuccess("SCHEDULE_RECRUITMENT_TASK", "RECRUITMENT_TASK", task.getId(), task.getName(),
+                    "Gateway 执行结果 " + gatewayResult.outcome().name() + "，处理 " + gatewayResult.processedCount() + " 项");
+        } else {
+            auditService.success(retry ? "RETRY_RECRUITMENT_TASK" : "RUN_RECRUITMENT_TASK",
+                    "RECRUITMENT_TASK", task.getId(), task.getName(),
+                    "Gateway 执行结果 " + gatewayResult.outcome().name() + "，处理 " + gatewayResult.processedCount() + " 项");
+        }
         return new TaskRunResponse(RecruitmentTaskResponse.from(task), TaskExecutionResponse.from(execution), false);
     }
 
@@ -206,7 +233,7 @@ public class RecruitmentTaskService {
     private JobPosition requireEligibleBinding(UUID jobId, UUID bossAccountId, SystemUser user) {
         JobPosition job = jobRepository.findWithDetailsById(jobId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "JOB_POSITION_NOT_FOUND", "职位不存在"));
-        requireCompanyAccess(job.getCompany().getId(), user);
+        if (user != null) requireCompanyAccess(job.getCompany().getId(), user);
         if (job.getStatus() != JobPositionStatus.ACTIVE) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "JOB_POSITION_NOT_ACTIVE", "任务只能绑定已启用职位");
         }

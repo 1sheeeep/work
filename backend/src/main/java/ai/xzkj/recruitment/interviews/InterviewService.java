@@ -82,7 +82,7 @@ public class InterviewService {
         selected.confirm();slotRepository.findByScheduleIdAndRoundNumberOrderByStartsAtAsc(id,schedule.getCurrentRound()).stream()
                 .filter(slot->!slot.getId().equals(selected.getId())&&slot.getStatus()==InterviewSlotStatus.AVAILABLE).forEach(InterviewSlot::decline);
         schedule.confirm(selected,key);HrNotification notification=notificationRepository.findByScheduleIdAndConfirmationRound(id,schedule.getCurrentRound())
-                .orElseGet(()->notificationRepository.save(new HrNotification(schedule,schedule.getCurrentRound(),schedule.getOwnerHr())));
+                .orElseGet(()->notificationRepository.save(new HrNotification(schedule,schedule.getCurrentRound(),schedule.getOwnerHr(),notificationGateway.channel())));
         Delivery delivery=deliver(schedule,notification,key);auditService.success("CONFIRM_INTERVIEW","INTERVIEW_SCHEDULE",id,auditLabel(schedule.getContact()),
                 "面试时间已确认，HR 通知结果 "+delivery.notification().status().name());
         return new InterviewConfirmationResponse(response(schedule),InterviewConfirmationResult.CONFIRMED,delivery.notification(),false);}
