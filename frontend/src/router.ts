@@ -14,6 +14,7 @@ const router = createRouter({
         { path: 'job-positions', name: 'job-positions', component: () => import('./views/JobPositionsView.vue') },
         { path: 'recruitment-tasks', name: 'recruitment-tasks', component: () => import('./views/RecruitmentTasksView.vue') },
         { path: 'candidates', name: 'candidates', component: () => import('./views/CandidatesView.vue') },
+        { path: 'interviews', name: 'interviews', component: () => import('./views/InterviewsView.vue') },
         { path: 'hr-users', name: 'hr-users', component: () => import('./views/HrUsersView.vue'), meta: { role: 'SYSTEM_ADMIN' } },
         { path: 'audit-logs', name: 'audit-logs', component: () => import('./views/AuditLogView.vue'), meta: { role: 'SYSTEM_ADMIN' } },
       ],

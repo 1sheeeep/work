@@ -24,6 +24,10 @@ const actionLabels: Record<string, string> = {
   IMPORT_CANDIDATE_MESSAGE: '写入候选人消息', CREATE_MESSAGE_DRAFT: '新增外发草稿',
   REVIEW_AND_SEND_MESSAGE: '审核并发送消息', REJECT_MESSAGE_DRAFT: '驳回外发草稿',
   ANONYMIZE_CANDIDATE: '匿名化候选人',
+  CREATE_INTERVIEW_SCHEDULE: '创建面试时间', RESCHEDULE_INTERVIEW: '重新约定面试',
+  CONFIRM_INTERVIEW: '确认面试时间', CONFIRM_INTERVIEW_EXPIRED: '面试时间过期',
+  CONFIRM_INTERVIEW_CONFLICT: '面试时间冲突', RETRY_HR_NOTIFICATION: '重试 HR 通知',
+  UPDATE_NOTIFICATION_MOCK: '更新 Mock 通知结果', CANCEL_INTERVIEW: '取消面试安排',
 }
 
 async function loadLogs() {
