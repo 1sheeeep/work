@@ -19,5 +19,16 @@ export type ExecutionStrategy = 'BALANCED' | 'QUALITY_FIRST' | 'FAST'
 export type MockExecutionOutcome = 'SUCCESS' | 'FAILURE' | 'NEEDS_ATTENTION'
 export interface RecruitmentTask { id: string; jobPosition: { id: string; title: string; companyId: string; companyName: string; companyCode: string }; bossAccount: { id: string; displayName: string; externalIdentifier: string }; name: string; executionStrategy: ExecutionStrategy; dailyQuota: number; windowStart: string; windowEnd: string; timezone: string; requireManualReview: boolean; mockOutcome: MockExecutionOutcome; status: RecruitmentTaskStatus; processedToday: number; quotaDate?: string; lastRunAt?: string; lastError?: string; version: number; createdAt: string; updatedAt: string }
 export interface TaskExecution { id: string; idempotencyKey: string; attemptNumber: number; requestedCount: number; processedCount: number; status: 'SUCCEEDED' | 'FAILED' | 'NEEDS_ATTENTION'; message?: string; startedAt: string; completedAt?: string }
+export type CandidateSource = 'BOSS_MOCK' | 'MANUAL'
+export type CandidatePrivacyStatus = 'ACTIVE' | 'ANONYMIZED'
+export type CandidateContactStatus = 'NEW' | 'SCREENING' | 'QUALIFIED' | 'REJECTED' | 'CONTACTING'
+export type ScreeningOutcome = 'PASS' | 'REJECT' | 'REVIEW'
+export type ScreeningDecisionType = 'HARD_RULE' | 'AI_SUGGESTION' | 'HUMAN_OVERRIDE'
+export type MessageSenderType = 'CANDIDATE' | 'AI' | 'HR' | 'SYSTEM'
+export type MessageDeliveryStatus = 'RECEIVED' | 'PENDING_REVIEW' | 'SENT' | 'REJECTED' | 'FAILED'
+export interface ScreeningDecision { id: string; decisionType: ScreeningDecisionType; outcome: ScreeningOutcome; engineVersion?: string; modelVersion?: string; promptVersion?: string; rationale: string; createdBy?: { id: string; displayName: string }; createdAt: string }
+export interface ConversationMessage { id: string; externalMessageId: string; direction: 'INBOUND' | 'OUTBOUND'; senderType: MessageSenderType; deliveryStatus: MessageDeliveryStatus; content: string; modelVersion?: string; promptVersion?: string; createdBy?: { id: string; displayName: string }; approvedAt?: string; createdAt: string }
+export interface CandidateContact { id: string; candidateId: string; company: CompanyScope; jobPosition: { id: string; title: string }; bossAccount: { id: string; displayName: string }; source: CandidateSource; sourceReference: string; displayName: string; currentTitle?: string; yearsExperience?: number; education?: string; skillsSummary?: string; privacyStatus: CandidatePrivacyStatus; status: CandidateContactStatus; humanTakenOver: boolean; assignedHr?: { id: string; displayName: string }; latestHardRule?: ScreeningDecision; latestAiSuggestion?: ScreeningDecision; latestHumanOverride?: ScreeningDecision; createdAt: string; updatedAt: string }
+export interface CandidateDetail { candidate: CandidateContact; decisions: ScreeningDecision[]; messages: ConversationMessage[] }
 export interface AuditLog { id: string; actorName: string; action: string; targetType: string; targetId?: string; targetLabel?: string; result: 'SUCCESS' | 'FAILURE'; details?: string; occurredAt: string }
 export interface ApiErrorBody { status: number; code: string; message: string; fieldErrors?: Record<string, string> }

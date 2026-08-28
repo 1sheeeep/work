@@ -34,4 +34,13 @@ public class MockBossGateway implements BossGateway {
                     RecruitmentCycleOutcome.SUCCEEDED, Math.min(request.limit(), 5), "Mock 执行成功");
         };
     }
+
+    @Override
+    public MessageSendResult sendMessage(BossAccount account, MessageSendRequest request) {
+        if (account.getMockProfile() != MockBossProfile.FULL
+                || !account.getCapabilities().contains(BossCapability.MESSAGE_SEND)) {
+            return new MessageSendResult(false, "Mock BOSS 账号不具备消息发送能力");
+        }
+        return new MessageSendResult(true, "Mock 消息已发送");
+    }
 }

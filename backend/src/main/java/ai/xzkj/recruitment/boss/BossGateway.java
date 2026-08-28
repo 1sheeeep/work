@@ -8,6 +8,8 @@ public interface BossGateway {
 
     RecruitmentCycleResult executeRecruitmentCycle(BossAccount account, RecruitmentCycleRequest request);
 
+    MessageSendResult sendMessage(BossAccount account, MessageSendRequest request);
+
     record BossCapabilityCheckResult(BossConnectionStatus status, Set<BossCapability> capabilities) {
     }
 
@@ -23,4 +25,8 @@ public interface BossGateway {
         FAILED,
         NEEDS_ATTENTION
     }
+
+    record MessageSendRequest(UUID contactId, String idempotencyKey, String content) {}
+
+    record MessageSendResult(boolean succeeded, String message) {}
 }

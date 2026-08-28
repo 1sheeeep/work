@@ -19,6 +19,11 @@ const actionLabels: Record<string, string> = {
   CREATE_RECRUITMENT_TASK: '新增招聘任务', UPDATE_RECRUITMENT_TASK: '更新招聘任务',
   CHANGE_RECRUITMENT_TASK_STATUS: '变更招聘任务状态', RUN_RECRUITMENT_TASK: '执行招聘任务',
   RETRY_RECRUITMENT_TASK: '重试招聘任务',
+  CREATE_CANDIDATE_CONTACT: '新增候选人', TAKE_OVER_CANDIDATE: '人工接管候选人',
+  RELEASE_CANDIDATE: '释放人工接管', OVERRIDE_CANDIDATE_SCREENING: '人工覆盖筛选结论',
+  IMPORT_CANDIDATE_MESSAGE: '写入候选人消息', CREATE_MESSAGE_DRAFT: '新增外发草稿',
+  REVIEW_AND_SEND_MESSAGE: '审核并发送消息', REJECT_MESSAGE_DRAFT: '驳回外发草稿',
+  ANONYMIZE_CANDIDATE: '匿名化候选人',
 }
 
 async function loadLogs() {
