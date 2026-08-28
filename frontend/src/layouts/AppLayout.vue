@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Briefcase, Calendar, Connection, DataAnalysis, Expand, OfficeBuilding, Operation, SwitchButton, User, UserFilled } from '@element-plus/icons-vue'
+import { Briefcase, Calendar, Connection, DataAnalysis, Expand, Monitor, OfficeBuilding, Operation, SwitchButton, User, UserFilled } from '@element-plus/icons-vue'
 import { authStore } from '../stores/auth'
 
 const route = useRoute()
@@ -21,10 +21,11 @@ const navigation = computed(() => [
   ...(user.value?.role === 'SYSTEM_ADMIN' ? [
     { path: '/hr-users', label: 'HR 用户', icon: User },
     { path: '/audit-logs', label: '操作日志', icon: DataAnalysis },
+    { path: '/operations', label: '运行保障', icon: Monitor },
   ] : []),
 ])
 const roleLabel = computed(() => ({ SYSTEM_ADMIN: '系统管理员', RECRUITMENT_ADMIN: '招聘管理员', RECRUITER: '招聘专员' }[user.value?.role ?? 'SYSTEM_ADMIN']))
-const workspaceLabel = computed(() => ({ organization: '组织管理', 'boss-accounts': 'BOSS 账号', 'job-positions': '职位管理', 'recruitment-tasks': '招聘任务', candidates: '候选人工作台', interviews: '面试协调', 'hr-users': 'HR 用户', 'audit-logs': '操作日志' }[String(route.name)] ?? '招聘工作台'))
+const workspaceLabel = computed(() => ({ organization: '组织管理', 'boss-accounts': 'BOSS 账号', 'job-positions': '职位管理', 'recruitment-tasks': '招聘任务', candidates: '候选人工作台', interviews: '面试协调', 'hr-users': 'HR 用户', 'audit-logs': '操作日志', operations: '运行保障' }[String(route.name)] ?? '招聘工作台'))
 
 function navigate(path: string) {
   mobileNavOpen.value = false

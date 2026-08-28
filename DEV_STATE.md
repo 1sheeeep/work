@@ -24,8 +24,11 @@
 18. HR 可人工接管/释放会话；接管期间禁止 AI 生成草稿；管理员可匿名化候选人全部职位关系下的资料、筛选理由和会话正文。
 19. 面试安排每轮提供 2–5 个带 IANA 时区的未来时段，保留历史轮次，支持过期、负责 HR 时间冲突、重复确认、重约和取消。
 20. 确认面试以 `Idempotency-Key` 去重，并通过独立 `NotificationGateway` 通知负责 HR；Mock 失败可幂等重试，已发送通知不会再调用 Gateway。
+21. 登录失败按来源地址和用户名摘要限流；请求 ID 贯穿响应与新审计记录，审计内容自动脱敏。
+22. 审计表由 PostgreSQL trigger 禁止更新/删除；Gateway 具备超时、并发/频率限制、断路、指标和人工降级。
+23. 仓库提供 HTTPS/Secure Cookie 生产编排、Prometheus、只读容器、密钥文件、备份/恢复/隔离演练、smoke test 和回滚手册。
 
-## M2–M7 实现
+## M2–M8 实现
 
 - Flyway `V2__hr_users_and_company_scopes.sql`：新增用户-企业授权关系和大小写不敏感用户名唯一索引。
 - 后端 `users` 模块：列表筛选、新增、编辑、启停、重置密码、角色和授权校验、审计。
@@ -55,20 +58,27 @@
 - 后端 `interviews` / `notifications` 模块：企业数据范围、候选人资格、时区/时段校验、冲突/过期分支、分轮重约、确认幂等、Mock 通知和通知重试幂等。
 - 前端面试协调页：响应式列表/卡片、统计与筛选、候选时间表单、协调抽屉、历史轮次、Mock 通知结果和失败重试。
 - 面试 E2E 复用 M6 候选人夹具，桌面/移动均验证时间确认、Mock 通知失败、修改结果和重试成功。
+- Flyway `V8__audit_integrity.sql`：为新审计记录增加请求 ID，并以 trigger 实现数据库级只追加。
+- 安全加固：登录失败限流、用户名摘要审计、CSP/防嵌入/权限策略安全头、1 MB API 请求体上限、Cookie-only Session 和代理 HTTPS 识别。
+- Gateway 弹性：虚拟线程超时隔离、并发信号量、60 秒频率窗口、连续失败断路、Micrometer/Prometheus 计数与人工降级结果。
+- 运行保障页：管理员可查看 Flyway 版本、审计只追加状态、Gateway 失败/断路/限频窗口和并发余量。
+- 运维交付：生产 Compose、Caddy 自动 HTTPS、Docker secrets/configtree、Prometheus、备份恢复脚本、隔离恢复演练与发布/回滚手册。
 
 ## 验证状态
 
-- Flyway V1–V7 在 PostgreSQL 17 真实容器中迁移成功。
-- 后端 Java 21 + Maven 编译成功，38/38 测试通过。
+- Flyway V1–V8 在 PostgreSQL 17 真实容器中迁移成功。
+- 后端 Java 21 + Maven 编译成功，48/48 测试通过。
 - 前端 TypeScript 检查和 Vite 标准生产构建通过。
-- 前端 Vitest 7/7 通过。
-- Playwright 组织、HR 用户、BOSS 账号、职位、招聘任务、候选人和面试的桌面/移动回归共 14 条。
+- 前端 Vitest 8/8 通过。
+- Playwright 业务主链路和运行加固的桌面/移动回归共 16 条。
 - Docker Compose 中 db、backend、web 三个服务健康，入口为 <http://localhost:8088>。
 - 数据库核对确认 BOSS 账号表不含密码、Cookie、Token、Secret 或 Credential 字段。
 - 数据库核对确认跨企业职位绑定为 0，已启用职位的无效 BOSS/Capability 绑定为 0。
 - 数据库核对确认任务与职位 BOSS 账号错配为 0，执行幂等键重复为 0，任务关键动作均有审计记录。
 - 数据库核对确认原始 E2E 外部候选人 ID 未落库，候选人、职位接触和外部消息幂等键重复均为 0。
 - 数据库核对确认面试确认记录缺失时段为 0、同一负责 HR 已确认时段冲突为 0、通知轮次与幂等键重复均为 0。
+- 审计更新/删除在真实 PostgreSQL 中均被拒绝，V8 后新审计记录缺失请求 ID 为 0。
+- 实际 `pg_dump` 备份成功，并在隔离数据库 `recruitment_restore_drill` 恢复验证 Flyway V8 和审计数据后自动清理。
 
 ## 安全与范围边界
 
@@ -79,6 +89,6 @@
 
 ## 下一步
 
-1. 进入 M8 “上线前加固”：优先执行跨企业访问安全回归、审计完整性和日志脱敏核对。
-2. 补齐 Gateway 超时/限流/断路与人工降级演练，然后建立 HTTPS、备份恢复、发布和回滚清单。
-3. 详细顺序和每阶段验收标准见 `IMPLEMENTATION_ROADMAP.md`。
+1. 在目标主机配置真实域名、DNS、防火墙、TLS 签发和离机加密备份存储。
+2. 由产品/法务确认候选人数据保留期、真实 HR 通知渠道和 BOSS 正式授权方式后，才进入真实 Gateway 集成。
+3. 生产发布步骤、告警建议与回滚边界见 `OPERATIONS_RUNBOOK.md`。

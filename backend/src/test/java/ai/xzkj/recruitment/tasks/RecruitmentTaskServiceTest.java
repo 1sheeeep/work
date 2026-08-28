@@ -83,6 +83,15 @@ class RecruitmentTaskServiceTest {
     }
 
     @Test
+    void companyScopeCannotBeBypassedWithListFilter() {
+        Company hidden = new Company(new GroupProfile("隐藏集团", "隐藏"), "未授权企业", "HIDDEN", null, null);
+        when(currentUserService.requireCurrentUser()).thenReturn(admin);
+        assertThatThrownBy(() -> service.list(null, hidden.getId(), null)).isInstanceOf(ApiException.class)
+                .hasMessage("当前账号无权访问该企业数据");
+        verify(taskRepository, never()).findAllByOrderByCreatedAtDesc();
+    }
+
+    @Test
     void successfulCycleCompletesQuota() {
         RecruitmentTask task = task(MockExecutionOutcome.SUCCESS, 2);
         task.changeStatus(RecruitmentTaskStatus.RUNNING);

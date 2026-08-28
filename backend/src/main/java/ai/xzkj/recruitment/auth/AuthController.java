@@ -29,17 +29,20 @@ public class AuthController {
     private final SecurityContextRepository securityContextRepository;
     private final CurrentUserService currentUserService;
     private final AuditService auditService;
+    private final LoginAttemptService loginAttemptService;
 
     public AuthController(
             AuthenticationManager authenticationManager,
             SecurityContextRepository securityContextRepository,
             CurrentUserService currentUserService,
-            AuditService auditService
+            AuditService auditService,
+            LoginAttemptService loginAttemptService
     ) {
         this.authenticationManager = authenticationManager;
         this.securityContextRepository = securityContextRepository;
         this.currentUserService = currentUserService;
         this.auditService = auditService;
+        this.loginAttemptService = loginAttemptService;
     }
 
     @GetMapping("/csrf")
@@ -53,6 +56,8 @@ public class AuthController {
             HttpServletRequest request,
             HttpServletResponse response
     ) {
+        String remoteAddress = request.getRemoteAddr();
+        loginAttemptService.checkAllowed(remoteAddress, body.username());
         try {
             Authentication authentication = authenticationManager.authenticate(
                     UsernamePasswordAuthenticationToken.unauthenticated(body.username().trim(), body.password()));
@@ -61,9 +66,13 @@ public class AuthController {
             SecurityContextHolder.setContext(context);
             securityContextRepository.saveContext(context, request, response);
             SystemUser user = currentUserService.requireCurrentUser();
+            loginAttemptService.recordSuccess(remoteAddress, body.username());
             auditService.success("LOGIN", "SYSTEM_USER", user.getId(), user.getDisplayName(), "登录系统");
             return AuthenticatedUser.from(user);
         } catch (BadCredentialsException exception) {
+            loginAttemptService.recordFailure(remoteAddress, body.username());
+            auditService.anonymousFailure("LOGIN_FAILED", "SYSTEM_USER",
+                    loginAttemptService.anonymousReference(body.username()), "用户名或密码校验失败");
             throw new ApiException(HttpStatus.UNAUTHORIZED, "BAD_CREDENTIALS", "用户名或密码不正确");
         }
     }

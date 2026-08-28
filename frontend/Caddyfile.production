@@ -1,14 +1,13 @@
-:80 {
+{$APP_DOMAIN} {
 	encode zstd gzip
-
 	header {
+		?Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		?X-Content-Type-Options "nosniff"
 		?X-Frame-Options "DENY"
 		?Referrer-Policy "no-referrer"
 		?Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
 		?Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 	}
-
 	handle /api/* {
 		request_body {
 			max_size 1MB
@@ -16,14 +15,16 @@
 		header Cache-Control "no-store"
 		reverse_proxy backend:8080
 	}
-
 	handle /actuator/health* {
 		reverse_proxy backend:8080
 	}
-
 	handle {
 		root * /srv
 		try_files {path} /index.html
 		file_server
 	}
+}
+
+:8081 {
+	respond /healthz 200
 }

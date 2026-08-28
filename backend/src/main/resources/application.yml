@@ -19,9 +19,12 @@ spring:
     default-property-inclusion: non_null
 
 server:
+  forward-headers-strategy: framework
   servlet:
     session:
+      tracking-modes: cookie
       cookie:
+        name: RECRUITMENT_SESSION
         http-only: true
         same-site: lax
         secure: ${APP_SECURE_COOKIE:false}
@@ -31,13 +34,27 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus
   endpoint:
     health:
       probes:
         enabled: true
+      show-details: when-authorized
+  info:
+    env:
+      enabled: true
 
 app:
+  gateway:
+    timeout: ${APP_GATEWAY_TIMEOUT:3s}
+    max-concurrent: ${APP_GATEWAY_MAX_CONCURRENT:8}
+    rate-limit-per-minute: ${APP_GATEWAY_RATE_LIMIT_PER_MINUTE:120}
+    circuit-failure-threshold: ${APP_GATEWAY_CIRCUIT_FAILURE_THRESHOLD:3}
+    circuit-open-duration: ${APP_GATEWAY_CIRCUIT_OPEN_DURATION:30s}
+  security:
+    login-max-failures: ${APP_LOGIN_MAX_FAILURES:5}
+    login-window: ${APP_LOGIN_WINDOW:15m}
+    login-block-duration: ${APP_LOGIN_BLOCK_DURATION:15m}
   bootstrap:
     admin-username: ${APP_BOOTSTRAP_ADMIN_USERNAME:}
     admin-password: ${APP_BOOTSTRAP_ADMIN_PASSWORD:}

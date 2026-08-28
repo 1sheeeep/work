@@ -22,8 +22,8 @@ test('recruiter can confirm an interview and idempotently retry the HR notificat
   const scheduleContainer = () => isMobile
     ? page.locator('.interview-cards article', { hasText: candidateName })
     : page.locator('.interviews-table .el-table__row', { hasText: candidateName })
-  await querySchedules()
-  if (await scheduleContainer().count() === 0) {
+  const hasExistingSchedule = await querySchedules()
+  if (!hasExistingSchedule) {
     await page.getByRole('button', { name: '安排面试' }).first().click()
     const createDialog = page.getByRole('dialog', { name: '安排面试' })
     await createDialog.locator('.el-form-item', { hasText: '候选人 / 职位' }).locator('.el-select').click()
@@ -83,13 +83,16 @@ test('recruiter can confirm an interview and idempotently retry the HR notificat
 
   async function querySchedules() {
     await search.fill(candidateName)
-    await Promise.all([
+    const [response] = await Promise.all([
       page.waitForResponse(response => {
         const url = new URL(response.url())
         return url.pathname.endsWith('/api/interviews') && url.searchParams.get('keyword') === candidateName
       }),
       page.getByRole('button', { name: '查询' }).click(),
     ])
+    const schedules = await response.json() as unknown[]
+    if (schedules.length > 0) await expect(scheduleContainer().first()).toBeVisible()
+    return schedules.length > 0
   }
 
   async function selectMockOutcome(container: ReturnType<typeof page.locator>, option: '成功' | '失败') {

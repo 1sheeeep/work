@@ -28,6 +28,12 @@ services:
       APP_BOOTSTRAP_GROUP_NAME: ${APP_BOOTSTRAP_GROUP_NAME}
       APP_BOOTSTRAP_GROUP_SHORT_NAME: ${APP_BOOTSTRAP_GROUP_SHORT_NAME}
       APP_SECURE_COOKIE: "false"
+      APP_LOGIN_MAX_FAILURES: ${APP_LOGIN_MAX_FAILURES:-5}
+      APP_GATEWAY_TIMEOUT: ${APP_GATEWAY_TIMEOUT:-3s}
+      APP_GATEWAY_MAX_CONCURRENT: ${APP_GATEWAY_MAX_CONCURRENT:-8}
+      APP_GATEWAY_RATE_LIMIT_PER_MINUTE: ${APP_GATEWAY_RATE_LIMIT_PER_MINUTE:-120}
+      APP_GATEWAY_CIRCUIT_FAILURE_THRESHOLD: ${APP_GATEWAY_CIRCUIT_FAILURE_THRESHOLD:-3}
+      APP_GATEWAY_CIRCUIT_OPEN_DURATION: ${APP_GATEWAY_CIRCUIT_OPEN_DURATION:-30s}
     depends_on:
       db:
         condition: service_healthy
@@ -37,6 +43,9 @@ services:
       timeout: 5s
       retries: 12
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
 
   web:
     build:
@@ -52,6 +61,10 @@ services:
       timeout: 5s
       retries: 12
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /config
+      - /data
 
 volumes:
   recruitment_postgres_data:

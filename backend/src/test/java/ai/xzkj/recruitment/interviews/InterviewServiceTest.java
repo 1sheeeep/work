@@ -79,6 +79,19 @@ class InterviewServiceTest {
                 .hasMessage("只有已通过或沟通中的候选人可以安排面试");
     }
 
+    @Test void rejectsInterviewFromCompanyOutsideUserScope() {
+        Company hidden = new Company(new GroupProfile("隐藏集团", "隐藏"), "未授权企业", "HIDDEN", null, null);
+        BossAccount account = new BossAccount(hidden, "隐藏账号", "hidden", MockBossProfile.FULL);
+        JobPosition job = new JobPosition(hidden, account, "隐藏职位", "北京", 10, 20, 12, "1 年", "本科", "JD", null);
+        CandidateProfile profile = new CandidateProfile(hidden, CandidateSource.MANUAL, "b".repeat(64), "隐藏候选人", "开发", 2, "本科", "Java");
+        CandidateJobContact hiddenContact = new CandidateJobContact(profile, job, account);
+        InterviewSchedule hiddenSchedule = new InterviewSchedule(hiddenContact, recruiter, "Asia/Shanghai", MockNotificationOutcome.SUCCESS);
+        when(scheduleRepository.findWithDetailsById(hiddenSchedule.getId())).thenReturn(Optional.of(hiddenSchedule));
+
+        assertThatThrownBy(() -> service.detail(hiddenSchedule.getId())).isInstanceOf(ApiException.class)
+                .hasMessage("当前账号无权访问该企业数据");
+    }
+
     @Test void expiredSlotMovesScheduleToRescheduleRequired() {
         InterviewSchedule schedule = schedule();
         InterviewSlot expired = new InterviewSlot(schedule, 1, Instant.now().minusSeconds(120), Instant.now().minusSeconds(60));

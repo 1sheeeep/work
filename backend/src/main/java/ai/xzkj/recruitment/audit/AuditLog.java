@@ -1,6 +1,7 @@
 package ai.xzkj.recruitment.audit;
 
 import ai.xzkj.recruitment.auth.SystemUser;
+import ai.xzkj.recruitment.config.RequestTrace;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -49,6 +50,9 @@ public class AuditLog {
     @Column(name = "occurred_at", nullable = false)
     private Instant occurredAt;
 
+    @Column(name = "request_id", length = 64)
+    private String requestId;
+
     protected AuditLog() {
     }
 
@@ -71,6 +75,14 @@ public class AuditLog {
         this.result = result;
         this.details = details;
         this.occurredAt = Instant.now();
+        this.requestId = RequestTrace.currentId();
+    }
+
+    public AuditLog(String actorName, String action, String targetType, String targetLabel,
+                    AuditResult result, String details) {
+        this.id = UUID.randomUUID(); this.actorName = actorName; this.action = action; this.targetType = targetType;
+        this.targetLabel = targetLabel; this.result = result; this.details = details; this.occurredAt = Instant.now();
+        this.requestId = RequestTrace.currentId();
     }
 
     public UUID getId() { return id; }
@@ -82,4 +94,5 @@ public class AuditLog {
     public AuditResult getResult() { return result; }
     public String getDetails() { return details; }
     public Instant getOccurredAt() { return occurredAt; }
+    public String getRequestId() { return requestId; }
 }

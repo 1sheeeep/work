@@ -12,12 +12,13 @@ public record AuditLogResponse(
         String targetLabel,
         AuditResult result,
         String details,
+        String requestId,
         Instant occurredAt
 ) {
     static AuditLogResponse from(AuditLog log) {
         return new AuditLogResponse(
                 log.getId(), log.getActorName(), log.getAction(), log.getTargetType(),
-                log.getTargetId(), log.getTargetLabel(), log.getResult(), log.getDetails(), log.getOccurredAt()
+                log.getTargetId(), log.getTargetLabel(), log.getResult(), log.getDetails(), log.getRequestId(), log.getOccurredAt()
         );
     }
 }

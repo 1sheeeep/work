@@ -9,6 +9,7 @@ const errorMessage = ref('')
 const logs = ref<AuditLog[]>([])
 const actionLabels: Record<string, string> = {
   LOGIN: '登录系统', LOGOUT: '退出系统', UPDATE_GROUP: '更新集团资料',
+  LOGIN_FAILED: '登录失败',
   CREATE_COMPANY: '新增企业', UPDATE_COMPANY: '更新企业资料', CHANGE_COMPANY_STATUS: '变更企业状态',
   CREATE_HR_USER: '新增 HR 用户', UPDATE_HR_USER: '更新 HR 用户',
   CHANGE_HR_USER_STATUS: '变更 HR 用户状态', RESET_HR_USER_PASSWORD: '重置 HR 用户密码',
@@ -70,10 +71,11 @@ onMounted(loadLogs)
           <el-table-column label="操作" min-width="150"><template #default="{ row }"><strong>{{ actionLabels[row.action] || row.action }}</strong></template></el-table-column>
           <el-table-column prop="targetLabel" label="对象" min-width="160"><template #default="{ row }">{{ row.targetLabel || '系统' }}</template></el-table-column>
           <el-table-column prop="details" label="详情" min-width="220" />
+          <el-table-column prop="requestId" label="请求 ID" min-width="150"><template #default="{ row }"><code>{{ row.requestId || '历史记录' }}</code></template></el-table-column>
           <el-table-column label="结果" width="100"><template #default="{ row }"><el-tag :type="row.result === 'SUCCESS' ? 'success' : 'danger'">{{ row.result === 'SUCCESS' ? '成功' : '失败' }}</el-tag></template></el-table-column>
         </el-table>
         <div class="audit-cards">
-          <article v-for="log in logs" :key="log.id"><header><strong>{{ actionLabels[log.action] || log.action }}</strong><el-tag :type="log.result === 'SUCCESS' ? 'success' : 'danger'" size="small">{{ log.result === 'SUCCESS' ? '成功' : '失败' }}</el-tag></header><strong class="audit-target">{{ log.targetLabel || '系统' }}</strong><p>{{ log.details || '系统操作' }}</p><footer><span>{{ log.actorName }}</span><time>{{ formatDate(log.occurredAt) }}</time></footer></article>
+          <article v-for="log in logs" :key="log.id"><header><strong>{{ actionLabels[log.action] || log.action }}</strong><el-tag :type="log.result === 'SUCCESS' ? 'success' : 'danger'" size="small">{{ log.result === 'SUCCESS' ? '成功' : '失败' }}</el-tag></header><strong class="audit-target">{{ log.targetLabel || '系统' }}</strong><p>{{ log.details || '系统操作' }}</p><code>{{ log.requestId || '历史记录' }}</code><footer><span>{{ log.actorName }}</span><time>{{ formatDate(log.occurredAt) }}</time></footer></article>
         </div>
       </template>
     </section>

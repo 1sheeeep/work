@@ -26,8 +26,11 @@
 - 会话消息按外部消息 ID 幂等入库，AI/HR 外发草稿均先进入人工审核，支持人工接管和匿名化
 - 面试安排支持 2–5 个带 IANA 时区的候选时间，处理过期、同一负责 HR 时间冲突、重复确认和重新约定
 - 面试确认后经 `NotificationGateway` 通知负责 HR；当前为可控成功/失败的 Mock，支持幂等重试且已送达通知不会重复发送
+- 登录防爆破、统一请求 ID、CSP/防嵌入等安全头、审计脱敏和数据库级只追加保护
+- Gateway 统一超时、并发/频率限制、连续失败断路、Prometheus 指标和人工降级状态
+- 管理员运行保障页可查看 Flyway、审计防篡改和 Gateway 保护状态
 - 登录、组织、HR 用户、BOSS 账号、职位、招聘任务、候选人和面试关键操作审计
-- PostgreSQL Flyway V1–V7 迁移和 Docker Compose 本地运行
+- PostgreSQL Flyway V1–V8 迁移和 Docker Compose 本地/生产编排
 - 桌面与移动端响应式管理界面
 
 企业、HR 用户、BOSS 账号、职位和招聘任务均不提供物理删除，停用、关闭或进入终态后保留历史数据和关联边界。
@@ -89,11 +92,13 @@ npm.cmd run test:e2e
 
 健康检查：<http://localhost:8088/actuator/health>
 
+生产 HTTPS、密钥文件、Prometheus、备份恢复和回滚流程见 `OPERATIONS_RUNBOOK.md`。
+
 ## 配置边界
 
 - `.env` 不进入 Git，不要把真实密码、Token 或授权密钥写入代码和普通日志。
 - 正式环境必须设置 `APP_SECURE_COOKIE=true` 并通过 HTTPS 访问。
 - 当前已完成从组织、职位、招聘任务、候选人沟通到“确认面试并通知 HR”的 V1 主链路。
 - BOSS 能力暂时只能使用 Mock Gateway；不保存 Cookie、Token 或真实凭据。
-- 下一阶段是 M8 上线前加固：安全回归、网关弹性、数据保留、监控、备份与回滚；不提前建设 ATS、Offer 或入职功能。
+- M8 上线前加固已完成可在仓库内验证的部分；真实域名/TLS 签发、离机备份存储和外部 BOSS 授权仍需在目标环境执行。
 - 详细的分阶段实施和验收边界见 `IMPLEMENTATION_ROADMAP.md`。
