@@ -16,6 +16,9 @@ const actionLabels: Record<string, string> = {
   CHANGE_BOSS_ACCOUNT_STATUS: '变更 BOSS 账号状态', CHECK_BOSS_CAPABILITIES: '检查 BOSS 账号能力',
   CREATE_JOB_POSITION: '新增职位', UPDATE_JOB_POSITION: '更新职位',
   CHANGE_JOB_POSITION_STATUS: '变更职位状态',
+  CREATE_RECRUITMENT_TASK: '新增招聘任务', UPDATE_RECRUITMENT_TASK: '更新招聘任务',
+  CHANGE_RECRUITMENT_TASK_STATUS: '变更招聘任务状态', RUN_RECRUITMENT_TASK: '执行招聘任务',
+  RETRY_RECRUITMENT_TASK: '重试招聘任务',
 }
 
 async function loadLogs() {

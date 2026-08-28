@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Briefcase, Connection, DataAnalysis, Expand, OfficeBuilding, SwitchButton, User, UserFilled } from '@element-plus/icons-vue'
+import { Briefcase, Connection, DataAnalysis, Expand, OfficeBuilding, Operation, SwitchButton, User, UserFilled } from '@element-plus/icons-vue'
 import { authStore } from '../stores/auth'
 
 const route = useRoute()
@@ -15,13 +15,14 @@ const navigation = computed(() => [
   { path: '/organization', label: '集团与企业', icon: OfficeBuilding },
   { path: '/boss-accounts', label: 'BOSS 账号', icon: Connection },
   { path: '/job-positions', label: '职位管理', icon: Briefcase },
+  { path: '/recruitment-tasks', label: '招聘任务', icon: Operation },
   ...(user.value?.role === 'SYSTEM_ADMIN' ? [
     { path: '/hr-users', label: 'HR 用户', icon: User },
     { path: '/audit-logs', label: '操作日志', icon: DataAnalysis },
   ] : []),
 ])
 const roleLabel = computed(() => ({ SYSTEM_ADMIN: '系统管理员', RECRUITMENT_ADMIN: '招聘管理员', RECRUITER: '招聘专员' }[user.value?.role ?? 'SYSTEM_ADMIN']))
-const workspaceLabel = computed(() => ({ organization: '组织管理', 'boss-accounts': 'BOSS 账号', 'job-positions': '职位管理', 'hr-users': 'HR 用户', 'audit-logs': '操作日志' }[String(route.name)] ?? '招聘工作台'))
+const workspaceLabel = computed(() => ({ organization: '组织管理', 'boss-accounts': 'BOSS 账号', 'job-positions': '职位管理', 'recruitment-tasks': '招聘任务', 'hr-users': 'HR 用户', 'audit-logs': '操作日志' }[String(route.name)] ?? '招聘工作台'))
 
 function navigate(path: string) {
   mobileNavOpen.value = false
@@ -59,7 +60,7 @@ async function handleLogout() {
           <el-icon :size="20"><component :is="item.icon" /></el-icon><span>{{ item.label }}</span>
         </button>
       </nav>
-      <div class="sidebar-foot"><span>当前闭环</span><strong>职位管理控制台</strong></div>
+      <div class="sidebar-foot"><span>当前闭环</span><strong>自动招聘任务</strong></div>
     </aside>
 
     <section class="workspace">
