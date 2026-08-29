@@ -30,6 +30,7 @@ export interface AutoReplyPolicy {accountId:string;accountName:string;companyId:
 export type AutoReplyAttemptStatus='CLAIMED'|'PENDING_REVIEW'|'SENT'|'FAILED'|'SKIPPED'
 export interface AutoReplyAttempt {id:string;accountId:string;accountName:string;contactId:string;candidateName:string;jobTitle:string;status:AutoReplyAttemptStatus;resultMessage?:string;outboundMessageId?:string;attemptCount:number;createdAt:string;completedAt?:string}
 export interface BrowserDevice {id:string;accountId:string;accountName:string;displayName:string;status:'ACTIVE'|'REVOKED';runtimeState:'DISABLED'|'RUNNING'|'PAUSED'|'OFFLINE';stopReason?:string;lastHeartbeatAt?:string;createdAt:string;revokedAt?:string}
+export interface BrowserUnreadObservation {id:string;accountId:string;accountName:string;companyName:string;anonymousKey:string;unreadCount:number;jobRecognized:boolean;previewRecognized:boolean;firstSeenAt:string;lastSeenAt:string}
 export interface AuditLog { id: string; actorName: string; action: string; targetType: string; targetId?: string; targetLabel?: string; result: 'SUCCESS' | 'FAILURE'; details?: string; requestId?:string; occurredAt: string }
 export interface GatewaySnapshot { operation:string;consecutiveFailures:number;circuitOpenUntil?:string;requestsInWindow:number;availablePermits:number }
 export interface OperationsSummary { status:'READY';flywayVersion:string;auditAppendOnly:boolean;checkedAt:string;gateways:GatewaySnapshot[] }
