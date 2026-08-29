@@ -5,6 +5,7 @@ export const DEFAULTS = Object.freeze({
   accountAlias: '',
   backendUrl: 'http://localhost:8088',
   syncMessageContent: false,
+  timeoutNotifications: false,
   observationTimeoutMinutes: 120,
   timeoutMinutes: 120,
   dailyLimit: 20,
@@ -70,6 +71,10 @@ export function classifyUnreadObservations(observations = [], timeoutMinutes = 1
   return { thresholdMinutes: threshold / 60000, total: items.length, observingCount: observing.length, timedOutCount: timedOut.length, nextDueAt, items }
 }
 
+export function unnotifiedTimedOutObservations(observations = [], timeoutMinutes = 120, now = new Date()) {
+  return classifyUnreadObservations(observations, timeoutMinutes, now).items.filter((item) => item.timedOut && !item.timedOutNotifiedAt)
+}
+
 export function mergeUnreadObservations(current = [], entries = [], now = new Date()) {
   const validDigest = (value) => /^[a-f0-9]{64}$/.test(String(value || '')) ? value : null
   const timestamp = now.getTime()
@@ -79,7 +84,7 @@ export function mergeUnreadObservations(current = [], entries = [], now = new Da
     if (!chatDigest) continue
     const unreadCount = Math.max(0, Math.min(999, Number(raw.unreadCount) || 0))
     const existing = previous.get(chatDigest)
-    if (unreadCount > 0) previous.set(chatDigest, { chatDigest, previewDigest: validDigest(raw.previewDigest), jobDigest: validDigest(raw.jobDigest), timeDigest: validDigest(raw.timeDigest), unreadCount, firstSeenAt: existing?.firstSeenAt || now.toISOString(), lastSeenAt: now.toISOString() })
+    if (unreadCount > 0) previous.set(chatDigest, { chatDigest, previewDigest: validDigest(raw.previewDigest), jobDigest: validDigest(raw.jobDigest), timeDigest: validDigest(raw.timeDigest), unreadCount, firstSeenAt: existing?.firstSeenAt || now.toISOString(), lastSeenAt: now.toISOString(), timedOutNotifiedAt: existing?.timedOutNotifiedAt || null })
     else previous.delete(chatDigest)
   }
   return [...previous.values()].filter((item) => timestamp - Date.parse(item.lastSeenAt) < 7 * 86400000).sort((a, b) => Date.parse(a.firstSeenAt) - Date.parse(b.firstSeenAt)).slice(0, 200)

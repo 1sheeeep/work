@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { DEFAULTS, REAL_BOSS_MONITOR_SELECTORS, classifyUnreadObservations, diagnosticSignature, insideWindow, mergeUnreadObservations, renderTemplate, sanitizeDiagnostic, sha256, validateConfig } from '../shared.js'
+import { DEFAULTS, REAL_BOSS_MONITOR_SELECTORS, classifyUnreadObservations, diagnosticSignature, insideWindow, mergeUnreadObservations, renderTemplate, sanitizeDiagnostic, sha256, unnotifiedTimedOutObservations, validateConfig } from '../shared.js'
 
 test('supports daytime and overnight safety windows', () => {
   assert.equal(insideWindow(new Date('2026-08-28T10:00:00'), '09:00', '21:00'), true)
@@ -43,6 +43,8 @@ test('tracks unread duration without resetting first seen time and removes read 
   assert.equal(refreshed[0].firstSeenAt, '2026-08-29T10:00:00.000Z')
   assert.equal(refreshed[0].lastSeenAt, '2026-08-29T10:05:00.000Z')
   assert.equal(refreshed[0].unreadCount, 3)
+  const notified = mergeUnreadObservations([{ ...refreshed[0], timedOutNotifiedAt: '2026-08-29T10:05:30.000Z' }], [{ chatDigest, unreadCount: 3 }], new Date('2026-08-29T10:05:40Z'))
+  assert.equal(notified[0].timedOutNotifiedAt, '2026-08-29T10:05:30.000Z')
   assert.deepEqual(mergeUnreadObservations(refreshed, [{ chatDigest, unreadCount: 0 }], new Date('2026-08-29T10:06:00Z')), [])
 })
 
@@ -56,6 +58,13 @@ test('classifies observing and timed-out unread conversations without page actio
   assert.equal(queue.nextDueAt, '2026-08-29T10:15:00.000Z')
   assert.equal(queue.items[0].chatDigest, 'a'.repeat(64))
   assert.equal(queue.items[0].timedOut, true)
+})
+
+test('selects each newly timed-out conversation for notification only once', () => {
+  const now = new Date('2026-08-29T10:00:00.000Z')
+  const observation = { chatDigest: 'a'.repeat(64), firstSeenAt: '2026-08-29T09:00:00.000Z', timedOutNotifiedAt: null }
+  assert.equal(unnotifiedTimedOutObservations([observation], 30, now).length, 1)
+  assert.equal(unnotifiedTimedOutObservations([{ ...observation, timedOutNotifiedAt: now.toISOString() }], 30, now).length, 0)
 })
 
 test('sanitizes diagnostics and strips URL paths and invalid identifiers', () => {
