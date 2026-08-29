@@ -5,10 +5,14 @@ await load()
 
 async function load(){
  setStatus('正在读取当前 BOSS 岗位详情页…','')
- const tabs=await chrome.tabs.query({url:['https://*.zhipin.com/*']});const tab=tabs.find(item=>item.active)||tabs.at(-1)
+ const pending=await chrome.storage.session.get(['pendingJobCapture','pendingJobTabId'])
+ await chrome.storage.session.remove(['pendingJobCapture','pendingJobTabId'])
+ if(pending.pendingJobCapture?.ok){fillCapture(pending.pendingJobCapture);return}
+ const tabs=await chrome.tabs.query({url:['https://*.zhipin.com/*']});const tab=tabs.find(item=>item.id===pending.pendingJobTabId)||tabs.sort((a,b)=>(b.lastAccessed||0)-(a.lastAccessed||0))[0]
  if(!tab?.id)return setStatus('没有找到已打开的 BOSS 页面。请先打开一个岗位详情页。','error')
- try{const result=await chrome.tabs.sendMessage(tab.id,{type:'CAPTURE_CURRENT_JOB'});if(!result?.ok)return setStatus(result?.reason||'当前页面无法采集，请确认已打开岗位详情。','error');fill(result.data);setStatus(result.missing?.length?`已采集，请补充：${result.missing.join('、')}`:'采集完成，请核对后保存。',result.missing?.length?'warning':'success')}catch{setStatus('页面脚本尚未连接。请刷新 BOSS 岗位页后重试。','error')}
+ try{const result=await chrome.tabs.sendMessage(tab.id,{type:'CAPTURE_CURRENT_JOB'});if(!result?.ok)return setStatus(result?.reason||'当前页面无法采集，请确认已打开岗位详情。','error');fillCapture(result)}catch{setStatus('页面脚本尚未连接。请刷新 BOSS 岗位页后重试。','error')}
 }
+function fillCapture(result){fill(result.data);setStatus(result.missing?.length?`已自动填写，请补充：${result.missing.join('、')}`:'页面信息已自动采集并填写，请核对后保存。',result.missing?.length?'warning':'success')}
 function fill(data){for(const [key,value]of Object.entries(data||{})){const field=form.elements.namedItem(key);if(field)field.value=value??''}}
 async function saveDraft(event){
  event.preventDefault();if(!form.reportValidity())return

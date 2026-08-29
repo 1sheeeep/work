@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "招聘控制台·BOSS 会话伴随助手",
-  "version": "0.18.0",
+  "version": "0.18.1",
   "description": "在已登录的 BOSS 页面检测未回复会话，并可将当前可见岗位保存为系统草稿；不读取 Cookie。",
   "permissions": ["storage", "alarms", "tabs", "scripting", "notifications"],
   "host_permissions": ["https://*.zhipin.com/*", "http://localhost:8088/*", "http://localhost:8091/*"],
