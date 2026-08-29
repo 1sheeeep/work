@@ -14,7 +14,7 @@ export const DEFAULTS = Object.freeze({
   requireVisibleTab: true,
   stabilityDelayMs: 800,
   selectors: {
-    conversation: '', conversationIdentity: '', conversationIdAttribute: 'data-conversation-id',
+    conversation: '', conversationUnread: '', conversationIdentity: '', conversationIdAttribute: 'data-conversation-id',
     activeConversation: '', candidateName: '', jobTitle: '',
     message: '', messageIdAttribute: 'data-message-id', directionAttribute: 'data-direction',
     inboundMarker: '', outboundMarker: '', messageTime: '',
@@ -62,9 +62,12 @@ export function sanitizeDiagnostic(value = {}, tab = {}, now = new Date()) {
     reason: String(value.reason || '').slice(0, 200), adapterDigest: digest(value.adapterDigest), chatDigest: digest(value.chatDigest),
     messageDigest: digest(value.messageDigest), direction, createdAt: Number.isFinite(Date.parse(value.createdAt)) ? value.createdAt : null,
     ageMinutes: Number.isFinite(value.ageMinutes) ? Math.max(0, Math.round(value.ageMinutes)) : null,
+    conversationCount: Number.isInteger(value.conversationCount) ? Math.max(0, value.conversationCount) : null,
+    unreadConversationCount: Number.isInteger(value.unreadConversationCount) ? Math.max(0, value.unreadConversationCount) : null,
+    selectedConversationUnread: typeof value.selectedConversationUnread === 'boolean' ? value.selectedConversationUnread : null,
     bound: typeof value.bound === 'boolean' ? value.bound : null, visible: Boolean(value.visible) }
 }
 
 export function diagnosticSignature(value) {
-  return [value.tabId, value.status, value.reason, value.adapterDigest, value.chatDigest, value.messageDigest, value.direction, value.createdAt, value.bound, value.visible].join('|')
+  return [value.tabId, value.status, value.reason, value.adapterDigest, value.chatDigest, value.messageDigest, value.direction, value.createdAt, value.conversationCount, value.unreadConversationCount, value.selectedConversationUnread, value.bound, value.visible].join('|')
 }

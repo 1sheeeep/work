@@ -37,6 +37,7 @@ test('sanitizes diagnostics and strips URL paths and invalid identifiers', () =>
   assert.equal(report.chatDigest, 'a'.repeat(64))
   assert.equal(report.messageDigest, null)
   assert.equal(report.createdAt, null)
+  assert.equal(report.unreadConversationCount, null)
   assert.equal('plaintext' in report, false)
   assert.equal(diagnosticSignature(report), diagnosticSignature({ ...report }))
 })
