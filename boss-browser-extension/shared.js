@@ -22,6 +22,15 @@ export const DEFAULTS = Object.freeze({
   }
 })
 
+export const REAL_BOSS_MONITOR_SELECTORS = Object.freeze({
+  conversation: '.geek-item', conversationUnread: '.badge-count',
+  conversationIdentity: '.geek-item.selected', activeConversation: '.chat-conversation',
+  conversationIdAttribute: 'data-id', candidateName: '.geek-item.selected .geek-name', jobTitle: '',
+  message: '.message-item', messageIdAttribute: '', directionAttribute: '',
+  inboundMarker: '.item-friend', outboundMarker: '.item-myself', messageTime: '.message-time',
+  timeAttribute: '', editor: '.boss-chat-editor-input', sendButton: ''
+})
+
 export function localDay(now = new Date()) {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
 }

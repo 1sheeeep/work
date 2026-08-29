@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { DEFAULTS, diagnosticSignature, insideWindow, renderTemplate, sanitizeDiagnostic, sha256, validateConfig } from '../shared.js'
+import { DEFAULTS, REAL_BOSS_MONITOR_SELECTORS, diagnosticSignature, insideWindow, renderTemplate, sanitizeDiagnostic, sha256, validateConfig } from '../shared.js'
 
 test('supports daytime and overnight safety windows', () => {
   assert.equal(insideWindow(new Date('2026-08-28T10:00:00'), '09:00', '21:00'), true)
@@ -18,6 +18,11 @@ test('fails closed until selectors are explicitly learned', () => {
   config.monitorOnly = false
   config.selectors.sendButton = ''
   assert.match(validateConfig(config), /sendButton/)
+})
+
+test('real BOSS preset remains monitor-only and has no send target', () => {
+  assert.equal(REAL_BOSS_MONITOR_SELECTORS.conversationIdentity, '.geek-item.selected')
+  assert.equal(REAL_BOSS_MONITOR_SELECTORS.sendButton, '')
 })
 
 test('renders only supported non-sensitive placeholders', () => {

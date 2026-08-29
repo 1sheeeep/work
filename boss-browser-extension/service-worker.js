@@ -1,4 +1,4 @@
-import { DEFAULTS, diagnosticSignature, localDay, sanitizeDiagnostic } from './shared.js'
+import { DEFAULTS, REAL_BOSS_MONITOR_SELECTORS, diagnosticSignature, localDay, sanitizeDiagnostic } from './shared.js'
 const POLICY_TTL=45_000,TAB_LEASE_MS=20_000
 let policyCache=null
 
@@ -8,6 +8,7 @@ chrome.alarms.onAlarm.addListener(async({name})=>{if(name!=='health')return;cons
 
 async function handle(message,sender){
  const stored=await chrome.storage.local.get(['config','runtime']),config={...DEFAULTS,...(stored.config||{}),selectors:{...DEFAULTS.selectors,...(stored.config?.selectors||{})}},runtime=rollDay(stored.runtime||freshRuntime())
+ if(config.monitorOnly&&isBossPage(sender.tab?.url))for(const[key,value]of Object.entries(REAL_BOSS_MONITOR_SELECTORS))if(!String(config.selectors[key]||'').trim())config.selectors[key]=value
  if(message.type==='GET_STATE'){const policy=await getPolicy(config),effective=policy.ok?{...config,...policy}:{...config,enabled:false,automaticSend:false};effective.automaticSend=Boolean(effective.automaticSend&&!config.emergencyStop&&!config.monitorOnly);if(policy.ok)Object.assign(runtime,{sentToday:policy.sentToday,lastSentAt:policy.lastSentAt?Date.parse(policy.lastSentAt):0});await chrome.storage.local.set({runtime});return{ok:true,config:effective,runtime,backendState:policy.ok?'CONNECTED':policy.action}}
  if(message.type==='DIAGNOSTIC'){const diagnostic=sanitizeDiagnostic(message.payload,sender.tab);runtime.diagnostic=diagnostic;runtime.diagnosticEvents=runtime.diagnosticEvents||[];const previous=runtime.diagnosticEvents.at(-1);if(!previous||diagnosticSignature(previous)!==diagnosticSignature(diagnostic))runtime.diagnosticEvents=[...runtime.diagnosticEvents,diagnostic].slice(-50);await chrome.storage.local.set({runtime});return{ok:true}}
  if(message.type==='GET_DIAGNOSTICS')return{ok:true,current:runtime.diagnostic||null,events:runtime.diagnosticEvents||[],emergencyStop:config.emergencyStop,monitorOnly:config.monitorOnly}
@@ -22,6 +23,7 @@ async function handle(message,sender){
  if(message.type==='SET_EMERGENCY_STOP'){config.emergencyStop=Boolean(message.value);if(config.emergencyStop)Object.assign(runtime,{state:'PAUSED',reason:'本机紧急停止已开启',leaderTabId:null,leaderLeaseUntil:0});await chrome.storage.local.set({config,runtime});return{ok:true,config,runtime}}
  return{ok:false}
 }
+function isBossPage(value){try{return new URL(value).hostname==='zhipin.com'||new URL(value).hostname.endsWith('.zhipin.com')}catch{return false}}
 async function acquireTab(runtime,tabId){if(!Number.isInteger(tabId))return{ok:false,leader:false};const now=Date.now();if(runtime.leaderTabId&&runtime.leaderTabId!==tabId&&runtime.leaderLeaseUntil>now)return{ok:true,leader:false,leaderTabId:runtime.leaderTabId};runtime.leaderTabId=tabId;runtime.leaderLeaseUntil=now+TAB_LEASE_MS;await chrome.storage.local.set({runtime});return{ok:true,leader:true,leaseUntil:runtime.leaderLeaseUntil}}
 async function getPolicy(config){if(policyCache&&Date.now()-policyCache.at<POLICY_TTL)return policyCache.value;const value=await remote(config,'/api/browser-runtime/policy',undefined,'GET');policyCache={at:Date.now(),value};return value}
 async function remote(config,path,body,method='POST'){const{deviceCredentials}=await chrome.storage.local.get('deviceCredentials');if(!deviceCredentials?.deviceToken)return{ok:false,bound:false,action:'DEVICE_NOT_PAIRED'};try{const response=await fetch(`${config.backendUrl.replace(/\/$/,'')}${path}`,{method,headers:{'Content-Type':'application/json',Authorization:`Device ${deviceCredentials.deviceToken}`},body:body===undefined?undefined:JSON.stringify(body)});if(!response.ok)return{ok:false,bound:false,action:response.status===401?'DEVICE_UNAUTHORIZED':'BACKEND_REJECTED'};return{ok:true,...await response.json()}}catch{return{ok:false,bound:false,action:'BACKEND_UNREACHABLE'}}}
