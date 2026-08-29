@@ -11,7 +11,9 @@ import jakarta.validation.Valid;import org.springframework.http.HttpHeaders;impo
  @GetMapping("/api/browser-runtime/policy")public BrowserRuntimePolicyResponse policy(@RequestHeader(HttpHeaders.AUTHORIZATION)String token){return service.runtimePolicy(token);}
  @PostMapping("/api/browser-runtime/messages")public SyncMessageResponse sync(@RequestHeader(HttpHeaders.AUTHORIZATION)String token,@Valid@RequestBody SyncMessageRequest r){return service.sync(token,r);}
  @PostMapping("/api/browser-runtime/unread-observations")public UnreadObservationSyncResponse observations(@RequestHeader(HttpHeaders.AUTHORIZATION)String token,@Valid@RequestBody UnreadObservationSnapshot r){return service.observeUnread(token,r);}
+ @PostMapping("/api/browser-runtime/selected-conversation")public UnreadObservationResponse selected(@RequestHeader(HttpHeaders.AUTHORIZATION)String token,@Valid@RequestBody SelectedConversationSnapshot r){return service.verifySelectedConversation(token,r);}
  @GetMapping("/api/browser-observations")public List<UnreadObservationResponse> observations(){return service.listUnreadObservations();}
+ @PutMapping("/api/browser-observations/{id}/review")public UnreadObservationResponse review(@PathVariable UUID id,@Valid@RequestBody ObservationReviewRequest r){return service.reviewObservation(id,r);}
  @PostMapping("/api/browser-runtime/send-claims")public SendClaimResponse claim(@RequestHeader(HttpHeaders.AUTHORIZATION)String token,@Valid@RequestBody CreateSendClaimRequest r){return service.claim(token,r);}
  @PostMapping("/api/browser-runtime/send-claims/{id}/receipt")public SendReceiptResponse receipt(@RequestHeader(HttpHeaders.AUTHORIZATION)String token,@PathVariable UUID id,@Valid@RequestBody SendReceiptRequest r){return service.receipt(token,id,r);}
 }
