@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { DEFAULTS, REAL_BOSS_MONITOR_SELECTORS, classifyUnreadObservations, diagnosticSignature, insideWindow, mergeUnreadObservations, renderTemplate, sanitizeDiagnostic, sha256, unnotifiedTimedOutObservations, validateConfig } from '../shared.js'
+import { DEFAULTS, REAL_BOSS_MONITOR_SELECTORS, assessReplyEligibility, classifyUnreadObservations, diagnosticSignature, insideWindow, mergeUnreadObservations, renderTemplate, sanitizeDiagnostic, sha256, unnotifiedTimedOutObservations, validateConfig } from '../shared.js'
 
 test('supports daytime and overnight safety windows', () => {
   assert.equal(insideWindow(new Date('2026-08-28T10:00:00'), '09:00', '21:00'), true)
@@ -23,6 +23,7 @@ test('fails closed until selectors are explicitly learned', () => {
 
 test('real BOSS preset remains monitor-only and has no send target', () => {
   assert.equal(REAL_BOSS_MONITOR_SELECTORS.conversationIdentity, '.geek-item.selected')
+  assert.equal(REAL_BOSS_MONITOR_SELECTORS.message, '.item-friend, .item-myself')
   assert.equal(REAL_BOSS_MONITOR_SELECTORS.sendButton, '')
 })
 
@@ -65,6 +66,13 @@ test('selects each newly timed-out conversation for notification only once', () 
   const observation = { chatDigest: 'a'.repeat(64), firstSeenAt: '2026-08-29T09:00:00.000Z', timedOutNotifiedAt: null }
   assert.equal(unnotifiedTimedOutObservations([observation], 30, now).length, 1)
   assert.equal(unnotifiedTimedOutObservations([{ ...observation, timedOutNotifiedAt: now.toISOString() }], 30, now).length, 0)
+})
+
+test('requires a selected unread conversation with an inbound last message', () => {
+  const digest = 'a'.repeat(64), base = { timedOutCount: 1, items: [{ chatDigest: digest, timedOut: true }] }
+  assert.equal(assessReplyEligibility(base, null).items[0].eligibility, 'DETAIL_NOT_SELECTED')
+  assert.equal(assessReplyEligibility(base, { chatDigest: digest, selectedConversationUnread: true, direction: 'OUTBOUND' }).items[0].eligibility, 'HR_REPLIED')
+  assert.equal(assessReplyEligibility(base, { chatDigest: digest, selectedConversationUnread: true, direction: 'INBOUND' }).items[0].eligibility, 'ELIGIBLE_READ_ONLY')
 })
 
 test('sanitizes diagnostics and strips URL paths and invalid identifiers', () => {

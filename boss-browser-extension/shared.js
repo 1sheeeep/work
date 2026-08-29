@@ -30,7 +30,7 @@ export const REAL_BOSS_MONITOR_SELECTORS = Object.freeze({
   conversationJob: '.source-job', conversationTime: '.time', conversationPreview: '.push-text',
   conversationIdentity: '.geek-item.selected', activeConversation: '.chat-conversation',
   conversationIdAttribute: 'data-id', candidateName: '.geek-item.selected .geek-name', jobTitle: '',
-  message: '.message-item', messageIdAttribute: '', directionAttribute: '',
+  message: '.item-friend, .item-myself', messageIdAttribute: '', directionAttribute: '',
   inboundMarker: '.item-friend', outboundMarker: '.item-myself', messageTime: '.message-time',
   timeAttribute: '', editor: '.boss-chat-editor-input', sendButton: ''
 })
@@ -73,6 +73,17 @@ export function classifyUnreadObservations(observations = [], timeoutMinutes = 1
 
 export function unnotifiedTimedOutObservations(observations = [], timeoutMinutes = 120, now = new Date()) {
   return classifyUnreadObservations(observations, timeoutMinutes, now).items.filter((item) => item.timedOut && !item.timedOutNotifiedAt)
+}
+
+export function assessReplyEligibility(queue, diagnostic) {
+  return { ...queue, items: queue.items.map((item) => {
+    if (!item.timedOut) return { ...item, eligibility: 'NOT_TIMED_OUT' }
+    if (!diagnostic?.chatDigest || diagnostic.chatDigest !== item.chatDigest) return { ...item, eligibility: 'DETAIL_NOT_SELECTED' }
+    if (diagnostic.selectedConversationUnread === false) return { ...item, eligibility: 'NO_LONGER_UNREAD' }
+    if (diagnostic.direction === 'OUTBOUND') return { ...item, eligibility: 'HR_REPLIED' }
+    if (diagnostic.direction !== 'INBOUND') return { ...item, eligibility: 'DIRECTION_UNKNOWN' }
+    return { ...item, eligibility: 'ELIGIBLE_READ_ONLY' }
+  }) }
 }
 
 export function mergeUnreadObservations(current = [], entries = [], now = new Date()) {
