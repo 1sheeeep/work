@@ -2,6 +2,7 @@ export const DEFAULTS = Object.freeze({
   enabled: true,
   emergencyStop: true,
   monitorOnly: true,
+  draftFillOnly: false,
   accountAlias: '',
   backendUrl: 'http://localhost:8088',
   syncMessageContent: false,
@@ -52,7 +53,7 @@ export function renderTemplate(template, data) {
 
 export function validateConfig(config) {
   const s = config.selectors || {}
-  const required = config.monitorOnly ? ['conversation', 'conversationUnread', 'conversationIdAttribute'] : ['conversationIdentity', 'activeConversation', 'message', 'editor', 'sendButton']
+  const required = config.draftFillOnly ? ['conversation','conversationUnread','conversationIdAttribute','conversationIdentity','activeConversation','message','editor'] : config.monitorOnly ? ['conversation', 'conversationUnread', 'conversationIdAttribute'] : ['conversationIdentity', 'activeConversation', 'message', 'editor', 'sendButton']
   const missing = required.filter((key) => !String(s[key] || '').trim())
   if (missing.length) return `页面适配器未配置：${missing.join(', ')}`
   if (!Number.isInteger(config.observationTimeoutMinutes) || config.observationTimeoutMinutes < 1 || config.observationTimeoutMinutes > 1440) return '本地超时判定必须为 1–1440 分钟'

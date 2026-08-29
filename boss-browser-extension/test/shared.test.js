@@ -28,6 +28,12 @@ test('real BOSS preset remains monitor-only and has no send target', () => {
   assert.equal(REAL_BOSS_MONITOR_SELECTORS.sendButton, '')
 })
 
+test('fill-only mode requires detail selectors and editor but never a send target', () => {
+  const config = { ...structuredClone(DEFAULTS), draftFillOnly: true, selectors: { ...REAL_BOSS_MONITOR_SELECTORS } }
+  assert.equal(validateConfig(config), null)
+  assert.equal(config.selectors.sendButton, '')
+})
+
 test('renders only supported non-sensitive placeholders', () => {
   assert.equal(renderTemplate('您好 {candidateName}，关于 {jobTitle}', { candidateName: '张同学', jobTitle: 'Java 工程师' }), '您好 张同学，关于 Java 工程师')
 })

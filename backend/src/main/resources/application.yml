@@ -54,6 +54,7 @@ app:
     batch-size: ${APP_AUTO_REPLY_BATCH_SIZE:20}
   browser:
     monitor-only: ${APP_BROWSER_MONITOR_ONLY:true}
+    draft-fill-enabled: ${APP_BROWSER_DRAFT_FILL_ENABLED:false}
   gateway:
     timeout: ${APP_GATEWAY_TIMEOUT:3s}
     max-concurrent: ${APP_GATEWAY_MAX_CONCURRENT:8}
