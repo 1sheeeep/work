@@ -54,6 +54,8 @@ test('classifies observing and timed-out unread conversations without page actio
   assert.equal(queue.timedOutCount, 1)
   assert.equal(queue.observingCount, 1)
   assert.equal(queue.nextDueAt, '2026-08-29T10:15:00.000Z')
+  assert.equal(queue.items[0].chatDigest, 'a'.repeat(64))
+  assert.equal(queue.items[0].timedOut, true)
 })
 
 test('sanitizes diagnostics and strips URL paths and invalid identifiers', () => {

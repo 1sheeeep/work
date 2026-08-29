@@ -62,7 +62,7 @@ export function validateConfig(config) {
 export function classifyUnreadObservations(observations = [], timeoutMinutes = 120, now = new Date()) {
   const threshold = Math.max(1, Math.min(1440, Number(timeoutMinutes) || 120)) * 60000
   const timestamp = now.getTime()
-  const items = observations.map((item) => { const firstSeen = Date.parse(item.firstSeenAt), ageMinutes = Number.isFinite(firstSeen) ? Math.max(0, Math.floor((timestamp - firstSeen) / 60000)) : 0; return { ...item, ageMinutes, timedOut: Number.isFinite(firstSeen) && timestamp - firstSeen >= threshold } })
+  const items = observations.map((item) => { const firstSeen = Date.parse(item.firstSeenAt), ageMinutes = Number.isFinite(firstSeen) ? Math.max(0, Math.floor((timestamp - firstSeen) / 60000)) : 0; return { ...item, ageMinutes, timedOut: Number.isFinite(firstSeen) && timestamp - firstSeen >= threshold } }).sort((a, b) => Number(b.timedOut) - Number(a.timedOut) || b.ageMinutes - a.ageMinutes || a.chatDigest.localeCompare(b.chatDigest))
   const timedOut = items.filter((item) => item.timedOut)
   const observing = items.filter((item) => !item.timedOut)
   const dueTimes = observing.map((item) => Date.parse(item.firstSeenAt) + threshold).filter(Number.isFinite)
