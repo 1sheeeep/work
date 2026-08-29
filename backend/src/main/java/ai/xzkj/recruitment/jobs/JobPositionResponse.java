@@ -5,6 +5,7 @@ import ai.xzkj.recruitment.boss.BossConnectionStatus;
 import ai.xzkj.recruitment.organization.CompanyStatus;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 public record JobPositionResponse(
@@ -25,6 +26,8 @@ public record JobPositionResponse(
         boolean knowledgeApproved,
         int knowledgeVersion,
         Instant knowledgeApprovedAt,
+        boolean safeReplyReady,
+        List<String> safeReplyIssues,
         JobPositionStatus status,
         long version,
         Instant createdAt,
@@ -33,6 +36,7 @@ public record JobPositionResponse(
     public static JobPositionResponse from(JobPosition job) {
         var company = job.getCompany();
         var account = job.getBossAccount();
+        var reply = SafeReplyComposer.compose(job);
         return new JobPositionResponse(
                 job.getId(),
                 new CompanySummary(company.getId(), company.getName(), company.getCode(), company.getStatus()),
@@ -41,7 +45,8 @@ public record JobPositionResponse(
                 job.getTitle(), job.getLocation(), job.getSalaryMinK(), job.getSalaryMaxK(), job.getSalaryMonths(),
                 job.getExperienceRequirement(), job.getEducationRequirement(), job.getDescription(),
                 job.getScreeningRequirements(), job.getReplySummary(), job.getSalaryDisplay(), job.isKnowledgeApproved(),
-                job.getKnowledgeVersion(), job.getKnowledgeApprovedAt(), job.getStatus(), job.getVersion(),
+                job.getKnowledgeVersion(), job.getKnowledgeApprovedAt(), "KNOWLEDGE".equals(reply.mode()),
+                reply.missingFields(), job.getStatus(), job.getVersion(),
                 job.getCreatedAt(), job.getUpdatedAt());
     }
 

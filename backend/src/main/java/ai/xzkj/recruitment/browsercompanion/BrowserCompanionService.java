@@ -67,10 +67,9 @@ import java.nio.charset.StandardCharsets;import java.security.*;import java.time
  private void evaluate(BrowserUnreadObservation observation,AutoReplyPolicy policy,Instant now){observation.evaluate(now,policy==null?120:policy.getResponseTimeoutMinutes(),policy!=null&&policy.isAwayActive(now));}
  private void prepareDraft(BrowserUnreadObservation observation,UUID accountId,Instant now){
   String title=cleanOptional(observation.getObservedJobTitle(),120);
-  JobPosition job=title==null?null:jobs.findFirstByBossAccountIdAndTitleIgnoreCaseAndStatus(accountId,title,JobPositionStatus.ACTIVE).orElse(null);
-  if(job==null){observation.prepareDraft("GENERIC","您好，已收到您的消息。招聘同事当前暂时不在线，稍后会尽快与您沟通。",title==null?"网页未识别到岗位名称":"同账号下未找到同名启用岗位",now);return;}
-  Company company=job.getCompany();List<String> missing=new ArrayList<>();if(!company.isKnowledgeApproved())missing.add("公司知识未审核");if(company.getKnowledgeIndustry()==null||company.getKnowledgeIndustry().isBlank())missing.add("公司行业");if(company.getKnowledgeSummary()==null||company.getKnowledgeSummary().isBlank())missing.add("公司介绍");if(!job.isKnowledgeApproved())missing.add("岗位知识未审核");if(job.getReplySummary()==null||job.getReplySummary().isBlank())missing.add("岗位简介");
-  if(!missing.isEmpty()){observation.prepareDraft("GENERIC","您好，已收到您关于「"+job.getTitle()+"」的消息。招聘同事当前暂时不在线，稍后会尽快与您沟通。",String.join("、",missing),now);return;}
-  String salary=job.getSalaryDisplay()==null||job.getSalaryDisplay().isBlank()?"":"，薪资说明为"+job.getSalaryDisplay();String content="您好，已收到您关于「"+job.getTitle()+"」的消息。该岗位工作地点为"+job.getLocation()+salary+"，主要工作是"+job.getReplySummary()+"。"+company.getName()+"属于"+company.getKnowledgeIndustry()+"行业，"+company.getKnowledgeSummary()+"。招聘同事当前暂时不在线，稍后会继续与您沟通。";observation.prepareDraft("KNOWLEDGE",content,"已使用审核通过的公司与岗位知识",now);
+  JobPosition job=title==null?null:SafeReplyComposer.matchActiveJob(title,jobs.findAllByBossAccountIdAndStatus(accountId,JobPositionStatus.ACTIVE)).orElse(null);
+  if(job==null){observation.prepareDraft("GENERIC",SafeReplyComposer.GENERIC_REPLY,title==null?"网页未识别到岗位名称":"同账号下未找到唯一匹配的启用岗位，已禁止猜测",now);return;}
+  SafeReplyComposer.Composition result=SafeReplyComposer.compose(job);
+  observation.prepareDraft(result.mode(),result.content(),result.reason(),now);
  }
 }

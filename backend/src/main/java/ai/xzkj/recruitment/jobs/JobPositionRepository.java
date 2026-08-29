@@ -17,4 +17,7 @@ public interface JobPositionRepository extends JpaRepository<JobPosition, UUID> 
     @EntityGraph(attributePaths = {"company", "bossAccount"})
     Optional<JobPosition> findFirstByBossAccountIdAndTitleIgnoreCaseAndStatus(UUID bossAccountId, String title,
                                                                                JobPositionStatus status);
+
+    @EntityGraph(attributePaths = {"company", "bossAccount"})
+    List<JobPosition> findAllByBossAccountIdAndStatus(UUID bossAccountId, JobPositionStatus status);
 }

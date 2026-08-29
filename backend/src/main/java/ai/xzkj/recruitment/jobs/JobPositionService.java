@@ -17,7 +17,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
-import java.util.ArrayList;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
@@ -134,23 +133,8 @@ public class JobPositionService {
         SystemUser user = currentUserService.requireCurrentUser();
         JobPosition job = requireAccessibleJob(id, user);
         Company company = job.getCompany();
-        List<String> missing = new ArrayList<>();
-        if (!company.isKnowledgeApproved()) missing.add("公司知识未审核");
-        if (isBlank(company.getKnowledgeIndustry())) missing.add("公司行业");
-        if (isBlank(company.getKnowledgeSummary())) missing.add("公司介绍");
-        if (!job.isKnowledgeApproved()) missing.add("岗位知识未审核");
-        if (isBlank(job.getReplySummary())) missing.add("岗位简介");
-        if (!missing.isEmpty()) {
-            return new ReplyPreviewResponse("GENERIC",
-                    "您好，已收到您的消息。招聘同事当前暂时不在线，稍后会尽快与您沟通。",
-                    List.copyOf(missing), company.getKnowledgeVersion(), job.getKnowledgeVersion());
-        }
-        String salary = isBlank(job.getSalaryDisplay()) ? "" : "，薪资说明为" + job.getSalaryDisplay();
-        String content = "您好，已收到您关于「" + job.getTitle() + "」的消息。该岗位工作地点为"
-                + job.getLocation() + salary + "，主要工作是" + job.getReplySummary() + "。"
-                + company.getName() + "属于" + company.getKnowledgeIndustry() + "行业，"
-                + company.getKnowledgeSummary() + "。招聘同事当前暂时不在线，稍后会继续与您沟通。";
-        return new ReplyPreviewResponse("KNOWLEDGE", content, List.of(),
+        SafeReplyComposer.Composition result = SafeReplyComposer.compose(job);
+        return new ReplyPreviewResponse(result.mode(), result.content(), result.missingFields(),
                 company.getKnowledgeVersion(), job.getKnowledgeVersion());
     }
 
@@ -230,5 +214,4 @@ public class JobPositionService {
         return value.trim();
     }
 
-    private boolean isBlank(String value) { return value == null || value.isBlank(); }
 }
