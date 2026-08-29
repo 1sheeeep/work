@@ -8,4 +8,5 @@ public interface AutoReplyAttemptRepository extends JpaRepository<AutoReplyAttem
     Optional<AutoReplyAttempt> findWithDetailsById(UUID id);
     @EntityGraph(attributePaths={"bossAccount","bossAccount.company","contact","contact.candidate","contact.jobPosition","outboundMessage"})
     List<AutoReplyAttempt> findTop100ByOrderByCreatedAtDesc();
+    Optional<AutoReplyAttempt> findFirstByContactIdOrderByCreatedAtDesc(UUID contactId);
 }

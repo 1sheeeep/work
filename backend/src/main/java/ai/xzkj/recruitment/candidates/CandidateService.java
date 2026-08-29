@@ -1,6 +1,7 @@
 package ai.xzkj.recruitment.candidates;
 
 import ai.xzkj.recruitment.audit.AuditService;
+import ai.xzkj.recruitment.autoreply.AutoReplyAttemptRepository;
 import ai.xzkj.recruitment.auth.CurrentUserService;
 import ai.xzkj.recruitment.auth.SystemUser;
 import ai.xzkj.recruitment.auth.UserRole;
@@ -36,17 +37,18 @@ public class CandidateService {
     private final CurrentUserService currentUserService;
     private final BossGateway gateway;
     private final AuditService auditService;
+    private final AutoReplyAttemptRepository autoReplyAttempts;
 
     public CandidateService(CandidateProfileRepository profileRepository,
                             CandidateJobContactRepository contactRepository,
                             ScreeningDecisionRepository decisionRepository,
                             ConversationMessageRepository messageRepository,
                             JobPositionRepository jobRepository, CurrentUserService currentUserService,
-                            BossGateway gateway, AuditService auditService) {
+                            BossGateway gateway, AuditService auditService, AutoReplyAttemptRepository autoReplyAttempts) {
         this.profileRepository = profileRepository; this.contactRepository = contactRepository;
         this.decisionRepository = decisionRepository; this.messageRepository = messageRepository;
         this.jobRepository = jobRepository; this.currentUserService = currentUserService;
-        this.gateway = gateway; this.auditService = auditService;
+        this.gateway = gateway; this.auditService = auditService; this.autoReplyAttempts = autoReplyAttempts;
     }
 
     @Transactional(readOnly = true)
@@ -65,14 +67,17 @@ public class CandidateService {
                         || contact.getCandidate().getDisplayName().toLowerCase(Locale.ROOT).contains(normalized)
                         || nullableContains(contact.getCandidate().getCurrentTitle(), normalized)
                         || contact.getJobPosition().getTitle().toLowerCase(Locale.ROOT).contains(normalized))
-                .map(this::response).toList();
+                .map(this::response)
+                .sorted(java.util.Comparator.comparing(CandidateContactResponse::needsHrFollowUp).reversed()
+                        .thenComparing(CandidateContactResponse::latestMessageAt, java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())))
+                .toList();
     }
 
     @Transactional(readOnly = true)
     public CandidateDetailResponse detail(UUID id) {
         CandidateJobContact contact = requireAccessibleContact(id, currentUserService.requireCurrentUser());
         List<ScreeningDecision> decisions = decisionRepository.findByContactIdOrderByCreatedAtDesc(id);
-        return new CandidateDetailResponse(CandidateContactResponse.from(contact, decisions),
+        return new CandidateDetailResponse(summary(contact, decisions),
                 decisions.stream().map(ScreeningDecisionResponse::from).toList(),
                 messageRepository.findTop50ByContactIdOrderByCreatedAtAsc(id).stream().map(ConversationMessageResponse::from).toList());
     }
@@ -222,7 +227,12 @@ public class CandidateService {
     }
 
     private CandidateContactResponse response(CandidateJobContact contact) {
-        return CandidateContactResponse.from(contact, decisionRepository.findByContactIdOrderByCreatedAtDesc(contact.getId()));
+        return summary(contact, decisionRepository.findByContactIdOrderByCreatedAtDesc(contact.getId()));
+    }
+    private CandidateContactResponse summary(CandidateJobContact contact, List<ScreeningDecision> decisions) {
+        return CandidateContactResponse.from(contact, decisions,
+                messageRepository.findFirstByContactIdOrderByCreatedAtDescIdDesc(contact.getId()).orElse(null),
+                autoReplyAttempts.findFirstByContactIdOrderByCreatedAtDesc(contact.getId()).orElse(null));
     }
     private CandidateJobContact requireAccessibleContact(UUID id, SystemUser user) {
         CandidateJobContact contact = contactRepository.findWithDetailsById(id)

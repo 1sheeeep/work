@@ -96,18 +96,16 @@ const activeJobs = computed(() =>
   jobs.value.filter((j) => j.status === "ACTIVE"),
 );
 const selectedId = ref(""),
-  quickFilter = ref<"ALL" | "PENDING" | "QUALIFIED" | "TAKEN" | "CONTACTING">(
-    "ALL",
-  );
+  quickFilter = ref<"ALL" | "NEEDS_REPLY" | "AUTO_REPLIED" | "DRAFT" | "TAKEN">("NEEDS_REPLY");
 const displayedCandidates = computed(() =>
   candidates.value.filter(
     (candidate) =>
       quickFilter.value === "ALL" ||
-      (quickFilter.value === "PENDING" &&
-        ["NEW", "SCREENING"].includes(candidate.status)) ||
-      (quickFilter.value === "QUALIFIED" && candidate.status === "QUALIFIED") ||
+      (quickFilter.value === "NEEDS_REPLY" && candidate.needsHrFollowUp) ||
+      (quickFilter.value === "AUTO_REPLIED" && candidate.latestAutoReplyStatus === "SENT") ||
+      (quickFilter.value === "DRAFT" && candidate.pendingReviewDraft) ||
       (quickFilter.value === "TAKEN" && candidate.humanTakenOver) ||
-      (quickFilter.value === "CONTACTING" && candidate.status === "CONTACTING"),
+      false,
   ),
 );
 const selectedCandidate = computed(
@@ -119,27 +117,23 @@ const selectedCandidate = computed(
 const quickFilters = computed(() => [
   {
     value: "ALL" as const,
-    label: "全部候选人",
+    label: "全部会话",
     count: candidates.value.length,
   },
   {
-    value: "PENDING" as const,
-    label: "待筛选 / 复核",
-    count: candidates.value.filter((item) =>
-      ["NEW", "SCREENING"].includes(item.status),
-    ).length,
+    value: "NEEDS_REPLY" as const,
+    label: "待 HR 跟进",
+    count: candidates.value.filter((item) => item.needsHrFollowUp).length,
   },
   {
-    value: "CONTACTING" as const,
-    label: "沟通进行中",
-    count: candidates.value.filter((item) => item.status === "CONTACTING")
-      .length,
+    value: "AUTO_REPLIED" as const,
+    label: "已自动接待",
+    count: candidates.value.filter((item) => item.latestAutoReplyStatus === "SENT").length,
   },
   {
-    value: "QUALIFIED" as const,
-    label: "筛选已通过",
-    count: candidates.value.filter((item) => item.status === "QUALIFIED")
-      .length,
+    value: "DRAFT" as const,
+    label: "待审核草稿",
+    count: candidates.value.filter((item) => item.pendingReviewDraft).length,
   },
   {
     value: "TAKEN" as const,
@@ -150,11 +144,9 @@ const quickFilters = computed(() => [
 const canAnonymize = computed(() => authStore.state.user?.role !== "RECRUITER");
 const stats = computed(() => ({
   total: candidates.value.length,
-  qualified: candidates.value.filter((c) => c.status === "QUALIFIED").length,
+  replied: candidates.value.filter((c) => c.latestAutoReplyStatus === "SENT").length,
   taken: candidates.value.filter((c) => c.humanTakenOver).length,
-  pending: candidates.value.filter((c) =>
-    ["SCREENING", "NEW"].includes(c.status),
-  ).length,
+  pending: candidates.value.filter((c) => c.needsHrFollowUp).length,
 }));
 const statusLabels: Record<CandidateContactStatus, string> = {
   NEW: "新候选人",
@@ -475,8 +467,8 @@ onMounted(loadData);
   <div class="page-shell">
     <header class="page-heading">
       <div>
-        <h1>候选人工作台</h1>
-        <p>统一处理候选人筛选、人工接管与会话审核，所有自动化结论均可追溯。</p>
+        <h1>待跟进会话</h1>
+        <p>HR 返回后优先处理仍在等待的候选人；已自动接待的会话不会被当作已经完成。</p>
       </div>
       <el-button type="primary" :icon="Plus" @click="openCreate"
         >新增候选人</el-button
@@ -500,13 +492,13 @@ onMounted(loadData);
     <template v-else
       ><div class="candidate-metrics">
         <div>
-          <span>接触关系</span><strong>{{ stats.total }}</strong>
+          <span>全部会话</span><strong>{{ stats.total }}</strong>
         </div>
         <div>
-          <span>已通过</span><strong>{{ stats.qualified }}</strong>
+          <span>已自动接待</span><strong>{{ stats.replied }}</strong>
         </div>
         <div>
-          <span>待复核</span><strong>{{ stats.pending }}</strong>
+          <span>待 HR 跟进</span><strong>{{ stats.pending }}</strong>
         </div>
         <div>
           <span>人工接管</span><strong>{{ stats.taken }}</strong>
@@ -515,8 +507,8 @@ onMounted(loadData);
       <section class="surface-panel candidates-panel">
         <div class="section-title-row candidates-title">
           <div>
-            <h2>候选人列表</h2>
-            <p>同一企业、来源和外部 ID 自动去重</p>
+            <h2>会话队列</h2>
+            <p>等待最久的未完成会话优先排列</p>
           </div>
           <div class="filters">
             <el-input
@@ -584,7 +576,7 @@ onMounted(loadData);
                     quickFilters.find((item) => item.value === quickFilter)
                       ?.label
                   }}</strong
-                  ><span>{{ displayedCandidates.length }} 位候选人</span>
+                  ><span>{{ displayedCandidates.length }} 个会话</span>
                 </div>
               </header>
               <div v-if="!displayedCandidates.length" class="queue-empty">
@@ -603,19 +595,13 @@ onMounted(loadData);
                 }}</span>
                 <span class="candidate-main"
                   ><strong>{{ candidate.displayName }}</strong
-                  ><small>{{
-                    candidate.currentTitle || "未填写当前职位"
-                  }}</small
-                  ><em
-                    >{{ candidate.jobPosition.title }} ·
-                    {{ candidate.company.name }}</em
+                  ><small>{{ candidate.latestMessagePreview || "暂无会话消息" }}</small
+                  ><em>{{ candidate.jobPosition.title }} · {{ candidate.bossAccount.displayName }}</em
                   ></span
                 >
                 <span class="candidate-state"
-                  ><el-tag :type="statusType(candidate.status)" size="small">{{
-                    statusLabels[candidate.status]
-                  }}</el-tag
-                  ><small>{{ relativeTime(candidate.updatedAt) }}</small></span
+                  ><el-tag :type="candidate.needsHrFollowUp ? 'warning' : 'info'" size="small">{{ candidate.needsHrFollowUp ? "待跟进" : "已处理" }}</el-tag
+                  ><small>{{ candidate.latestMessageAt ? relativeTime(candidate.latestMessageAt) : "暂无消息" }}</small></span
                 >
               </button>
             </section>
@@ -660,39 +646,13 @@ onMounted(loadData);
                 </dl>
               </section>
               <section>
-                <span class="workspace-label">筛选与接管</span>
+                <span class="workspace-label">会话与接管</span>
                 <div class="decision-summary">
                   <p>
-                    <span>硬规则</span
-                    ><el-tag
-                      size="small"
-                      :type="
-                        decisionType(selectedCandidate.latestHardRule?.outcome)
-                      "
-                      >{{
-                        outcomeLabels[
-                          selectedCandidate.latestHardRule
-                            ?.outcome as ScreeningOutcome
-                        ]
-                      }}</el-tag
-                    >
+                    <span>当前状态</span><el-tag size="small" :type="selectedCandidate.needsHrFollowUp ? 'warning' : 'success'">{{ selectedCandidate.needsHrFollowUp ? "等待 HR 跟进" : "无需跟进" }}</el-tag>
                   </p>
                   <p>
-                    <span>AI 建议</span
-                    ><el-tag
-                      size="small"
-                      :type="
-                        decisionType(
-                          selectedCandidate.latestAiSuggestion?.outcome,
-                        )
-                      "
-                      >{{
-                        outcomeLabels[
-                          selectedCandidate.latestAiSuggestion
-                            ?.outcome as ScreeningOutcome
-                        ]
-                      }}</el-tag
-                    >
+                    <span>自动接待</span><strong>{{ selectedCandidate.latestAutoReplyStatus === "SENT" ? "已发送" : selectedCandidate.pendingReviewDraft ? "草稿待审核" : "尚未发送" }}</strong>
                   </p>
                   <p>
                     <span>处理方式</span
@@ -706,9 +666,7 @@ onMounted(loadData);
                 </div>
               </section>
               <footer>
-                <el-button type="primary" @click="openDetail(selectedCandidate)"
-                  >打开完整工作台</el-button
-                ><small>{{ relativeTime(selectedCandidate.updatedAt) }}</small>
+                <el-button type="primary" @click="openDetail(selectedCandidate)">打开会话并跟进</el-button><small>{{ selectedCandidate.latestMessageAt ? relativeTime(selectedCandidate.latestMessageAt) : "暂无消息" }}</small>
               </footer>
             </aside>
           </div>

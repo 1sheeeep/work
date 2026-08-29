@@ -1,6 +1,7 @@
 package ai.xzkj.recruitment.candidates;
 
 import ai.xzkj.recruitment.audit.AuditService;
+import ai.xzkj.recruitment.autoreply.AutoReplyAttemptRepository;
 import ai.xzkj.recruitment.auth.CurrentUserService;
 import ai.xzkj.recruitment.auth.SystemUser;
 import ai.xzkj.recruitment.auth.UserRole;
@@ -35,13 +36,14 @@ class CandidateServiceTest {
     @Mock CurrentUserService currentUserService;
     @Mock BossGateway gateway;
     @Mock AuditService auditService;
+    @Mock AutoReplyAttemptRepository autoReplyAttemptRepository;
     CandidateService service;
     Company company; BossAccount account; JobPosition job; CandidateProfile profile;
     CandidateJobContact contact; SystemUser recruiter;
 
     @BeforeEach void setUp() {
         service = new CandidateService(profileRepository, contactRepository, decisionRepository, messageRepository,
-                jobRepository, currentUserService, gateway, auditService);
+                jobRepository, currentUserService, gateway, auditService, autoReplyAttemptRepository);
         company = new Company(new GroupProfile("测试集团", "测试"), "测试企业", "TEST", null, null);
         account = new BossAccount(company, "全能力账号", "boss-full", MockBossProfile.FULL);
         account.applyCapabilityCheck(BossConnectionStatus.CONNECTED, Set.of(BossCapability.JOB_SYNC,
