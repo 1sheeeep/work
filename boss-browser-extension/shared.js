@@ -5,6 +5,7 @@ export const DEFAULTS = Object.freeze({
   accountAlias: '',
   backendUrl: 'http://localhost:8088',
   syncMessageContent: false,
+  observationTimeoutMinutes: 120,
   timeoutMinutes: 120,
   dailyLimit: 20,
   minimumIntervalSeconds: 180,
@@ -53,8 +54,20 @@ export function validateConfig(config) {
   const required = config.monitorOnly ? ['conversation', 'conversationUnread', 'conversationIdAttribute'] : ['conversationIdentity', 'activeConversation', 'message', 'editor', 'sendButton']
   const missing = required.filter((key) => !String(s[key] || '').trim())
   if (missing.length) return `页面适配器未配置：${missing.join(', ')}`
+  if (!Number.isInteger(config.observationTimeoutMinutes) || config.observationTimeoutMinutes < 1 || config.observationTimeoutMinutes > 1440) return '本地超时判定必须为 1–1440 分钟'
   try { const url = new URL(config.backendUrl); if (!['http:', 'https:'].includes(url.protocol)) throw new Error() } catch { return '后端地址无效' }
   return null
+}
+
+export function classifyUnreadObservations(observations = [], timeoutMinutes = 120, now = new Date()) {
+  const threshold = Math.max(1, Math.min(1440, Number(timeoutMinutes) || 120)) * 60000
+  const timestamp = now.getTime()
+  const items = observations.map((item) => { const firstSeen = Date.parse(item.firstSeenAt), ageMinutes = Number.isFinite(firstSeen) ? Math.max(0, Math.floor((timestamp - firstSeen) / 60000)) : 0; return { ...item, ageMinutes, timedOut: Number.isFinite(firstSeen) && timestamp - firstSeen >= threshold } })
+  const timedOut = items.filter((item) => item.timedOut)
+  const observing = items.filter((item) => !item.timedOut)
+  const dueTimes = observing.map((item) => Date.parse(item.firstSeenAt) + threshold).filter(Number.isFinite)
+  const nextDueAt = dueTimes.length ? new Date(Math.min(...dueTimes)).toISOString() : null
+  return { thresholdMinutes: threshold / 60000, total: items.length, observingCount: observing.length, timedOutCount: timedOut.length, nextDueAt, items }
 }
 
 export function mergeUnreadObservations(current = [], entries = [], now = new Date()) {

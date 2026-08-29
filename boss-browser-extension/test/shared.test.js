@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { DEFAULTS, REAL_BOSS_MONITOR_SELECTORS, diagnosticSignature, insideWindow, mergeUnreadObservations, renderTemplate, sanitizeDiagnostic, sha256, validateConfig } from '../shared.js'
+import { DEFAULTS, REAL_BOSS_MONITOR_SELECTORS, classifyUnreadObservations, diagnosticSignature, insideWindow, mergeUnreadObservations, renderTemplate, sanitizeDiagnostic, sha256, validateConfig } from '../shared.js'
 
 test('supports daytime and overnight safety windows', () => {
   assert.equal(insideWindow(new Date('2026-08-28T10:00:00'), '09:00', '21:00'), true)
@@ -44,6 +44,16 @@ test('tracks unread duration without resetting first seen time and removes read 
   assert.equal(refreshed[0].lastSeenAt, '2026-08-29T10:05:00.000Z')
   assert.equal(refreshed[0].unreadCount, 3)
   assert.deepEqual(mergeUnreadObservations(refreshed, [{ chatDigest, unreadCount: 0 }], new Date('2026-08-29T10:06:00Z')), [])
+})
+
+test('classifies observing and timed-out unread conversations without page actions', () => {
+  const queue = classifyUnreadObservations([
+    { chatDigest: 'a'.repeat(64), firstSeenAt: '2026-08-29T09:00:00.000Z' },
+    { chatDigest: 'b'.repeat(64), firstSeenAt: '2026-08-29T09:45:00.000Z' }
+  ], 30, new Date('2026-08-29T10:00:00.000Z'))
+  assert.equal(queue.timedOutCount, 1)
+  assert.equal(queue.observingCount, 1)
+  assert.equal(queue.nextDueAt, '2026-08-29T10:15:00.000Z')
 })
 
 test('sanitizes diagnostics and strips URL paths and invalid identifiers', () => {
