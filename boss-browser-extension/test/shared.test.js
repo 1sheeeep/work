@@ -13,8 +13,11 @@ test('fails closed until selectors are explicitly learned', () => {
   assert.equal(DEFAULTS.emergencyStop, true)
   assert.match(validateConfig(DEFAULTS), /页面适配器未配置/)
   const config = structuredClone(DEFAULTS)
-  Object.assign(config.selectors, { activeConversation: '.chat', message: '.message', editor: '#editor', sendButton: '#send' })
+  Object.assign(config.selectors, { conversationIdentity: '.selected-chat', activeConversation: '.chat', message: '.message', editor: '#editor', sendButton: '#send' })
   assert.equal(validateConfig(config), null)
+  config.monitorOnly = false
+  config.selectors.sendButton = ''
+  assert.match(validateConfig(config), /sendButton/)
 })
 
 test('renders only supported non-sensitive placeholders', () => {

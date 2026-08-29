@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "招聘控制台·BOSS 会话伴随助手",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "description": "在已登录的 BOSS 页面上检测超时未回复会话；不读取 Cookie，遇验证码或风险提示立即停止。",
   "permissions": ["storage", "alarms", "tabs", "scripting"],
   "host_permissions": ["https://*.zhipin.com/*", "http://localhost:8088/*", "http://localhost:8091/*"],

@@ -14,9 +14,10 @@ export const DEFAULTS = Object.freeze({
   requireVisibleTab: true,
   stabilityDelayMs: 800,
   selectors: {
-    conversation: '', conversationIdAttribute: 'data-conversation-id',
+    conversation: '', conversationIdentity: '', conversationIdAttribute: 'data-conversation-id',
     activeConversation: '', candidateName: '', jobTitle: '',
     message: '', messageIdAttribute: 'data-message-id', directionAttribute: 'data-direction',
+    inboundMarker: '', outboundMarker: '', messageTime: '',
     timeAttribute: 'data-created-at', editor: '', sendButton: ''
   }
 })
@@ -38,7 +39,8 @@ export function renderTemplate(template, data) {
 
 export function validateConfig(config) {
   const s = config.selectors || {}
-  const missing = ['activeConversation', 'message', 'editor', 'sendButton'].filter((key) => !String(s[key] || '').trim())
+  const required = config.monitorOnly ? ['conversationIdentity', 'activeConversation', 'message'] : ['conversationIdentity', 'activeConversation', 'message', 'editor', 'sendButton']
+  const missing = required.filter((key) => !String(s[key] || '').trim())
   if (missing.length) return `页面适配器未配置：${missing.join(', ')}`
   try { const url = new URL(config.backendUrl); if (!['http:', 'https:'].includes(url.protocol)) throw new Error() } catch { return '后端地址无效' }
   return null

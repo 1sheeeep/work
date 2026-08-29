@@ -40,7 +40,7 @@
    if(!verified.ok||verified.messageKey!==snapshot.messageKey||verified.direction!=='INBOUND'){await receipt(claim.claimId,'UNKNOWN');return}
    const blocked=interactionBlocker(verified);if(blocked){await report(config,verified,'BLOCKED',blocked,true);await receipt(claim.claimId,'UNKNOWN');return pause(blocked)}
    fillEditor(verified.editor,content)
-   const finalCheck=readSnapshot(config.selectors)
+   const finalCheck=await readSnapshot(config.selectors)
    const finalBlocker=finalCheck.ok?interactionBlocker(finalCheck):'填写回复后页面结构发生变化'
    if(!finalCheck.ok||finalCheck.messageKey!==snapshot.messageKey||finalCheck.direction!=='INBOUND'||finalBlocker){clearEditor(verified.editor);await report(config,finalCheck.ok?finalCheck:null,'BLOCKED',finalBlocker||'发送前会话发生变化',true);await receipt(claim.claimId,'UNKNOWN');return pause(finalBlocker||'发送前会话发生变化')}
    verified.sendButton.click()
@@ -50,32 +50,33 @@
   }catch(error){await pause(`页面适配失败：${String(error?.message||error).slice(0,160)}`)}finally{busy=false}
  }
 
- function readSnapshot(s){
-  let active,editor,sendButton,last
-  const missing=['activeConversation','message','editor','sendButton'].filter(key=>!String(s?.[key]||'').trim())
+ async function readSnapshot(s){
+  let active,identity,editor,sendButton,last
+  const missing=['conversationIdentity','activeConversation','message'].filter(key=>!String(s?.[key]||'').trim())
   if(missing.length)return{ok:false,reason:`页面适配器尚未配置：${missing.join(', ')}`}
-  try{active=document.querySelector(s.activeConversation);editor=document.querySelector(s.editor);sendButton=document.querySelector(s.sendButton);last=[...(active?.querySelectorAll(s.message)||[])].at(-1)}catch{return{ok:false,reason:'页面选择器无效'}}
-  if(!active||!editor||!sendButton)return{ok:false,reason:'未找到当前会话、输入框或发送按钮'}
-  if(!active.isConnected||!editor.isConnected||!sendButton.isConnected)return{ok:false,reason:'会话页面正在重新加载'}
+  try{active=document.querySelector(s.activeConversation);identity=document.querySelector(s.conversationIdentity);editor=s.editor?document.querySelector(s.editor):null;sendButton=s.sendButton?document.querySelector(s.sendButton):null;const items=[...(active?.querySelectorAll(s.message)||[])];last=items.filter(item=>directionOf(item,s)).at(-1)}catch{return{ok:false,reason:'页面选择器无效'}}
+  if(!active||!identity)return{ok:false,reason:'未找到当前会话或选中会话标识'}
+  if(!active.isConnected||!identity.isConnected)return{ok:false,reason:'会话页面正在重新加载'}
   if(!last)return{ok:false,reason:'当前会话暂无可识别消息'}
-  const chatId=attribute(active,s.conversationIdAttribute),messageId=attribute(last,s.messageIdAttribute),rawDirection=attribute(last,s.directionAttribute).toUpperCase(),rawTime=attribute(last,s.timeAttribute),parsed=Date.parse(rawTime)
+  const chatId=attribute(identity,s.conversationIdAttribute),direction=directionOf(last,s),content=last.textContent?.trim()||'',rawMessageId=attribute(last,s.messageIdAttribute),messageId=rawMessageId||`derived-${await digest(`${chatId}|${direction}|${content}`)}`,rawTime=attribute(last,s.timeAttribute)||(s.messageTime?last.querySelector(s.messageTime)?.textContent?.trim()||'':''),parsed=parseVisibleTime(rawTime),createdAt=Number.isFinite(parsed)?parsed:firstObserved(messageId)
   if(!chatId)return{ok:false,reason:'页面未提供稳定会话 ID，已禁止猜测'}
-  if(!messageId)return{ok:false,reason:'页面未提供稳定消息 ID，已禁止发送'}
-  const inbound=['INBOUND','RECEIVED','GEEK'].includes(rawDirection),outbound=['OUTBOUND','SENT','BOSS','HR'].includes(rawDirection)
-  if(!inbound&&!outbound)return{ok:false,reason:'无法确定最后一条消息方向'}
-  if(!Number.isFinite(parsed))return{ok:false,reason:'无法确定最后一条消息时间'}
-  return{ok:true,chatId,messageId,content:last.textContent?.trim()||'',messageKey:`${chatId}:${messageId}`,direction:inbound?'INBOUND':'OUTBOUND',createdAt:parsed,candidateName:text(s.candidateName),jobTitle:text(s.jobTitle),editor,sendButton}
+  if(!direction)return{ok:false,reason:'无法确定最后一条消息方向'}
+  return{ok:true,chatId,messageId,content,messageKey:`${chatId}:${messageId}`,direction,createdAt,candidateName:text(s.candidateName),jobTitle:text(s.jobTitle),editor,sendButton}
  }
- async function stableSnapshot(selectors,wait=800){const first=readSnapshot(selectors);if(!first.ok)return first;await delay(Math.max(300,Math.min(2000,Number(wait)||800)));const second=readSnapshot(selectors);if(!second.ok)return second;if(first.messageKey!==second.messageKey||first.direction!==second.direction)return{ok:false,reason:'会话消息仍在更新，等待页面稳定'};return second}
+ async function stableSnapshot(selectors,wait=800){const first=await readSnapshot(selectors);if(!first.ok)return first;await delay(Math.max(300,Math.min(2000,Number(wait)||800)));const second=await readSnapshot(selectors);if(!second.ok)return second;if(first.messageKey!==second.messageKey||first.direction!==second.direction)return{ok:false,reason:'会话消息仍在更新，等待页面稳定'};return second}
  function visibleRisk(){const walker=document.createTreeWalker(document.body||document.documentElement,NodeFilter.SHOW_TEXT);let node,scanned=0;while(scanned++<5000&&(node=walker.nextNode())){const value=node.nodeValue?.trim();if(!value||!RISK_TEXT.test(value))continue;const element=node.parentElement;if(element&&isVisible(element))return`检测到可见安全提示：${value.slice(0,60)}`}return''}
  function interactionBlocker(snapshot){if(!isVisible(snapshot.editor)||!isVisible(snapshot.sendButton))return'输入框或发送按钮当前不可见';if(snapshot.editor.disabled||snapshot.editor.readOnly||snapshot.editor.getAttribute('aria-disabled')==='true')return'输入框当前不可编辑';if(snapshot.sendButton.disabled||snapshot.sendButton.getAttribute('aria-disabled')==='true')return'发送按钮当前不可用';if(!isTopmost(snapshot.editor)||!isTopmost(snapshot.sendButton))return'页面弹窗或遮罩层覆盖了消息输入区域';return''}
  function isVisible(element){const style=getComputedStyle(element),rect=element.getBoundingClientRect();return style.display!=='none'&&style.visibility!=='hidden'&&Number(style.opacity)!==0&&rect.width>0&&rect.height>0}
  function isTopmost(element){const rect=element.getBoundingClientRect(),x=Math.min(innerWidth-1,Math.max(0,rect.left+rect.width/2)),y=Math.min(innerHeight-1,Math.max(0,rect.top+rect.height/2)),top=document.elementFromPoint(x,y);return Boolean(top&&(top===element||element.contains(top)||top.contains(element)))}
- async function waitForOutbound(selectors,expected,timeout){const end=Date.now()+timeout;while(Date.now()<end){await delay(400);const current=readSnapshot(selectors);if(current.ok&&current.direction==='OUTBOUND'&&current.content===expected)return current}return null}
+ async function waitForOutbound(selectors,expected,timeout){const end=Date.now()+timeout;while(Date.now()<end){await delay(400);const current=await readSnapshot(selectors);if(current.ok&&current.direction==='OUTBOUND'&&current.content===expected)return current}return null}
  async function receipt(claimId,status,externalOutboundMessageId){return send({type:'SEND_RECEIPT',claimId,payload:{status,externalOutboundMessageId}})}
  async function report(config,snapshot,status,reason,bound){const adapterDigest=await digest(JSON.stringify(config.selectors||{})),payload={status,reason,adapterDigest,visible:document.visibilityState==='visible',bound};if(snapshot){payload.chatDigest=await digest(snapshot.chatId);payload.messageDigest=await digest(snapshot.messageId);payload.direction=snapshot.direction;payload.createdAt=new Date(snapshot.createdAt).toISOString();payload.ageMinutes=(Date.now()-snapshot.createdAt)/60_000}return send({type:'DIAGNOSTIC',payload})}
  async function handleDenial(action){const quiet={NOT_TIMED_OUT:'尚未达到超时时间',MINIMUM_INTERVAL:'账号最小发送间隔未到',OUTSIDE_WINDOW:'当前不在后端允许的发送时段',DAILY_LIMIT_REACHED:'已达到后端账号日配额',ALREADY_CLAIMED:'该来信已有发送记录'};return heartbeat(quiet[action]?'RUNNING':'PAUSED',quiet[action]||`后端拒绝发送：${action}`)}
  function attribute(node,name){return String(name?node.getAttribute(name)||'':'').trim()}
+ function directionOf(node,s){const raw=attribute(node,s.directionAttribute).toUpperCase();if(['INBOUND','RECEIVED','GEEK'].includes(raw))return'INBOUND';if(['OUTBOUND','SENT','BOSS','HR'].includes(raw))return'OUTBOUND';try{if(s.inboundMarker&&node.querySelector(s.inboundMarker))return'INBOUND';if(s.outboundMarker&&node.querySelector(s.outboundMarker))return'OUTBOUND'}catch{}return''}
+ const firstObservedTimes=new Map()
+ function firstObserved(messageId){if(!firstObservedTimes.has(messageId))firstObservedTimes.set(messageId,Date.now());return firstObservedTimes.get(messageId)}
+ function parseVisibleTime(value){const direct=Date.parse(value);if(Number.isFinite(direct))return direct;const match=String(value||'').match(/(\d{1,2}):(\d{2})/);if(!match)return NaN;const date=new Date();date.setHours(Number(match[1]),Number(match[2]),0,0);if(date.getTime()>Date.now()+60_000)date.setDate(date.getDate()-1);return date.getTime()}
  function startPicker(label){return new Promise(resolve=>{const previous=document.body.style.cursor;document.body.style.cursor='crosshair';const hint=document.createElement('div');hint.textContent=`请点击页面中的「${label}」，Esc 取消`;Object.assign(hint.style,{position:'fixed',zIndex:'2147483647',top:'12px',left:'50%',transform:'translateX(-50%)',padding:'10px 16px',background:'#111827',color:'#fff',borderRadius:'8px',fontSize:'14px'});document.documentElement.append(hint);const cleanup=()=>{document.body.style.cursor=previous;hint.remove();document.removeEventListener('click',pick,true);document.removeEventListener('keydown',cancel,true)},pick=event=>{event.preventDefault();event.stopPropagation();const selector=uniqueSelector(event.target);cleanup();resolve(selector)},cancel=event=>{if(event.key==='Escape'){cleanup();resolve('')}};document.addEventListener('click',pick,true);document.addEventListener('keydown',cancel,true)})}
  function uniqueSelector(node){if(!(node instanceof Element))return'';if(node.id)return`#${CSS.escape(node.id)}`;const stable=[...node.attributes].find(a=>a.name.startsWith('data-')&&a.value&&document.querySelectorAll(`[${a.name}="${CSS.escape(a.value)}"]`).length===1);if(stable)return`[${stable.name}="${CSS.escape(stable.value)}"]`;const parts=[];for(let current=node;current&&current!==document.body;current=current.parentElement){let part=current.localName;const classes=[...current.classList].filter(x=>!/[0-9]{4,}/.test(x)).slice(0,2);if(classes.length)part+=classes.map(x=>`.${CSS.escape(x)}`).join('');if(current.parentElement?.querySelectorAll(`:scope > ${part}`).length>1)part+=`:nth-child(${[...current.parentElement.children].indexOf(current)+1})`;parts.unshift(part);const selector=parts.join(' > ');if(document.querySelectorAll(selector).length===1)return selector}return parts.join(' > ')}
  function fillEditor(editor,value){editor.focus();if('value'in editor){const prototype=editor instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(prototype,'value')?.set?.call(editor,value)}else editor.textContent=value;editor.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:value}))}
