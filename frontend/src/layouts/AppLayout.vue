@@ -54,11 +54,11 @@ async function handleLogout() {
     <a class="skip-link" href="#main-content">跳到主要内容</a>
     <aside class="sidebar">
       <div class="brand-block">
-        <div class="brand-mark" aria-hidden="true">招</div>
-        <div><strong>HR 离开托管助手</strong><span>候选人消息接待</span></div>
+        <div class="brand-mark" aria-hidden="true">候</div>
+        <div><strong>候选人接待助手</strong><span>HR 离开时自动回复</span></div>
       </div>
       <nav class="nav-list" aria-label="主导航">
-        <section v-for="group in navigationGroups" :key="group.label" class="nav-group">
+        <section v-for="group in navigationGroups" :key="group.label" class="nav-group" :class="{ secondary: group.label !== '日常使用' }">
           <span class="nav-group-label">{{ group.label }}</span>
           <button
           v-for="item in group.items" :key="item.path" type="button" class="nav-item"
@@ -70,7 +70,7 @@ async function handleLogout() {
           </button>
         </section>
       </nav>
-      <div class="sidebar-foot"><span>当前模式</span><strong>离开期间安全接待</strong></div>
+      <div class="sidebar-foot"><i></i><div><span>系统保护已开启</span><strong>异常时自动停止发送</strong></div></div>
     </aside>
 
     <section class="workspace">
@@ -89,7 +89,7 @@ async function handleLogout() {
     </section>
 
     <el-drawer v-model="mobileNavOpen" direction="ltr" size="280px" :show-close="false">
-      <template #header><div class="drawer-brand"><span class="brand-mark">招</span><strong>HR 离开托管助手</strong></div></template>
+      <template #header><div class="drawer-brand"><span class="brand-mark">候</span><strong>候选人接待助手</strong></div></template>
       <nav class="drawer-nav" aria-label="移动端主导航">
         <section v-for="group in navigationGroups" :key="group.label"><span class="drawer-group-label">{{ group.label }}</span><button v-for="item in group.items" :key="item.path" type="button" :class="{ active: activePath === item.path }" @click="navigate(item.path)"><el-icon :size="20"><component :is="item.icon" /></el-icon>{{ item.label }}</button></section>
       </nav>
@@ -101,26 +101,28 @@ async function handleLogout() {
 .app-layout { min-height: 100dvh; }
 .skip-link { position: fixed; top: -80px; left: 16px; z-index: 3000; padding: 10px 14px; border-radius: 8px; background: #fff; color: var(--brand-900); }
 .skip-link:focus { top: 12px; }
-.sidebar { position: fixed; inset: 0 auto 0 0; z-index: 20; display: flex; width: 248px; flex-direction: column; padding: 22px 14px; background: var(--brand-950); color: #fff; overflow-y: auto; }
-.brand-block { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 0 8px; }
+.sidebar { position: fixed; inset: 0 auto 0 0; z-index: 20; display: flex; width: 260px; flex-direction: column; padding: 22px 16px; background: linear-gradient(180deg,#092f2c 0%,#082724 58%,#061f1d 100%); color: #fff; overflow-y: auto; box-shadow: 8px 0 30px rgba(5,31,29,.08); }
+.brand-block { display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 0 8px; }
 .brand-block strong { display: block; font-size: 15px; letter-spacing: .01em; }
 .brand-block span { display: block; margin-top: 4px; color: #a6c7c2; font-size: 12px; }
-.brand-mark { display: grid; width: 40px; height: 40px; flex: 0 0 auto; place-items: center; border-radius: 10px; background: var(--brand-600); color: #fff; font-weight: 800; }
-.nav-list { display: grid; gap: 20px; margin-top: 28px; }
+.brand-mark { display: grid; width: 42px; height: 42px; flex: 0 0 auto; place-items: center; border:1px solid rgba(255,255,255,.16); border-radius: 13px; background: linear-gradient(135deg,#14b8a6,#0d9488); color: #fff; font-weight: 800; box-shadow:0 8px 20px rgba(13,148,136,.25); }
+.nav-list { display: grid; gap: 22px; margin-top: 32px; }
 .nav-group { display: grid; gap: 5px; }
-.nav-group-label,.drawer-group-label { display:block; padding:0 12px 7px; color:#739e98; font-size:11px; font-weight:700; letter-spacing:.08em; }
-.nav-item, .drawer-nav button { display: flex; width: 100%; min-height: 46px; align-items: center; gap: 12px; border: 0; border-radius: 8px; cursor: pointer; font-weight: 600; text-align: left; transition: background-color .18s ease, color .18s ease; }
+.nav-group-label,.drawer-group-label { display:block; padding:0 12px 8px; color:#75a49e; font-size:11px; font-weight:750; letter-spacing:.1em; }
+.nav-group.secondary{padding-top:18px;border-top:1px solid rgba(255,255,255,.08)}
+.nav-item, .drawer-nav button { display: flex; width: 100%; min-height: 48px; align-items: center; gap: 12px; border: 0; border-radius: 11px; cursor: pointer; font-weight: 650; text-align: left; transition: background-color .18s ease, color .18s ease, transform .18s ease; }
 .nav-item { padding: 0 14px; background: transparent; color: #bad2ce; }
-.nav-item:hover { background: rgba(255,255,255,.07); color: #fff; }
-.nav-item.active { background: rgba(45,212,191,.15); color: #fff; box-shadow: inset 3px 0 0 #2dd4bf; }
-.sidebar-foot { margin-top: auto; padding: 16px 12px 4px; border-top: 1px solid rgba(255,255,255,.12); }
-.sidebar-foot span { display: block; color: #83aaa4; font-size: 12px; }
-.sidebar-foot strong { display: block; margin-top: 5px; font-size: 13px; }
-.workspace { min-height: 100dvh; margin-left: 248px; }
-.topbar { position: sticky; top: 0; z-index: 15; display: flex; height: 72px; align-items: center; justify-content: space-between; padding: 0 28px 0 32px; border-bottom: 1px solid var(--border); background: rgba(255,255,255,.94); backdrop-filter: blur(12px); }
+.nav-item:hover { transform:translateX(2px); background: rgba(255,255,255,.075); color: #fff; }
+.nav-item.active { background: linear-gradient(90deg,rgba(45,212,191,.2),rgba(45,212,191,.1)); color: #fff; box-shadow: inset 3px 0 0 #5eead4,0 5px 16px rgba(0,0,0,.08); }
+.sidebar-foot { display:flex;align-items:center;gap:10px;margin-top: auto; padding: 16px 12px 4px; border-top: 1px solid rgba(255,255,255,.12); }
+.sidebar-foot i{width:9px;height:9px;border-radius:50%;background:#34d399;box-shadow:0 0 0 5px rgba(52,211,153,.12)}
+.sidebar-foot span { display: block; color: #b3d2ce; font-size: 12px; }
+.sidebar-foot strong { display: block; margin-top: 4px; color:#729d97;font-size: 11px;font-weight:500; }
+.workspace { min-height: 100dvh; margin-left: 260px; }
+.topbar { position: sticky; top: 0; z-index: 15; display: flex; height: 74px; align-items: center; justify-content: space-between; padding: 0 32px 0 40px; border-bottom: 1px solid rgba(221,231,228,.9); background: rgba(250,252,251,.88); backdrop-filter: blur(16px); }
 .topbar-context span { display: block; color: var(--text-secondary); font-size: 12px; }
 .topbar-context strong { display: block; margin-top: 3px; font-size: 15px; }
-.user-area { display: flex; align-items: center; gap: 10px; }
+.user-area { display: flex; align-items: center; gap: 11px;padding:5px 6px 5px 8px;border:1px solid var(--border);border-radius:12px;background:rgba(255,255,255,.78); }
 .user-avatar { display: grid; width: 36px; height: 36px; place-items: center; border-radius: 9px; background: var(--brand-100); color: var(--brand-700); }
 .user-copy strong, .user-copy span { display: block; }
 .user-copy strong { font-size: 13px; }
