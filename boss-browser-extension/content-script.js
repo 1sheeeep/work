@@ -52,6 +52,8 @@
 
  function readSnapshot(s){
   let active,editor,sendButton,last
+  const missing=['activeConversation','message','editor','sendButton'].filter(key=>!String(s?.[key]||'').trim())
+  if(missing.length)return{ok:false,reason:`页面适配器尚未配置：${missing.join(', ')}`}
   try{active=document.querySelector(s.activeConversation);editor=document.querySelector(s.editor);sendButton=document.querySelector(s.sendButton);last=[...(active?.querySelectorAll(s.message)||[])].at(-1)}catch{return{ok:false,reason:'页面选择器无效'}}
   if(!active||!editor||!sendButton)return{ok:false,reason:'未找到当前会话、输入框或发送按钮'}
   if(!active.isConnected||!editor.isConnected||!sendButton.isConnected)return{ok:false,reason:'会话页面正在重新加载'}
