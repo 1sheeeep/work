@@ -7,3 +7,4 @@ interface BrowserSendClaimRepository extends JpaRepository<BrowserSendClaim,UUID
  @EntityGraph(attributePaths={"device","binding","binding.contact","inboundMessage"}) Optional<BrowserSendClaim> findByIdAndDeviceId(UUID id,UUID deviceId);
  Optional<BrowserSendClaim> findByInboundMessageId(UUID inboundMessageId);
 }
+interface BrowserUnreadObservationRepository extends JpaRepository<BrowserUnreadObservation,UUID>{@EntityGraph(attributePaths={"account","account.company"})List<BrowserUnreadObservation> findAllByUnreadTrueOrderByFirstSeenAtAsc();Optional<BrowserUnreadObservation> findByAccountIdAndChatDigest(UUID accountId,String chatDigest);}

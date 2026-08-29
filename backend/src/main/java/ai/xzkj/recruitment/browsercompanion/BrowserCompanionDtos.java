@@ -1,5 +1,5 @@
 package ai.xzkj.recruitment.browsercompanion;
-import jakarta.validation.constraints.*;import java.time.Instant;import java.util.UUID;
+import jakarta.validation.Valid;import jakarta.validation.constraints.*;import java.time.Instant;import java.util.*;
 record CreatePairingRequest(@NotNull UUID accountId){}
 record PairDeviceRequest(@NotBlank @Size(max=200)String pairingToken,@NotBlank @Size(max=100)String deviceName){}
 record HeartbeatRequest(@NotBlank @Pattern(regexp="DISABLED|RUNNING|PAUSED|OFFLINE")String state,@Size(max=300)String reason){}
@@ -15,3 +15,7 @@ record CreateSendClaimRequest(@NotBlank @Size(max=500)String externalChatId,@Not
 record SendClaimResponse(boolean allowed,String action,UUID claimId,Instant leaseUntil,int sentToday,int dailyLimit){}
 record SendReceiptRequest(@NotBlank @Pattern(regexp="SENT|UNKNOWN")String status,@Size(max=120)String externalOutboundMessageId){}
 record SendReceiptResponse(String status,int sentToday,Instant lastSentAt,Instant pausedUntil){}
+record UnreadObservationEntry(@NotBlank@Pattern(regexp="[a-f0-9]{64}")String chatDigest,@Pattern(regexp="[a-f0-9]{64}")String previewDigest,@Pattern(regexp="[a-f0-9]{64}")String jobDigest,@Pattern(regexp="[a-f0-9]{64}")String timeDigest,@Min(0)@Max(999)int unreadCount,Instant firstSeenAt,Instant lastSeenAt){}
+record UnreadObservationSnapshot(@NotNull@Size(max=200)List<@Valid UnreadObservationEntry> entries){}
+record UnreadObservationSyncResponse(int activeUnread,int received,Instant serverNow){}
+record UnreadObservationResponse(UUID id,UUID accountId,String accountName,String companyName,String anonymousKey,int unreadCount,boolean jobRecognized,boolean previewRecognized,Instant firstSeenAt,Instant lastSeenAt){static UnreadObservationResponse from(BrowserUnreadObservation x){return new UnreadObservationResponse(x.getId(),x.getAccount().getId(),x.getAccount().getDisplayName(),x.getAccount().getCompany().getName(),x.getChatDigest().substring(0,12),x.getUnreadCount(),x.getJobDigest()!=null,x.getPreviewDigest()!=null,x.getFirstSeenAt(),x.getLastSeenAt());}}
