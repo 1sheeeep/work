@@ -36,7 +36,7 @@ public class BossAccount {
     private String externalIdentifier;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "gateway_type", nullable = false, length = 16)
+    @Column(name = "gateway_type", nullable = false, length = 24)
     private BossGatewayType gatewayType;
 
     @Enumerated(EnumType.STRING)
