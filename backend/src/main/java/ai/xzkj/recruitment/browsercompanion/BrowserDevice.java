@@ -22,6 +22,10 @@ public class BrowserDevice {
     protected BrowserDevice(){}
     public BrowserDevice(BossAccount account,String name,String hash,SystemUser user){id=UUID.randomUUID();bossAccount=account;displayName=name;tokenHash=hash;status="ACTIVE";runtimeState="OFFLINE";pairedBy=user;createdAt=Instant.now();}
     public void heartbeat(String state,String reason){runtimeState=state;stopReason=reason;lastHeartbeatAt=Instant.now();}
+    boolean markOffline(String reason){
+        if("OFFLINE".equals(runtimeState)&&java.util.Objects.equals(stopReason,reason))return false;
+        runtimeState="OFFLINE";stopReason=reason;return true;
+    }
     public void revoke(){status="REVOKED";runtimeState="OFFLINE";revokedAt=Instant.now();tokenHash=UUID.randomUUID().toString().replace("-","")+UUID.randomUUID().toString().replace("-","");}
     public UUID getId(){return id;} public BossAccount getBossAccount(){return bossAccount;} public String getDisplayName(){return displayName;} public String getTokenHash(){return tokenHash;} public String getStatus(){return status;} public String getRuntimeState(){return runtimeState;} public String getStopReason(){return stopReason;} public Instant getLastHeartbeatAt(){return lastHeartbeatAt;} public Instant getCreatedAt(){return createdAt;} public Instant getRevokedAt(){return revokedAt;}
 }

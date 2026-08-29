@@ -55,6 +55,8 @@ app:
   browser:
     monitor-only: ${APP_BROWSER_MONITOR_ONLY:true}
     draft-fill-enabled: ${APP_BROWSER_DRAFT_FILL_ENABLED:false}
+    safety-watchdog-interval: ${APP_BROWSER_SAFETY_WATCHDOG_INTERVAL:30s}
+    heartbeat-timeout: ${APP_BROWSER_HEARTBEAT_TIMEOUT:2m}
   gateway:
     timeout: ${APP_GATEWAY_TIMEOUT:3s}
     max-concurrent: ${APP_GATEWAY_MAX_CONCURRENT:8}

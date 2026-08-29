@@ -23,6 +23,8 @@ public class BrowserSendClaim {
     }
     void sent(ConversationMessage outbound,Instant now){status="SENT";outboundMessage=outbound;completedAt=now;}
     void unknown(Instant now){status="UNKNOWN";completedAt=now;}
+    boolean expire(Instant now){if(!"CLAIMED".equals(status)||leaseUntil.isAfter(now))return false;unknown(now);return true;}
     public UUID getId(){return id;} public String getStatus(){return status;} public Instant getLeaseUntil(){return leaseUntil;}
+    public BrowserDevice getDevice(){return device;}
     public BrowserConversationBinding getBinding(){return binding;} public ConversationMessage getInboundMessage(){return inboundMessage;}
 }

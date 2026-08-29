@@ -26,6 +26,8 @@ Caddy 自动申请和续期 TLS 证书；应用 Session Cookie 在生产配置�
 - 建议告警：就绪检查连续 3 次失败、5xx 比例 > 2%、Gateway 超时/断路计数增长、PostgreSQL 磁盘 > 80%。
 - 自动跟进额外告警：`FAILED` 尝试连续增长、账号 `pausedUntil` 非空、`CLAIMED` 租约长期不完成、单账号日配额提前耗尽。
 - 浏览器设备告警：活跃设备超过 2 分钟无心跳、运行状态为 `PAUSED`、停机原因出现验证码/风险提示或设备反复重新配对。
+- 安全看门狗默认每 30 秒执行；可用 `APP_BROWSER_SAFETY_WATCHDOG_INTERVAL` 调整扫描周期，用 `APP_BROWSER_HEARTBEAT_TIMEOUT` 调整离线阈值。不建议将心跳阈值设为少于 2 分钟。
+- 指标 `recruitment_browser_safety_total{event="device_offline|send_lease_expired|fill_lease_expired"}` 增长时需核对对应账号；租约过期不得手工改回 READY/CLAIMED，应由 HR 核对真实页面后重新建立任务。
 - 管理员可访问 `/api/operations/gateways` 查看各 Gateway 操作的连续失败数和断路截止时间。
 - 管理员运行保障页显示 Flyway、审计只追加和 Gateway 保护状态；浏览器设备心跳与停机原因在“自动跟进”页查看。
 
