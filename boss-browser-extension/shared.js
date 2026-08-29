@@ -47,3 +47,20 @@ export async function sha256(value) {
   const digest = await crypto.subtle.digest('SHA-256', bytes)
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
 }
+
+export function sanitizeDiagnostic(value = {}, tab = {}, now = new Date()) {
+  const digest = (input) => /^[a-f0-9]{64}$/.test(String(input || '')) ? input : null
+  const direction = ['INBOUND', 'OUTBOUND'].includes(value.direction) ? value.direction : null
+  const status = ['READY', 'BLOCKED', 'RISK', 'UNBOUND', 'BACKEND_ERROR', 'OBSERVING'].includes(value.status) ? value.status : 'BLOCKED'
+  let origin = ''
+  try { origin = new URL(tab.url).origin } catch {}
+  return { observedAt: now.toISOString(), tabId: Number.isInteger(tab.id) ? tab.id : null, origin, status,
+    reason: String(value.reason || '').slice(0, 200), adapterDigest: digest(value.adapterDigest), chatDigest: digest(value.chatDigest),
+    messageDigest: digest(value.messageDigest), direction, createdAt: Number.isFinite(Date.parse(value.createdAt)) ? value.createdAt : null,
+    ageMinutes: Number.isFinite(value.ageMinutes) ? Math.max(0, Math.round(value.ageMinutes)) : null,
+    bound: typeof value.bound === 'boolean' ? value.bound : null, visible: Boolean(value.visible) }
+}
+
+export function diagnosticSignature(value) {
+  return [value.tabId, value.status, value.reason, value.adapterDigest, value.chatDigest, value.messageDigest, value.direction, value.createdAt, value.bound, value.visible].join('|')
+}

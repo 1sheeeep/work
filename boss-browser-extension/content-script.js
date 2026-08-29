@@ -10,14 +10,16 @@
   if(busy)return;busy=true
   try{
    const state=await send({type:'GET_STATE'}),config=state.config
+   if(RISK_TEXT.test(document.body?.innerText||'')){await report(config,null,'RISK','检测到登录、验证码或平台风险提示');return pause('检测到登录、验证码或平台风险提示')}
+   const snapshot=readSnapshot(config.selectors);if(!snapshot.ok){await report(config,null,'BLOCKED',snapshot.reason);return heartbeat('PAUSED',snapshot.reason)}
+   await report(config,snapshot,'OBSERVING',config.emergencyStop?'本机紧急停止已开启':'页面结构识别成功')
    if(config.emergencyStop)return heartbeat('PAUSED','本机紧急停止已开启')
    if(!config.enabled)return heartbeat('DISABLED','后端监测策略未开启')
-   if(RISK_TEXT.test(document.body?.innerText||''))return pause('检测到登录、验证码或平台风险提示')
    if(config.requireVisibleTab&&document.visibilityState!=='visible')return heartbeat('PAUSED','会话页不在前台')
-   const snapshot=readSnapshot(config.selectors);if(!snapshot.ok)return heartbeat('PAUSED',snapshot.reason)
    const synced=await send({type:'SYNC_MESSAGE',payload:{externalChatId:snapshot.chatId,externalMessageId:snapshot.messageId,direction:snapshot.direction,createdAt:new Date(snapshot.createdAt).toISOString(),content:config.syncMessageContent?snapshot.content:null}})
-   if(!synced?.ok)return heartbeat('PAUSED',synced?.action==='DEVICE_NOT_PAIRED'?'扩展尚未与招聘系统配对':'招聘系统连接失败或设备已撤销')
-   if(!synced.bound)return heartbeat('PAUSED','当前网页会话尚未与候选人人工绑定')
+   if(!synced?.ok){await report(config,snapshot,'BACKEND_ERROR',synced?.action||'BACKEND_ERROR');return heartbeat('PAUSED',synced?.action==='DEVICE_NOT_PAIRED'?'扩展尚未与招聘系统配对':'招聘系统连接失败或设备已撤销')}
+   if(!synced.bound){await report(config,snapshot,'UNBOUND','当前网页会话尚未绑定',false);return heartbeat('PAUSED','当前网页会话尚未与候选人人工绑定')}
+   await report(config,snapshot,'READY','页面结构与会话绑定均正常',true)
    await heartbeat('RUNNING','')
    if(!config.automaticSend||snapshot.direction!=='INBOUND')return
    const leadership=await send({type:'ACQUIRE_TAB'});if(!leadership?.leader)return heartbeat('PAUSED','另一个 BOSS 会话标签页正在执行监测')
@@ -53,6 +55,7 @@
  }
  async function waitForOutbound(selectors,expected,timeout){const end=Date.now()+timeout;while(Date.now()<end){await delay(400);const current=readSnapshot(selectors);if(current.ok&&current.direction==='OUTBOUND'&&current.content===expected)return current}return null}
  async function receipt(claimId,status,externalOutboundMessageId){return send({type:'SEND_RECEIPT',claimId,payload:{status,externalOutboundMessageId}})}
+ async function report(config,snapshot,status,reason,bound){const adapterDigest=await digest(JSON.stringify(config.selectors||{})),payload={status,reason,adapterDigest,visible:document.visibilityState==='visible',bound};if(snapshot){payload.chatDigest=await digest(snapshot.chatId);payload.messageDigest=await digest(snapshot.messageId);payload.direction=snapshot.direction;payload.createdAt=new Date(snapshot.createdAt).toISOString();payload.ageMinutes=(Date.now()-snapshot.createdAt)/60_000}return send({type:'DIAGNOSTIC',payload})}
  async function handleDenial(action){const quiet={NOT_TIMED_OUT:'尚未达到超时时间',MINIMUM_INTERVAL:'账号最小发送间隔未到',OUTSIDE_WINDOW:'当前不在后端允许的发送时段',DAILY_LIMIT_REACHED:'已达到后端账号日配额',ALREADY_CLAIMED:'该来信已有发送记录'};return heartbeat(quiet[action]?'RUNNING':'PAUSED',quiet[action]||`后端拒绝发送：${action}`)}
  function attribute(node,name){return String(name?node.getAttribute(name)||'':'').trim()}
  function startPicker(label){return new Promise(resolve=>{const previous=document.body.style.cursor;document.body.style.cursor='crosshair';const hint=document.createElement('div');hint.textContent=`请点击页面中的「${label}」，Esc 取消`;Object.assign(hint.style,{position:'fixed',zIndex:'2147483647',top:'12px',left:'50%',transform:'translateX(-50%)',padding:'10px 16px',background:'#111827',color:'#fff',borderRadius:'8px',fontSize:'14px'});document.documentElement.append(hint);const cleanup=()=>{document.body.style.cursor=previous;hint.remove();document.removeEventListener('click',pick,true);document.removeEventListener('keydown',cancel,true)},pick=event=>{event.preventDefault();event.stopPropagation();const selector=uniqueSelector(event.target);cleanup();resolve(selector)},cancel=event=>{if(event.key==='Escape'){cleanup();resolve('')}};document.addEventListener('click',pick,true);document.addEventListener('keydown',cancel,true)})}

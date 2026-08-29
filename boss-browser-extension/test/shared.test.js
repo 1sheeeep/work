@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { DEFAULTS, insideWindow, renderTemplate, sha256, validateConfig } from '../shared.js'
+import { DEFAULTS, diagnosticSignature, insideWindow, renderTemplate, sanitizeDiagnostic, sha256, validateConfig } from '../shared.js'
 
 test('supports daytime and overnight safety windows', () => {
   assert.equal(insideWindow(new Date('2026-08-28T10:00:00'), '09:00', '21:00'), true)
@@ -23,4 +23,15 @@ test('creates stable irreversible identifiers without retaining message plaintex
   assert.equal(await sha256('候选人消息'), await sha256('候选人消息'))
   assert.match(await sha256('候选人消息'), /^[a-f0-9]{64}$/)
   assert.notEqual(await sha256('候选人消息'), await sha256('另一条消息'))
+})
+
+test('sanitizes diagnostics and strips URL paths and invalid identifiers', () => {
+  const fixed = new Date('2026-08-29T06:00:00Z')
+  const report = sanitizeDiagnostic({ status: 'READY', reason: 'ok', chatDigest: 'a'.repeat(64), messageDigest: 'raw-message-id', direction: 'INBOUND', createdAt: 'bad', bound: true, visible: true, plaintext: '不得保存' }, { id: 7, url: 'https://www.zhipin.com/web/chat?id=secret' }, fixed)
+  assert.equal(report.origin, 'https://www.zhipin.com')
+  assert.equal(report.chatDigest, 'a'.repeat(64))
+  assert.equal(report.messageDigest, null)
+  assert.equal(report.createdAt, null)
+  assert.equal('plaintext' in report, false)
+  assert.equal(diagnosticSignature(report), diagnosticSignature({ ...report }))
 })
