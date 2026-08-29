@@ -9,6 +9,8 @@ test('supports daytime and overnight safety windows', () => {
 })
 
 test('fails closed until selectors are explicitly learned', () => {
+  assert.equal(DEFAULTS.monitorOnly, true)
+  assert.equal(DEFAULTS.emergencyStop, true)
   assert.match(validateConfig(DEFAULTS), /页面适配器未配置/)
   const config = structuredClone(DEFAULTS)
   Object.assign(config.selectors, { activeConversation: '.chat', message: '.message', editor: '#editor', sendButton: '#send' })

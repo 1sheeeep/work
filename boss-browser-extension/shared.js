@@ -1,6 +1,7 @@
 export const DEFAULTS = Object.freeze({
   enabled: true,
   emergencyStop: true,
+  monitorOnly: true,
   accountAlias: '',
   backendUrl: 'http://localhost:8088',
   syncMessageContent: false,

@@ -19,6 +19,7 @@
    const synced=await send({type:'SYNC_MESSAGE',payload:{externalChatId:snapshot.chatId,externalMessageId:snapshot.messageId,direction:snapshot.direction,createdAt:new Date(snapshot.createdAt).toISOString(),content:config.syncMessageContent?snapshot.content:null}})
    if(!synced?.ok){await report(config,snapshot,'BACKEND_ERROR',synced?.action||'BACKEND_ERROR');return heartbeat('PAUSED',synced?.action==='DEVICE_NOT_PAIRED'?'扩展尚未与招聘系统配对':'招聘系统连接失败或设备已撤销')}
    if(!synced.bound){await report(config,snapshot,'UNBOUND','当前网页会话尚未绑定',false);return heartbeat('PAUSED','当前网页会话尚未与候选人人工绑定')}
+   if(config.monitorOnly){await report(config,snapshot,'READY','只监测模式：页面识别和消息同步正常，不会发送',true);return heartbeat('PAUSED','只监测模式已开启，禁止自动发送')}
    await report(config,snapshot,'READY','页面结构与会话绑定均正常',true)
    await heartbeat('RUNNING','')
    if(!config.automaticSend||snapshot.direction!=='INBOUND')return
