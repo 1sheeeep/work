@@ -7,6 +7,7 @@
  chrome.runtime.onMessage.addListener((message,_sender,respond)=>{
   if(message.type==='PING'){respond({ok:true,readyState:document.readyState});return false}
   if(message.type==='RUN_DIAGNOSTIC'){schedule(0);respond({ok:true});return false}
+  if(message.type==='CAPTURE_CURRENT_JOB'){respond(captureCurrentJob());return false}
   if(message.type!=='START_PICKER')return false
   startPicker(message.label).then(selector=>respond({ok:Boolean(selector),selector}));return true
  })
@@ -51,6 +52,23 @@
    await receipt(claim.claimId,'SENT',outbound.messageId)
   }catch(error){await pause(`页面适配失败：${String(error?.message||error).slice(0,160)}`)}finally{busy=false}
  }
+
+ function captureCurrentJob(){
+  const risk=visibleRisk();if(risk)return{ok:false,reason:risk}
+  const visibleText=(selector)=>{try{return[...document.querySelectorAll(selector)].filter(isVisible).map(node=>(node.textContent||'').trim()).find(Boolean)||''}catch{return''}}
+  const firstText=(selectors)=>{for(const selector of selectors){const value=visibleText(selector);if(value)return value}return''}
+  const title=firstText(['.job-detail-header .name','.job-title','.job-name','h1'])
+  const salaryText=firstText(['.job-detail-header .salary','.salary','.job-salary'])
+  const location=firstText(['.job-detail-header .job-area','.job-area','.location','.job-location'])
+  const description=firstText(['.job-detail-section .job-sec-text','.job-sec-text','.job-description','.job-detail-content'])
+  const meta=[...document.querySelectorAll('.job-primary span,.job-detail-header span,.job-banner span')].filter(isVisible).map(node=>(node.textContent||'').trim()).filter(Boolean)
+  const experienceRequirement=meta.find(value=>/(经验|应届|在校)/.test(value))||''
+  const educationRequirement=meta.find(value=>/(学历|本科|硕士|博士|大专|高中|不限)/.test(value))||''
+  const salary=parseSalary(salaryText),missing=[]
+  if(!title)missing.push('职位名称');if(!location)missing.push('工作地点');if(!salary.ok)missing.push('薪资范围');if(!experienceRequirement)missing.push('经验要求');if(!educationRequirement)missing.push('学历要求');if(!description)missing.push('职位描述')
+  return{ok:true,data:{title:title.slice(0,120),location:location.slice(0,120),salaryMinK:salary.min,salaryMaxK:salary.max,salaryMonths:salary.months,experienceRequirement:experienceRequirement.slice(0,80),educationRequirement:educationRequirement.slice(0,80),description:description.slice(0,10000),screeningRequirements:''},missing}
+ }
+ function parseSalary(value){const text=String(value||'').replace(/,/g,''),range=text.match(/(\d+(?:\.\d+)?)\s*[-–—~至]\s*(\d+(?:\.\d+)?)\s*[kK]/),months=text.match(/[·x×*]\s*(1[2-6])\s*薪/);if(!range)return{ok:false,min:1,max:1,months:months?Number(months[1]):12};const min=Math.round(Number(range[1])),max=Math.round(Number(range[2]));return{ok:min>=1&&max>=min&&max<=1000,min,max,months:months?Number(months[1]):12}}
 
  async function readSnapshot(s){
   let active,identity,editor,sendButton,last

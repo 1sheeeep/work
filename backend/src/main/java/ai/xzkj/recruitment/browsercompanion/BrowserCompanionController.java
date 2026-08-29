@@ -16,6 +16,7 @@ import jakarta.validation.Valid;import org.springframework.http.HttpHeaders;impo
  @PutMapping("/api/browser-observations/{id}/review")public UnreadObservationResponse review(@PathVariable UUID id,@Valid@RequestBody ObservationReviewRequest r){return service.reviewObservation(id,r);}
  @PostMapping("/api/browser-runtime/draft-fill-claims")public DraftFillClaimResponse claimDraft(@RequestHeader(HttpHeaders.AUTHORIZATION)String token,@Valid@RequestBody DraftFillClaimRequest r){return service.claimDraftFill(token,r);}
  @PostMapping("/api/browser-runtime/draft-fill-claims/{id}/receipt")public DraftFillReceiptResponse draftReceipt(@RequestHeader(HttpHeaders.AUTHORIZATION)String token,@PathVariable UUID id,@Valid@RequestBody DraftFillReceiptRequest r){return service.draftFillReceipt(token,id,r);}
+ @PostMapping("/api/browser-runtime/job-drafts")public CapturedJobDraftResponse captureJob(@RequestHeader(HttpHeaders.AUTHORIZATION)String token,@Valid@RequestBody CapturedJobDraftRequest r){return service.createCapturedJobDraft(token,r);}
  @PostMapping("/api/browser-runtime/send-claims")public SendClaimResponse claim(@RequestHeader(HttpHeaders.AUTHORIZATION)String token,@Valid@RequestBody CreateSendClaimRequest r){return service.claim(token,r);}
  @PostMapping("/api/browser-runtime/send-claims/{id}/receipt")public SendReceiptResponse receipt(@RequestHeader(HttpHeaders.AUTHORIZATION)String token,@PathVariable UUID id,@Valid@RequestBody SendReceiptRequest r){return service.receipt(token,id,r);}
 }

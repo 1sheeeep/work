@@ -59,6 +59,10 @@ public final class SafeReplyComposer {
         return normalized.replaceAll("[\\p{P}\\p{Z}\\s]+", "");
     }
 
+    public static String normalizePublicTitle(String value) {
+        return normalizeTitle(value);
+    }
+
     private static boolean isBlank(String value) {
         return value == null || value.isBlank();
     }
