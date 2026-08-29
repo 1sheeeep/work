@@ -10,7 +10,7 @@ test('administrator can create, edit, deactivate and revisit a company', async (
   const companyName = `浏览器验证企业${suffix}`
   const companyCode = `UI_${suffix}`.toUpperCase().slice(0, 32)
 
-  await page.goto('/login')
+  await page.goto('/login?redirect=/organization')
   await page.getByLabel('用户名').fill(username)
   await page.getByLabel('密码').fill(password)
   await page.getByRole('button', { name: '登录', exact: true }).click()

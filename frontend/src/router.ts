@@ -8,7 +8,8 @@ const router = createRouter({
     {
       path: '/', component: () => import('./layouts/AppLayout.vue'),
       children: [
-        { path: '', redirect: '/organization' },
+        { path: '', redirect: '/dashboard' },
+        { path: 'dashboard', name: 'dashboard', component: () => import('./views/DashboardView.vue') },
         { path: 'organization', name: 'organization', component: () => import('./views/OrganizationView.vue') },
         { path: 'boss-accounts', name: 'boss-accounts', component: () => import('./views/BossAccountsView.vue') },
         { path: 'job-positions', name: 'job-positions', component: () => import('./views/JobPositionsView.vue') },
@@ -26,7 +27,7 @@ const router = createRouter({
 router.beforeEach(async (to) => {
   const user = await authStore.loadCurrentUser()
   if (to.meta.public) {
-    if (to.name === 'login' && user) return { name: 'organization' }
+    if (to.name === 'login' && user) return { name: 'dashboard' }
     return true
   }
   if (!user) return { name: 'login', query: { redirect: to.fullPath } }

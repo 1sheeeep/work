@@ -14,7 +14,7 @@ test('administrator can create, edit, activate and close job positions', async (
   const activeJobTitle = `E2E Java 开发 ${suffix}`
   const closedJobTitle = `E2E 已关闭职位 ${suffix}`
 
-  await page.goto('/login')
+  await page.goto('/login?redirect=/organization')
   await page.getByLabel('用户名').fill(adminUsername)
   await page.getByLabel('密码').fill(adminPassword)
   await page.getByRole('button', { name: '登录', exact: true }).click()

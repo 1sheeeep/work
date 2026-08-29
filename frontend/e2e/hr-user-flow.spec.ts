@@ -11,7 +11,7 @@ test('administrator can manage HR role, company scope, password and status', asy
   const displayName = `E2E 招聘专员 ${suffix}`
   const fixturePassword = 'E2eRecruit!2026'
 
-  await page.goto('/login')
+  await page.goto('/login?redirect=/organization')
   await page.getByLabel('用户名').fill(adminUsername)
   await page.getByLabel('密码').fill(adminPassword)
   await page.getByRole('button', { name: '登录', exact: true }).click()

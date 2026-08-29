@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Briefcase, ChatDotRound, Connection, DataAnalysis, Expand, Monitor, OfficeBuilding, SwitchButton, User, UserFilled } from '@element-plus/icons-vue'
+import { Briefcase, ChatDotRound, Connection, DataAnalysis, Expand, Grid, Monitor, OfficeBuilding, SwitchButton, User, UserFilled } from '@element-plus/icons-vue'
 import { authStore } from '../stores/auth'
 
 const route = useRoute()
@@ -11,20 +11,25 @@ const mobileNavOpen = ref(false)
 const loggingOut = ref(false)
 const activePath = computed(() => route.path)
 const user = computed(() => authStore.state.user)
-const navigation = computed(() => [
-  { path: '/organization', label: '集团与企业', icon: OfficeBuilding },
-  { path: '/boss-accounts', label: 'BOSS 账号', icon: Connection },
-  { path: '/job-positions', label: '职位管理', icon: Briefcase },
-  { path: '/candidates', label: '候选人工作台', icon: UserFilled },
-  { path: '/auto-replies', label: '自动跟进', icon: ChatDotRound },
-  ...(user.value?.role === 'SYSTEM_ADMIN' ? [
-    { path: '/hr-users', label: 'HR 用户', icon: User },
+const navigationGroups = computed(() => [
+  { label: '工作台', items: [{ path: '/dashboard', label: '招聘概览', icon: Grid }] },
+  { label: '招聘业务', items: [
+    { path: '/job-positions', label: '职位管理', icon: Briefcase },
+    { path: '/candidates', label: '候选人工作台', icon: UserFilled },
+    { path: '/auto-replies', label: '自动跟进', icon: ChatDotRound },
+  ] },
+  { label: '账号与组织', items: [
+    { path: '/organization', label: '集团与企业', icon: OfficeBuilding },
+    { path: '/boss-accounts', label: 'BOSS 账号', icon: Connection },
+    ...(user.value?.role === 'SYSTEM_ADMIN' ? [{ path: '/hr-users', label: 'HR 用户', icon: User }] : []),
+  ] },
+  ...(user.value?.role === 'SYSTEM_ADMIN' ? [{ label: '系统管理', items: [
     { path: '/audit-logs', label: '操作日志', icon: DataAnalysis },
     { path: '/operations', label: '运行保障', icon: Monitor },
-  ] : []),
+  ] }] : []),
 ])
 const roleLabel = computed(() => ({ SYSTEM_ADMIN: '系统管理员', RECRUITMENT_ADMIN: '招聘管理员', RECRUITER: '招聘专员' }[user.value?.role ?? 'SYSTEM_ADMIN']))
-const workspaceLabel = computed(() => ({ organization: '组织管理', 'boss-accounts': 'BOSS 账号', 'job-positions': '职位管理', candidates: '候选人工作台', 'auto-replies': '多账号自动跟进', 'hr-users': 'HR 用户', 'audit-logs': '操作日志', operations: '运行保障' }[String(route.name)] ?? '招聘工作台'))
+const workspaceLabel = computed(() => ({ dashboard: '招聘概览', organization: '组织管理', 'boss-accounts': 'BOSS 账号', 'job-positions': '职位管理', candidates: '候选人工作台', 'auto-replies': '多账号自动跟进', 'hr-users': 'HR 用户', 'audit-logs': '操作日志', operations: '运行保障' }[String(route.name)] ?? '招聘工作台'))
 
 function navigate(path: string) {
   mobileNavOpen.value = false
@@ -53,14 +58,17 @@ async function handleLogout() {
         <div><strong>招聘自动化控制台</strong><span>集团 HR 工作台</span></div>
       </div>
       <nav class="nav-list" aria-label="主导航">
-        <button
-          v-for="item in navigation" :key="item.path" type="button" class="nav-item"
+        <section v-for="group in navigationGroups" :key="group.label" class="nav-group">
+          <span class="nav-group-label">{{ group.label }}</span>
+          <button
+          v-for="item in group.items" :key="item.path" type="button" class="nav-item"
           :class="{ active: activePath === item.path }"
           :aria-current="activePath === item.path ? 'page' : undefined"
           @click="navigate(item.path)"
         >
           <el-icon :size="20"><component :is="item.icon" /></el-icon><span>{{ item.label }}</span>
-        </button>
+          </button>
+        </section>
       </nav>
       <div class="sidebar-foot"><span>核心主链路</span><strong>BOSS 超时自动回复</strong></div>
     </aside>
@@ -83,9 +91,7 @@ async function handleLogout() {
     <el-drawer v-model="mobileNavOpen" direction="ltr" size="280px" :show-close="false">
       <template #header><div class="drawer-brand"><span class="brand-mark">招</span><strong>招聘自动化控制台</strong></div></template>
       <nav class="drawer-nav" aria-label="移动端主导航">
-        <button v-for="item in navigation" :key="item.path" type="button" :class="{ active: activePath === item.path }" @click="navigate(item.path)">
-          <el-icon :size="20"><component :is="item.icon" /></el-icon>{{ item.label }}
-        </button>
+        <section v-for="group in navigationGroups" :key="group.label"><span class="drawer-group-label">{{ group.label }}</span><button v-for="item in group.items" :key="item.path" type="button" :class="{ active: activePath === item.path }" @click="navigate(item.path)"><el-icon :size="20"><component :is="item.icon" /></el-icon>{{ item.label }}</button></section>
       </nav>
     </el-drawer>
   </div>
@@ -95,12 +101,14 @@ async function handleLogout() {
 .app-layout { min-height: 100dvh; }
 .skip-link { position: fixed; top: -80px; left: 16px; z-index: 3000; padding: 10px 14px; border-radius: 8px; background: #fff; color: var(--brand-900); }
 .skip-link:focus { top: 12px; }
-.sidebar { position: fixed; inset: 0 auto 0 0; z-index: 20; display: flex; width: 232px; flex-direction: column; padding: 24px 16px; background: var(--brand-950); color: #fff; }
+.sidebar { position: fixed; inset: 0 auto 0 0; z-index: 20; display: flex; width: 248px; flex-direction: column; padding: 22px 14px; background: var(--brand-950); color: #fff; overflow-y: auto; }
 .brand-block { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 0 8px; }
 .brand-block strong { display: block; font-size: 15px; letter-spacing: .01em; }
 .brand-block span { display: block; margin-top: 4px; color: #a6c7c2; font-size: 12px; }
 .brand-mark { display: grid; width: 40px; height: 40px; flex: 0 0 auto; place-items: center; border-radius: 10px; background: var(--brand-600); color: #fff; font-weight: 800; }
-.nav-list { display: grid; gap: 6px; margin-top: 36px; }
+.nav-list { display: grid; gap: 20px; margin-top: 28px; }
+.nav-group { display: grid; gap: 5px; }
+.nav-group-label,.drawer-group-label { display:block; padding:0 12px 7px; color:#739e98; font-size:11px; font-weight:700; letter-spacing:.08em; }
 .nav-item, .drawer-nav button { display: flex; width: 100%; min-height: 46px; align-items: center; gap: 12px; border: 0; border-radius: 8px; cursor: pointer; font-weight: 600; text-align: left; transition: background-color .18s ease, color .18s ease; }
 .nav-item { padding: 0 14px; background: transparent; color: #bad2ce; }
 .nav-item:hover { background: rgba(255,255,255,.07); color: #fff; }
@@ -108,7 +116,7 @@ async function handleLogout() {
 .sidebar-foot { margin-top: auto; padding: 16px 12px 4px; border-top: 1px solid rgba(255,255,255,.12); }
 .sidebar-foot span { display: block; color: #83aaa4; font-size: 12px; }
 .sidebar-foot strong { display: block; margin-top: 5px; font-size: 13px; }
-.workspace { min-height: 100dvh; margin-left: 232px; }
+.workspace { min-height: 100dvh; margin-left: 248px; }
 .topbar { position: sticky; top: 0; z-index: 15; display: flex; height: 72px; align-items: center; justify-content: space-between; padding: 0 28px 0 32px; border-bottom: 1px solid var(--border); background: rgba(255,255,255,.94); backdrop-filter: blur(12px); }
 .topbar-context span { display: block; color: var(--text-secondary); font-size: 12px; }
 .topbar-context strong { display: block; margin-top: 3px; font-size: 15px; }
@@ -120,6 +128,8 @@ async function handleLogout() {
 .mobile-menu-button { display: none; width: 44px; height: 44px; place-items: center; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--text); }
 .drawer-brand { display: flex; align-items: center; gap: 12px; color: var(--text); }
 .drawer-nav { display: grid; gap: 8px; }
+.drawer-nav section { display:grid; gap:6px; margin-bottom:16px; }
+.drawer-group-label { color:var(--text-secondary); }
 .drawer-nav button { padding: 0 14px; background: transparent; color: var(--text-secondary); }
 .drawer-nav button.active { background: var(--brand-100); color: var(--brand-900); }
 @media (max-width: 899px) {

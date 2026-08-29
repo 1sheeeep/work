@@ -24,7 +24,7 @@ async function submit() {
   loading.value = true
   try {
     await authStore.login(form.username, form.password)
-    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/organization'
+    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/dashboard'
     await router.replace(redirect)
   } catch (error) {
     submitError.value = apiErrorMessage(error, '登录失败，请检查服务状态后重试')

@@ -12,7 +12,7 @@ test('administrator can manage a mock BOSS account and inspect capabilities', as
   const accountName = `E2E BOSS 账号 ${suffix}`
   const externalIdentifier = `mock-boss-${suffix}`
 
-  await page.goto('/login')
+  await page.goto('/login?redirect=/organization')
   await page.getByLabel('用户名').fill(adminUsername)
   await page.getByLabel('密码').fill(adminPassword)
   await page.getByRole('button', { name: '登录', exact: true }).click()

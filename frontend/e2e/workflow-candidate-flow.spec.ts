@@ -12,7 +12,7 @@ test('recruiter workflow can deduplicate a candidate, take over and review a mes
   const externalCandidateId = `mock-candidate-${suffix}`
   const inboundId = `mock-inbound-${suffix}`
 
-  await page.goto('/login')
+  await page.goto('/login?redirect=/organization')
   await page.getByLabel('用户名').fill(adminUsername)
   await page.getByLabel('密码').fill(adminPassword)
   await page.getByRole('button', { name: '登录', exact: true }).click()
