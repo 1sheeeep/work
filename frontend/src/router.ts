@@ -20,7 +20,7 @@ const router = createRouter({
         { path: 'operations', name: 'operations', component: () => import('./views/OperationsView.vue'), meta: { role: 'SYSTEM_ADMIN' } },
       ],
     },
-    { path: '/:pathMatch(.*)*', redirect: '/organization' },
+    { path: '/:pathMatch(.*)*', redirect: '/dashboard' },
   ],
 })
 
@@ -31,7 +31,7 @@ router.beforeEach(async (to) => {
     return true
   }
   if (!user) return { name: 'login', query: { redirect: to.fullPath } }
-  if (to.meta.role && user.role !== to.meta.role) return { name: 'organization' }
+  if (to.meta.role && user.role !== to.meta.role) return { name: 'dashboard' }
   return true
 })
 

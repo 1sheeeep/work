@@ -12,24 +12,24 @@ const loggingOut = ref(false)
 const activePath = computed(() => route.path)
 const user = computed(() => authStore.state.user)
 const navigationGroups = computed(() => [
-  { label: '离开托管', items: [
-    { path: '/dashboard', label: '托管概览', icon: Grid },
-    { path: '/candidates', label: '待跟进会话', icon: UserFilled },
-    { path: '/auto-replies', label: '托管设置', icon: ChatDotRound },
-    { path: '/boss-accounts', label: 'BOSS 账号连接', icon: Connection },
+  { label: '日常使用', items: [
+    { path: '/dashboard', label: '托管首页', icon: Grid },
+    { path: '/candidates', label: '待处理消息', icon: UserFilled },
+    { path: '/boss-accounts', label: '账号连接', icon: Connection },
+    { path: '/auto-replies', label: '回复设置与记录', icon: ChatDotRound },
   ] },
-  ...(user.value?.role !== 'RECRUITER' ? [{ label: '业务配置', items: [
+  ...(user.value?.role !== 'RECRUITER' ? [{ label: '管理员设置', items: [
     { path: '/job-positions', label: '职位资料', icon: Briefcase },
     { path: '/organization', label: '集团与企业', icon: OfficeBuilding },
     ...(user.value?.role === 'SYSTEM_ADMIN' ? [{ path: '/hr-users', label: 'HR 用户', icon: User }] : []),
   ] }] : []),
-  ...(user.value?.role === 'SYSTEM_ADMIN' ? [{ label: '系统管理', items: [
+  ...(user.value?.role === 'SYSTEM_ADMIN' ? [{ label: '系统维护', items: [
     { path: '/audit-logs', label: '操作日志', icon: DataAnalysis },
     { path: '/operations', label: '运行保障', icon: Monitor },
   ] }] : []),
 ])
 const roleLabel = computed(() => ({ SYSTEM_ADMIN: '系统管理员', RECRUITMENT_ADMIN: '招聘管理员', RECRUITER: '招聘专员' }[user.value?.role ?? 'SYSTEM_ADMIN']))
-const workspaceLabel = computed(() => ({ dashboard: '托管概览', organization: '组织管理', 'boss-accounts': 'BOSS 账号连接', 'job-positions': '职位资料', candidates: '待跟进会话', 'auto-replies': '离开托管设置', 'hr-users': 'HR 用户', 'audit-logs': '操作日志', operations: '运行保障' }[String(route.name)] ?? '离开托管助手'))
+const workspaceLabel = computed(() => ({ dashboard: '托管首页', organization: '组织管理', 'boss-accounts': '账号连接', 'job-positions': '职位资料', candidates: '待处理消息', 'auto-replies': '回复设置与记录', 'hr-users': 'HR 用户', 'audit-logs': '操作日志', operations: '运行保障' }[String(route.name)] ?? '离开托管助手'))
 
 function navigate(path: string) {
   mobileNavOpen.value = false
