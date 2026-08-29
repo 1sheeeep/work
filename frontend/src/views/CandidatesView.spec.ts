@@ -16,4 +16,12 @@ describe('CandidatesView',()=>{
     expect(api.post).not.toHaveBeenCalled()
     wrapper.unmount()
   })
+  it('shows clear queues, candidate inbox and selected summary',async()=>{
+    vi.mocked(api.get).mockReset().mockResolvedValueOnce({data:[{id:'candidate-1',displayName:'张同学',currentTitle:'Java 开发',sourceReference:'BOSS',status:'SCREENING',humanTakenOver:false,privacyStatus:'ACTIVE',yearsExperience:3,education:'本科',updatedAt:'2026-08-29T06:00:00Z',jobPosition:{id:'job-1',title:'Java 工程师'},company:{id:'company-1',name:'测试企业'}}]}).mockResolvedValueOnce({data:[]}).mockResolvedValueOnce({data:[]})
+    const wrapper=mount(CandidatesView);await flushPromises()
+    expect(wrapper.text()).toContain('快捷分类')
+    expect(wrapper.text()).toContain('待筛选 / 复核')
+    expect(wrapper.text()).toContain('应聘信息')
+    expect(wrapper.text()).toContain('张同学')
+  })
 })

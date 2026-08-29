@@ -23,7 +23,7 @@ test('recruiter workflow can deduplicate a candidate, take over and review a mes
   const search = page.getByPlaceholder('搜索候选人、当前职位或目标职位')
   const candidateContainer = () => isMobile
     ? page.locator('.candidate-cards article', { hasText: candidateName })
-    : page.locator('.candidates-table .el-table__row', { hasText: candidateName })
+    : page.locator('.candidate-row', { hasText: candidateName })
   await queryCandidates()
   if (await candidateContainer().count() === 0) {
     await page.getByRole('button', { name: '新增候选人' }).first().click()
@@ -39,7 +39,8 @@ test('recruiter workflow can deduplicate a candidate, take over and review a mes
     await dialog.getByRole('button', { name: '加入工作台' }).click()
     await expect(page.getByText('候选人已加入工作台')).toBeVisible()
   } else {
-    await candidateContainer().getByRole('button', { name: isMobile ? '打开工作台' : '工作台' }).click()
+    if(isMobile)await candidateContainer().getByRole('button', { name: '打开工作台' }).click()
+    else{await candidateContainer().click();await page.getByRole('button',{name:'打开完整工作台'}).click()}
   }
 
   const drawer = page.getByRole('dialog', { name: `${candidateName} · 候选人工作台` })
