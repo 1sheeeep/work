@@ -18,6 +18,9 @@
   try{
    const state=await send({type:'GET_STATE'}),config=state.config
    const risk=visibleRisk();if(risk){await report(config,null,'RISK',risk);return pause(risk)}
+   const list=await stableConversationList(config.selectors,config.stabilityDelayMs);if(!list.ok){await report(config,null,'BLOCKED',list.reason);return heartbeat('PAUSED',list.reason)}
+   await send({type:'OBSERVE_UNREAD_LIST',payload:{entries:list.entries}})
+   if(config.monitorOnly){const reason=`只监测模式：已稳定识别 ${list.total} 个会话，其中 ${list.unread} 个未读`;await report(config,null,'OBSERVING',reason);return heartbeat('PAUSED','只监测模式已开启，不会打开会话或发送消息')}
    const snapshot=await stableSnapshot(config.selectors,config.stabilityDelayMs);if(!snapshot.ok){await report(config,null,'BLOCKED',snapshot.reason);return heartbeat('PAUSED',snapshot.reason)}
    await report(config,snapshot,'OBSERVING',config.emergencyStop?'本机紧急停止已开启':'页面结构识别成功')
    if(config.emergencyStop)return heartbeat('PAUSED','本机紧急停止已开启')
@@ -26,7 +29,6 @@
    const synced=await send({type:'SYNC_MESSAGE',payload:{externalChatId:snapshot.chatId,externalMessageId:snapshot.messageId,direction:snapshot.direction,createdAt:new Date(snapshot.createdAt).toISOString(),content:config.syncMessageContent?snapshot.content:null}})
    if(!synced?.ok){await report(config,snapshot,'BACKEND_ERROR',synced?.action||'BACKEND_ERROR');return heartbeat('PAUSED',synced?.action==='DEVICE_NOT_PAIRED'?'扩展尚未与招聘系统配对':'招聘系统连接失败或设备已撤销')}
    if(!synced.bound){await report(config,snapshot,'UNBOUND','当前网页会话尚未绑定',false);return heartbeat('PAUSED','当前网页会话尚未与候选人人工绑定')}
-   if(config.monitorOnly){await report(config,snapshot,'READY','只监测模式：页面识别和消息同步正常，不会发送',true);return heartbeat('PAUSED','只监测模式已开启，禁止自动发送')}
    await report(config,snapshot,'READY','页面结构与会话绑定均正常',true)
    await heartbeat('RUNNING','')
    if(!config.automaticSend||snapshot.direction!=='INBOUND')return
@@ -64,6 +66,16 @@
   return{ok:true,chatId,messageId,content,messageKey:`${chatId}:${messageId}`,direction,createdAt,candidateName:text(s.candidateName),jobTitle:text(s.jobTitle),editor,sendButton}
  }
  async function stableSnapshot(selectors,wait=800){const first=await readSnapshot(selectors);if(!first.ok)return first;await delay(Math.max(300,Math.min(2000,Number(wait)||800)));const second=await readSnapshot(selectors);if(!second.ok)return second;if(first.messageKey!==second.messageKey||first.direction!==second.direction)return{ok:false,reason:'会话消息仍在更新，等待页面稳定'};return second}
+ async function stableConversationList(selectors,wait=800){const first=await readConversationList(selectors);if(!first.ok)return first;await delay(Math.max(300,Math.min(2000,Number(wait)||800)));const second=await readConversationList(selectors);if(!second.ok)return second;if(first.signature!==second.signature)return{ok:false,reason:'会话列表仍在更新，等待页面稳定'};return second}
+ async function readConversationList(s){
+  if(!String(s?.conversation||'').trim()||!String(s?.conversationIdAttribute||'').trim())return{ok:false,reason:'页面适配器尚未配置：conversation 或 conversationIdAttribute'}
+  let items;try{items=[...document.querySelectorAll(s.conversation)].filter(isVisible).slice(0,200)}catch{return{ok:false,reason:'会话列表选择器无效'}}
+  if(!items.length)return{ok:false,reason:'当前页面未找到可见会话列表'}
+  const entries=[]
+  for(const item of items){const rawId=attribute(item,s.conversationIdAttribute);if(!rawId)continue;const unreadNode=s.conversationUnread?firstWithin(item,s.conversationUnread):null,unreadCount=unreadNode?Math.max(1,Number((unreadNode.textContent||'').match(/\d+/)?.[0])||1):0,preview=textWithin(item,s.conversationPreview),job=textWithin(item,s.conversationJob),time=textWithin(item,s.conversationTime);entries.push({chatDigest:await digest(rawId),previewDigest:preview?await digest(preview):null,jobDigest:job?await digest(job):null,timeDigest:time?await digest(time):null,unreadCount})}
+  if(!entries.length)return{ok:false,reason:'会话列表没有稳定 data-id，已禁止猜测会话身份'}
+  return{ok:true,entries,total:entries.length,unread:entries.filter(item=>item.unreadCount>0).length,signature:entries.map(item=>`${item.chatDigest}:${item.unreadCount}:${item.previewDigest||''}:${item.timeDigest||''}`).join('|')}
+ }
  function visibleRisk(){const walker=document.createTreeWalker(document.body||document.documentElement,NodeFilter.SHOW_TEXT);let node,scanned=0;while(scanned++<5000&&(node=walker.nextNode())){const value=node.nodeValue?.trim();if(!value||!RISK_TEXT.test(value))continue;const element=node.parentElement;if(element&&isVisible(element))return`检测到可见安全提示：${value.slice(0,60)}`}return''}
  function interactionBlocker(snapshot){if(!isVisible(snapshot.editor)||!isVisible(snapshot.sendButton))return'输入框或发送按钮当前不可见';if(snapshot.editor.disabled||snapshot.editor.readOnly||snapshot.editor.getAttribute('aria-disabled')==='true')return'输入框当前不可编辑';if(snapshot.sendButton.disabled||snapshot.sendButton.getAttribute('aria-disabled')==='true')return'发送按钮当前不可用';if(!isTopmost(snapshot.editor)||!isTopmost(snapshot.sendButton))return'页面弹窗或遮罩层覆盖了消息输入区域';return''}
  function isVisible(element){const style=getComputedStyle(element),rect=element.getBoundingClientRect();return style.display!=='none'&&style.visibility!=='hidden'&&Number(style.opacity)!==0&&rect.width>0&&rect.height>0}
@@ -77,6 +89,7 @@
  function messageStats(s){try{const items=visibleMessages(firstVisible(s.activeConversation),s.message);return{messageNodeCount:items.length,inboundMessageCount:items.filter(item=>matchesOrContains(item,s.inboundMarker)).length,outboundMessageCount:items.filter(item=>matchesOrContains(item,s.outboundMarker)).length}}catch{return{messageNodeCount:0,inboundMessageCount:0,outboundMessageCount:0}}}
  function visibleMessages(active,selector){if(!selector)return[];const scoped=active?[...active.querySelectorAll(selector)].filter(isVisible):[];return scoped.length?scoped:[...document.querySelectorAll(selector)].filter(isVisible)}
  function firstVisible(selector){if(!selector)return null;return[...document.querySelectorAll(selector)].find(isVisible)||null}
+ function firstWithin(root,selector){if(!selector)return null;try{return[...root.querySelectorAll(selector)].find(isVisible)||null}catch{return null}}
  function matchesOrContains(node,selector){if(!selector)return false;try{return node.matches(selector)||Boolean(node.querySelector(selector))}catch{return false}}
  function directionOf(node,s){const raw=attribute(node,s.directionAttribute).toUpperCase();if(['INBOUND','RECEIVED','GEEK'].includes(raw))return'INBOUND';if(['OUTBOUND','SENT','BOSS','HR'].includes(raw))return'OUTBOUND';if(matchesOrContains(node,s.inboundMarker))return'INBOUND';if(matchesOrContains(node,s.outboundMarker))return'OUTBOUND';return''}
  const firstObservedTimes=new Map()
@@ -87,6 +100,7 @@
  function fillEditor(editor,value){editor.focus();if('value'in editor){const prototype=editor instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(prototype,'value')?.set?.call(editor,value)}else editor.textContent=value;editor.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:value}))}
  function clearEditor(editor){if('value'in editor)editor.value='';else editor.textContent='';editor.dispatchEvent(new Event('input',{bubbles:true}))}
  function text(selector){try{return selector?document.querySelector(selector)?.textContent?.trim()||'':''}catch{return''}}
+ function textWithin(root,selector){try{return selector?root.querySelector(selector)?.textContent?.trim()||'':''}catch{return''}}
  function render(template,data){return template.replaceAll('{jobTitle}',data.jobTitle||'该职位').replaceAll('{candidateName}',data.candidateName||'您')}
  async function digest(value){const bytes=new TextEncoder().encode(value),hash=await crypto.subtle.digest('SHA-256',bytes);return[...new Uint8Array(hash)].map(x=>x.toString(16).padStart(2,'0')).join('')}
  const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms)),send=message=>chrome.runtime.sendMessage(message),heartbeat=(state,reason)=>send({type:'HEARTBEAT',state,reason}),pause=reason=>send({type:'PAUSE',reason})

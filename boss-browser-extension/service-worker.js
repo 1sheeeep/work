@@ -1,4 +1,4 @@
-import { DEFAULTS, REAL_BOSS_MONITOR_SELECTORS, diagnosticSignature, localDay, sanitizeDiagnostic } from './shared.js'
+import { DEFAULTS, REAL_BOSS_MONITOR_SELECTORS, diagnosticSignature, localDay, mergeUnreadObservations, sanitizeDiagnostic } from './shared.js'
 const POLICY_TTL=45_000,TAB_LEASE_MS=20_000
 let policyCache=null
 
@@ -11,8 +11,9 @@ async function handle(message,sender){
  if(config.monitorOnly&&isBossPage(sender.tab?.url))for(const[key,value]of Object.entries(REAL_BOSS_MONITOR_SELECTORS))if(!String(config.selectors[key]||'').trim())config.selectors[key]=value
  if(message.type==='GET_STATE'){const policy=await getPolicy(config),effective=policy.ok?{...config,...policy}:{...config,enabled:false,automaticSend:false};effective.automaticSend=Boolean(effective.automaticSend&&!config.emergencyStop&&!config.monitorOnly);if(policy.ok)Object.assign(runtime,{sentToday:policy.sentToday,lastSentAt:policy.lastSentAt?Date.parse(policy.lastSentAt):0});await chrome.storage.local.set({runtime});return{ok:true,config:effective,runtime,backendState:policy.ok?'CONNECTED':policy.action}}
  if(message.type==='DIAGNOSTIC'){const diagnostic=sanitizeDiagnostic(message.payload,sender.tab);runtime.diagnostic=diagnostic;runtime.diagnosticEvents=runtime.diagnosticEvents||[];const previous=runtime.diagnosticEvents.at(-1);if(!previous||diagnosticSignature(previous)!==diagnosticSignature(diagnostic))runtime.diagnosticEvents=[...runtime.diagnosticEvents,diagnostic].slice(-50);await chrome.storage.local.set({runtime});return{ok:true}}
- if(message.type==='GET_DIAGNOSTICS')return{ok:true,current:runtime.diagnostic||null,events:runtime.diagnosticEvents||[],emergencyStop:config.emergencyStop,monitorOnly:config.monitorOnly}
- if(message.type==='CLEAR_DIAGNOSTICS'){runtime.diagnostic=null;runtime.diagnosticEvents=[];await chrome.storage.local.set({runtime});return{ok:true}}
+ if(message.type==='GET_DIAGNOSTICS')return{ok:true,current:runtime.diagnostic||null,events:runtime.diagnosticEvents||[],unreadObservations:runtime.unreadObservations||[],emergencyStop:config.emergencyStop,monitorOnly:config.monitorOnly}
+ if(message.type==='OBSERVE_UNREAD_LIST'){runtime.unreadObservations=mergeUnreadObservations(runtime.unreadObservations,message.payload?.entries);await chrome.storage.local.set({runtime});return{ok:true,count:runtime.unreadObservations.length}}
+ if(message.type==='CLEAR_DIAGNOSTICS'){runtime.diagnostic=null;runtime.diagnosticEvents=[];runtime.unreadObservations=[];await chrome.storage.local.set({runtime});return{ok:true}}
  if(message.type==='ACQUIRE_TAB')return acquireTab(runtime,sender.tab?.id)
  if(message.type==='RELEASE_TAB'){if(runtime.leaderTabId===sender.tab?.id)Object.assign(runtime,{leaderTabId:null,leaderLeaseUntil:0});await chrome.storage.local.set({runtime});return{ok:true}}
  if(message.type==='HEARTBEAT'){const previous=runtime.state;Object.assign(runtime,{lastHeartbeatAt:Date.now(),url:sender.tab?.url||'',state:message.state,reason:message.reason||''});await chrome.storage.local.set({runtime});if(!runtime.lastRemoteHeartbeatAt||Date.now()-runtime.lastRemoteHeartbeatAt>=30_000||previous!==message.state){const result=await remote(config,'/api/browser-runtime/heartbeat',{state:message.state,reason:message.reason||''});if(result.ok){runtime.lastRemoteHeartbeatAt=Date.now();await chrome.storage.local.set({runtime})}}return{ok:true,config,runtime}}

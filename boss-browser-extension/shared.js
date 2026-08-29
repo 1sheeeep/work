@@ -14,7 +14,8 @@ export const DEFAULTS = Object.freeze({
   requireVisibleTab: true,
   stabilityDelayMs: 800,
   selectors: {
-    conversation: '', conversationUnread: '', conversationIdentity: '', conversationIdAttribute: 'data-conversation-id',
+    conversation: '', conversationUnread: '', conversationJob: '', conversationTime: '', conversationPreview: '',
+    conversationIdentity: '', conversationIdAttribute: 'data-conversation-id',
     activeConversation: '', candidateName: '', jobTitle: '',
     message: '', messageIdAttribute: 'data-message-id', directionAttribute: 'data-direction',
     inboundMarker: '', outboundMarker: '', messageTime: '',
@@ -24,6 +25,7 @@ export const DEFAULTS = Object.freeze({
 
 export const REAL_BOSS_MONITOR_SELECTORS = Object.freeze({
   conversation: '.geek-item', conversationUnread: '.badge-count',
+  conversationJob: '.source-job', conversationTime: '.time', conversationPreview: '.push-text',
   conversationIdentity: '.geek-item.selected', activeConversation: '.chat-conversation',
   conversationIdAttribute: 'data-id', candidateName: '.geek-item.selected .geek-name', jobTitle: '',
   message: '.message-item', messageIdAttribute: '', directionAttribute: '',
@@ -48,11 +50,26 @@ export function renderTemplate(template, data) {
 
 export function validateConfig(config) {
   const s = config.selectors || {}
-  const required = config.monitorOnly ? ['conversationIdentity', 'activeConversation', 'message'] : ['conversationIdentity', 'activeConversation', 'message', 'editor', 'sendButton']
+  const required = config.monitorOnly ? ['conversation', 'conversationUnread', 'conversationIdAttribute'] : ['conversationIdentity', 'activeConversation', 'message', 'editor', 'sendButton']
   const missing = required.filter((key) => !String(s[key] || '').trim())
   if (missing.length) return `页面适配器未配置：${missing.join(', ')}`
   try { const url = new URL(config.backendUrl); if (!['http:', 'https:'].includes(url.protocol)) throw new Error() } catch { return '后端地址无效' }
   return null
+}
+
+export function mergeUnreadObservations(current = [], entries = [], now = new Date()) {
+  const validDigest = (value) => /^[a-f0-9]{64}$/.test(String(value || '')) ? value : null
+  const timestamp = now.getTime()
+  const previous = new Map(current.map((item) => [item.chatDigest, item]))
+  for (const raw of entries.slice(0, 200)) {
+    const chatDigest = validDigest(raw.chatDigest)
+    if (!chatDigest) continue
+    const unreadCount = Math.max(0, Math.min(999, Number(raw.unreadCount) || 0))
+    const existing = previous.get(chatDigest)
+    if (unreadCount > 0) previous.set(chatDigest, { chatDigest, previewDigest: validDigest(raw.previewDigest), jobDigest: validDigest(raw.jobDigest), timeDigest: validDigest(raw.timeDigest), unreadCount, firstSeenAt: existing?.firstSeenAt || now.toISOString(), lastSeenAt: now.toISOString() })
+    else previous.delete(chatDigest)
+  }
+  return [...previous.values()].filter((item) => timestamp - Date.parse(item.lastSeenAt) < 7 * 86400000).sort((a, b) => Date.parse(a.firstSeenAt) - Date.parse(b.firstSeenAt)).slice(0, 200)
 }
 
 export async function sha256(value) {

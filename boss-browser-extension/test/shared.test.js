@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { DEFAULTS, REAL_BOSS_MONITOR_SELECTORS, diagnosticSignature, insideWindow, renderTemplate, sanitizeDiagnostic, sha256, validateConfig } from '../shared.js'
+import { DEFAULTS, REAL_BOSS_MONITOR_SELECTORS, diagnosticSignature, insideWindow, mergeUnreadObservations, renderTemplate, sanitizeDiagnostic, sha256, validateConfig } from '../shared.js'
 
 test('supports daytime and overnight safety windows', () => {
   assert.equal(insideWindow(new Date('2026-08-28T10:00:00'), '09:00', '21:00'), true)
@@ -13,9 +13,10 @@ test('fails closed until selectors are explicitly learned', () => {
   assert.equal(DEFAULTS.emergencyStop, true)
   assert.match(validateConfig(DEFAULTS), /页面适配器未配置/)
   const config = structuredClone(DEFAULTS)
-  Object.assign(config.selectors, { conversationIdentity: '.selected-chat', activeConversation: '.chat', message: '.message', editor: '#editor', sendButton: '#send' })
+  Object.assign(config.selectors, { conversation: '.conversation', conversationUnread: '.unread', conversationIdAttribute: 'data-id' })
   assert.equal(validateConfig(config), null)
   config.monitorOnly = false
+  Object.assign(config.selectors, { conversationIdentity: '.selected-chat', activeConversation: '.chat', message: '.message', editor: '#editor', sendButton: '#send' })
   config.selectors.sendButton = ''
   assert.match(validateConfig(config), /sendButton/)
 })
@@ -33,6 +34,16 @@ test('creates stable irreversible identifiers without retaining message plaintex
   assert.equal(await sha256('候选人消息'), await sha256('候选人消息'))
   assert.match(await sha256('候选人消息'), /^[a-f0-9]{64}$/)
   assert.notEqual(await sha256('候选人消息'), await sha256('另一条消息'))
+})
+
+test('tracks unread duration without resetting first seen time and removes read conversations', () => {
+  const chatDigest = 'a'.repeat(64)
+  const first = mergeUnreadObservations([], [{ chatDigest, unreadCount: 2 }], new Date('2026-08-29T10:00:00Z'))
+  const refreshed = mergeUnreadObservations(first, [{ chatDigest, unreadCount: 3 }], new Date('2026-08-29T10:05:00Z'))
+  assert.equal(refreshed[0].firstSeenAt, '2026-08-29T10:00:00.000Z')
+  assert.equal(refreshed[0].lastSeenAt, '2026-08-29T10:05:00.000Z')
+  assert.equal(refreshed[0].unreadCount, 3)
+  assert.deepEqual(mergeUnreadObservations(refreshed, [{ chatDigest, unreadCount: 0 }], new Date('2026-08-29T10:06:00Z')), [])
 })
 
 test('sanitizes diagnostics and strips URL paths and invalid identifiers', () => {
