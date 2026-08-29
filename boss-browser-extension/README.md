@@ -21,9 +21,9 @@
 4. 每个 Chrome Profile 只配对一个 BOSS 账号；重新配对会撤销该账号的旧设备令牌。
 5. 在获得合法的招聘端测试账号后，可在设置页用“从页面选取”学习 DOM；先保持紧急停止开启完成只读验收。
 
-## 本地适配器夹具
+## 本地会话实验台
 
-在本目录执行 `python3 -m http.server 8091`，打开 `http://localhost:8091/fixtures/boss-chat.html`。选择器配置为：
+在本目录执行 `python3 -m http.server 8091 --bind 127.0.0.1`，打开 `http://localhost:8091/fixtures/boss-chat.html`。服务器只绑定本机，不要向局域网暴露扩展源码。选择器配置为：
 
 - 当前会话 `.active-chat`，会话 ID 属性 `data-conversation-id`
 - 候选人 `.candidate-name`，职位 `.job-title`
@@ -31,5 +31,14 @@
 - 输入框 `#editor`，发送按钮 `#send`
 
 真实 BOSS 招聘端 DOM 尚未取得，因此选择器不会在代码中猜测或预置。
+
+实验台已覆盖以下故障注入：
+
+- 两个独立会话、候选人新消息、HR 人工回复和会话切换。
+- 点击发送后 DOM 不产生外发消息，用于验证 `UNKNOWN` 回执和禁止重试。
+- 未知消息方向、无效消息时间和 DOM 改版，用于验证失败关闭。
+- 验证码和登录失效提示，用于验证风险停机。
+
+每次修改扩展后运行 `npm test` 和 `npm run check`；实验台的状态机会与扩展共同回归。
 
 后端地址如果不是 localhost，保存或配对时 Chrome 会按该精确 origin 单独请求访问权限。
