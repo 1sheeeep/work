@@ -74,9 +74,12 @@ export function sanitizeDiagnostic(value = {}, tab = {}, now = new Date()) {
     conversationCount: Number.isInteger(value.conversationCount) ? Math.max(0, value.conversationCount) : null,
     unreadConversationCount: Number.isInteger(value.unreadConversationCount) ? Math.max(0, value.unreadConversationCount) : null,
     selectedConversationUnread: typeof value.selectedConversationUnread === 'boolean' ? value.selectedConversationUnread : null,
+    messageNodeCount: Number.isInteger(value.messageNodeCount) ? Math.max(0, value.messageNodeCount) : null,
+    inboundMessageCount: Number.isInteger(value.inboundMessageCount) ? Math.max(0, value.inboundMessageCount) : null,
+    outboundMessageCount: Number.isInteger(value.outboundMessageCount) ? Math.max(0, value.outboundMessageCount) : null,
     bound: typeof value.bound === 'boolean' ? value.bound : null, visible: Boolean(value.visible) }
 }
 
 export function diagnosticSignature(value) {
-  return [value.tabId, value.status, value.reason, value.adapterDigest, value.chatDigest, value.messageDigest, value.direction, value.createdAt, value.conversationCount, value.unreadConversationCount, value.selectedConversationUnread, value.bound, value.visible].join('|')
+  return [value.tabId, value.status, value.reason, value.adapterDigest, value.chatDigest, value.messageDigest, value.direction, value.createdAt, value.conversationCount, value.unreadConversationCount, value.selectedConversationUnread, value.messageNodeCount, value.inboundMessageCount, value.outboundMessageCount, value.bound, value.visible].join('|')
 }
