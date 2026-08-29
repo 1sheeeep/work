@@ -45,15 +45,15 @@ describe('BossAccountsView', () => {
 
     const wrapper = mount(BossAccountsView, { attachTo: document.body })
     await flushPromises()
-    await wrapper.findAll('button').find((button) => button.text().includes('继续连接'))?.trigger('click')
+    await wrapper.findAll('button').find((button) => button.text().includes('开始连接'))?.trigger('click')
     await flushPromises()
 
-    expect(document.body.textContent).toContain('准备专用 Chrome')
-    expect(document.body.textContent).toContain('连接托管助手')
-    expect(document.body.textContent).toContain('打开招聘会话页面')
-    expect(document.body.textContent).toContain('先进行只监测')
+    expect(document.body.textContent).toContain('安装浏览器助手')
+    expect(document.body.textContent).toContain('复制连接码')
+    expect(document.body.textContent).toContain('打开 BOSS 聊天页面')
+    expect(document.body.textContent).toContain('先安全观察')
 
-    const generateButton = wrapper.findAll('button').find((button) => button.text().includes('生成一次性连接码'))
+    const generateButton = wrapper.findAll('button').find((button) => button.text().includes('生成连接码'))
     await generateButton?.trigger('click')
     await flushPromises()
 
