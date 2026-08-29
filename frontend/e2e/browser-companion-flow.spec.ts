@@ -8,7 +8,7 @@ test('manager pairs a browser device, binds a conversation and idempotently sync
   await page.goto('/login?redirect=/organization');await page.getByLabel('用户名').fill(username);await page.getByLabel('密码').fill(password);await page.getByRole('button',{name:'登录',exact:true}).click()
   await expect(page.getByRole('heading',{name:'集团与企业'})).toBeVisible()
   const csrf=await page.evaluate(async()=>await(await fetch('/api/auth/csrf')).json())
-  const accounts=await get('/api/boss-accounts'),account=accounts.find((a:any)=>a.status==='ACTIVE'&&a.connectionStatus==='CONNECTED')
+  const accounts=await get('/api/boss-accounts'),account=accounts.find((a:any)=>a.gatewayType==='BROWSER_COMPANION'&&a.status==='ACTIVE'&&a.connectionStatus==='CONNECTED')
   expect(account).toBeTruthy()
   const jobs=await get('/api/job-positions'),job=jobs.find((j:any)=>j.status==='ACTIVE'&&j.bossAccount.id===account.id)
   expect(job).toBeTruthy()
