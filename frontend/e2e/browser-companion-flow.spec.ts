@@ -30,7 +30,17 @@ test('manager pairs a browser device, binds a conversation and idempotently sync
   const first=await mutate('/api/browser-runtime/messages','POST',payload,false,auth),replay=await mutate('/api/browser-runtime/messages','POST',payload,false,auth)
   expect(first).toMatchObject({bound:true,replayed:false,action:'INBOUND_STORED'})
   expect(replay).toMatchObject({bound:true,replayed:true,action:'IGNORED_REPLAY'})
-  await page.waitForTimeout(16_500)
+  const claimPayload={externalChatId:chatId,inboundExternalMessageId:payload.externalMessageId,replyDigest:'a'.repeat(64)}
+  let claim=await mutate('/api/browser-runtime/send-claims','POST',claimPayload,false,auth)
+  if(claim.action==='MINIMUM_INTERVAL'){await page.waitForTimeout(31_000);claim=await mutate('/api/browser-runtime/send-claims','POST',claimPayload,false,auth)}
+  expect(claim).toMatchObject({allowed:true,action:'SEND',dailyLimit:10})
+  const duplicateClaim=await mutate('/api/browser-runtime/send-claims','POST',claimPayload,false,auth)
+  expect(duplicateClaim).toMatchObject({allowed:false,action:'ALREADY_CLAIMED',claimId:claim.claimId})
+  const receipt=await mutate(`/api/browser-runtime/send-claims/${claim.claimId}/receipt`,'POST',{status:'SENT',externalOutboundMessageId:`browser-outbound-${suffix}-${stamp}`},false,auth)
+  expect(receipt).toMatchObject({status:'SENT',sentToday:claim.sentToday+1})
+  const replayedReceipt=await mutate(`/api/browser-runtime/send-claims/${claim.claimId}/receipt`,'POST',{status:'SENT',externalOutboundMessageId:`browser-outbound-${suffix}-${stamp}`},false,auth)
+  expect(replayedReceipt).toMatchObject({status:'SENT',sentToday:claim.sentToday+1})
+  await page.waitForTimeout(500)
   const attempts=await get('/api/auto-replies/attempts')
   expect(attempts.some((item:any)=>item.contactId===created.candidate.id)).toBe(false)
   await mutate(`/api/auto-replies/policies/${account.id}`,'PUT',{...policy,enabled:false,autoSendEnabled:false})

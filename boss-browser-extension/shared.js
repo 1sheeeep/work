@@ -1,6 +1,6 @@
 export const DEFAULTS = Object.freeze({
-  enabled: false,
-  automaticSend: false,
+  enabled: true,
+  emergencyStop: true,
   accountAlias: '',
   backendUrl: 'http://localhost:8088',
   syncMessageContent: false,
@@ -38,8 +38,12 @@ export function validateConfig(config) {
   const s = config.selectors || {}
   const missing = ['activeConversation', 'message', 'editor', 'sendButton'].filter((key) => !String(s[key] || '').trim())
   if (missing.length) return `页面适配器未配置：${missing.join(', ')}`
-  if (config.automaticSend && !config.enabled) return '开启自动发送前必须先启用监测'
-  if (config.timeoutMinutes < 5 || config.dailyLimit < 1 || config.minimumIntervalSeconds < 30) return '超时、配额或最小间隔低于安全下限'
   try { const url = new URL(config.backendUrl); if (!['http:', 'https:'].includes(url.protocol)) throw new Error() } catch { return '后端地址无效' }
   return null
+}
+
+export async function sha256(value) {
+  const bytes = new TextEncoder().encode(value)
+  const digest = await crypto.subtle.digest('SHA-256', bytes)
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
 }

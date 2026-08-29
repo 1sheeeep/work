@@ -10,4 +10,6 @@ import jakarta.validation.Valid;import org.springframework.http.HttpHeaders;impo
  @PostMapping("/api/browser-runtime/heartbeat")public DeviceResponse heartbeat(@RequestHeader(HttpHeaders.AUTHORIZATION)String token,@Valid@RequestBody HeartbeatRequest r){return service.heartbeat(token,r);}
  @GetMapping("/api/browser-runtime/policy")public BrowserRuntimePolicyResponse policy(@RequestHeader(HttpHeaders.AUTHORIZATION)String token){return service.runtimePolicy(token);}
  @PostMapping("/api/browser-runtime/messages")public SyncMessageResponse sync(@RequestHeader(HttpHeaders.AUTHORIZATION)String token,@Valid@RequestBody SyncMessageRequest r){return service.sync(token,r);}
+ @PostMapping("/api/browser-runtime/send-claims")public SendClaimResponse claim(@RequestHeader(HttpHeaders.AUTHORIZATION)String token,@Valid@RequestBody CreateSendClaimRequest r){return service.claim(token,r);}
+ @PostMapping("/api/browser-runtime/send-claims/{id}/receipt")public SendReceiptResponse receipt(@RequestHeader(HttpHeaders.AUTHORIZATION)String token,@PathVariable UUID id,@Valid@RequestBody SendReceiptRequest r){return service.receipt(token,id,r);}
 }

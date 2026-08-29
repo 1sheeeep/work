@@ -1,60 +1,26 @@
 import { DEFAULTS, localDay } from './shared.js'
+const POLICY_TTL=45_000,TAB_LEASE_MS=20_000
+let policyCache=null
 
-chrome.runtime.onInstalled.addListener(async () => {
-  const stored = await chrome.storage.local.get(['config', 'runtime'])
-  if (!stored.config) await chrome.storage.local.set({ config: structuredClone(DEFAULTS) })
-  if (!stored.runtime) await chrome.storage.local.set({ runtime: freshRuntime() })
-  chrome.alarms.create('health', { periodInMinutes: 1 })
-})
+chrome.runtime.onInstalled.addListener(async()=>{const stored=await chrome.storage.local.get(['config','runtime']);if(!stored.config)await chrome.storage.local.set({config:structuredClone(DEFAULTS)});if(!stored.runtime)await chrome.storage.local.set({runtime:freshRuntime()});chrome.alarms.create('health',{periodInMinutes:1})})
+chrome.runtime.onMessage.addListener((message,sender,sendResponse)=>{handle(message,sender).then(sendResponse).catch(error=>sendResponse({ok:false,action:'EXTENSION_ERROR',detail:String(error?.message||error)}));return true})
+chrome.alarms.onAlarm.addListener(async({name})=>{if(name!=='health')return;const{runtime=freshRuntime()}=await chrome.storage.local.get('runtime');if(runtime.lastHeartbeatAt&&Date.now()-runtime.lastHeartbeatAt>120_000){Object.assign(runtime,{state:'PAUSED',reason:'会话页超过 2 分钟无心跳',leaderTabId:null,leaderLeaseUntil:0});await chrome.storage.local.set({runtime})}})
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  handle(message, sender).then(sendResponse)
-  return true
-})
-
-chrome.alarms.onAlarm.addListener(async ({ name }) => {
-  if (name !== 'health') return
-  const { runtime = freshRuntime() } = await chrome.storage.local.get('runtime')
-  if (runtime.lastHeartbeatAt && Date.now() - runtime.lastHeartbeatAt > 120_000) {
-    runtime.state = 'PAUSED'; runtime.reason = '会话页超过 2 分钟无心跳'
-    await chrome.storage.local.set({ runtime })
-  }
-})
-
-async function handle(message, sender) {
-  const stored = await chrome.storage.local.get(['config', 'runtime'])
-  const config = { ...DEFAULTS, ...(stored.config || {}) }
-  const runtime = rollDay(stored.runtime || freshRuntime())
-  if (message.type === 'HEARTBEAT') {
-    runtime.lastHeartbeatAt = Date.now(); runtime.url = sender.tab?.url || ''; runtime.state = message.state; runtime.reason = message.reason || ''
-    await chrome.storage.local.set({ runtime }); await remote(config, '/api/browser-runtime/heartbeat', { state: message.state, reason: message.reason || '' }); return { ok: true, config, runtime }
-  }
-  if (message.type === 'SYNC_MESSAGE') return remote(config, '/api/browser-runtime/messages', message.payload)
-  if (message.type === 'SENT') {
-    runtime.sentToday += 1; runtime.lastSentAt = Date.now(); runtime.lastMessageKey = message.messageKey; runtime.state = 'RUNNING'; runtime.reason = ''
-    await chrome.storage.local.set({ runtime }); return { ok: true }
-  }
-  if (message.type === 'PAUSE') {
-    runtime.state = 'PAUSED'; runtime.reason = message.reason || '页面安全检查未通过'
-    await chrome.storage.local.set({ runtime }); return { ok: true }
-  }
-  if (message.type === 'GET_STATE') {
-    const policy = await remote(config, '/api/browser-runtime/policy', undefined, 'GET')
-    const effective = policy.ok ? { ...config, enabled: policy.enabled, automaticSend: policy.automaticSend, timeoutMinutes: policy.timeoutMinutes, dailyLimit: policy.dailyLimit, minimumIntervalSeconds: policy.minimumIntervalSeconds, windowStart: policy.windowStart, windowEnd: policy.windowEnd, template: policy.template } : { ...config, enabled: false, automaticSend: false }
-    return { ok: true, config: effective, runtime, backendState: policy.action || 'CONNECTED' }
-  }
-  return { ok: false }
+async function handle(message,sender){
+ const stored=await chrome.storage.local.get(['config','runtime']),config={...DEFAULTS,...(stored.config||{}),selectors:{...DEFAULTS.selectors,...(stored.config?.selectors||{})}},runtime=rollDay(stored.runtime||freshRuntime())
+ if(message.type==='GET_STATE'){const policy=await getPolicy(config),effective=policy.ok?{...config,...policy}:{...config,enabled:false,automaticSend:false};effective.automaticSend=Boolean(effective.automaticSend&&!config.emergencyStop);if(policy.ok)Object.assign(runtime,{sentToday:policy.sentToday,lastSentAt:policy.lastSentAt?Date.parse(policy.lastSentAt):0});await chrome.storage.local.set({runtime});return{ok:true,config:effective,runtime,backendState:policy.ok?'CONNECTED':policy.action}}
+ if(message.type==='ACQUIRE_TAB')return acquireTab(runtime,sender.tab?.id)
+ if(message.type==='RELEASE_TAB'){if(runtime.leaderTabId===sender.tab?.id)Object.assign(runtime,{leaderTabId:null,leaderLeaseUntil:0});await chrome.storage.local.set({runtime});return{ok:true}}
+ if(message.type==='HEARTBEAT'){const previous=runtime.state;Object.assign(runtime,{lastHeartbeatAt:Date.now(),url:sender.tab?.url||'',state:message.state,reason:message.reason||''});await chrome.storage.local.set({runtime});if(!runtime.lastRemoteHeartbeatAt||Date.now()-runtime.lastRemoteHeartbeatAt>=30_000||previous!==message.state){const result=await remote(config,'/api/browser-runtime/heartbeat',{state:message.state,reason:message.reason||''});if(result.ok){runtime.lastRemoteHeartbeatAt=Date.now();await chrome.storage.local.set({runtime})}}return{ok:true,config,runtime}}
+ if(message.type==='SYNC_MESSAGE')return remote(config,'/api/browser-runtime/messages',message.payload)
+ if(message.type==='CLAIM_SEND')return remote(config,'/api/browser-runtime/send-claims',message.payload)
+ if(message.type==='SEND_RECEIPT'){const result=await remote(config,`/api/browser-runtime/send-claims/${encodeURIComponent(message.claimId)}/receipt`,message.payload);policyCache=null;if(result.ok&&result.status==='SENT')Object.assign(runtime,{sentToday:result.sentToday,lastSentAt:result.lastSentAt?Date.parse(result.lastSentAt):Date.now(),state:'RUNNING',reason:''});if(message.payload.status==='UNKNOWN')Object.assign(runtime,{state:'PAUSED',reason:'发送结果无法确认，已停止自动发送并禁止重试'});await chrome.storage.local.set({runtime});return result}
+ if(message.type==='PAUSE'){Object.assign(runtime,{state:'PAUSED',reason:message.reason||'页面安全检查未通过'});await chrome.storage.local.set({runtime});return{ok:true}}
+ if(message.type==='SET_EMERGENCY_STOP'){config.emergencyStop=Boolean(message.value);if(config.emergencyStop)Object.assign(runtime,{state:'PAUSED',reason:'本机紧急停止已开启',leaderTabId:null,leaderLeaseUntil:0});await chrome.storage.local.set({config,runtime});return{ok:true,config,runtime}}
+ return{ok:false}
 }
-
-async function remote(config, path, body, method = 'POST') {
-  const { deviceCredentials } = await chrome.storage.local.get('deviceCredentials')
-  if (!deviceCredentials?.deviceToken) return { ok: false, bound: false, action: 'DEVICE_NOT_PAIRED' }
-  try {
-    const response = await fetch(`${config.backendUrl.replace(/\/$/, '')}${path}`, { method, headers: { 'Content-Type': 'application/json', Authorization: `Device ${deviceCredentials.deviceToken}` }, body: body===undefined ? undefined : JSON.stringify(body) })
-    if (!response.ok) return { ok: false, bound: false, action: response.status === 401 ? 'DEVICE_UNAUTHORIZED' : 'BACKEND_REJECTED' }
-    return { ok: true, ...await response.json() }
-  } catch { return { ok: false, bound: false, action: 'BACKEND_UNREACHABLE' } }
-}
-
-function freshRuntime() { return { state: 'DISABLED', reason: '', day: localDay(), sentToday: 0, lastSentAt: 0, lastMessageKey: '', lastHeartbeatAt: 0, url: '' } }
-function rollDay(runtime) { if (runtime.day !== localDay()) { runtime.day = localDay(); runtime.sentToday = 0 } return runtime }
+async function acquireTab(runtime,tabId){if(!Number.isInteger(tabId))return{ok:false,leader:false};const now=Date.now();if(runtime.leaderTabId&&runtime.leaderTabId!==tabId&&runtime.leaderLeaseUntil>now)return{ok:true,leader:false,leaderTabId:runtime.leaderTabId};runtime.leaderTabId=tabId;runtime.leaderLeaseUntil=now+TAB_LEASE_MS;await chrome.storage.local.set({runtime});return{ok:true,leader:true,leaseUntil:runtime.leaderLeaseUntil}}
+async function getPolicy(config){if(policyCache&&Date.now()-policyCache.at<POLICY_TTL)return policyCache.value;const value=await remote(config,'/api/browser-runtime/policy',undefined,'GET');policyCache={at:Date.now(),value};return value}
+async function remote(config,path,body,method='POST'){const{deviceCredentials}=await chrome.storage.local.get('deviceCredentials');if(!deviceCredentials?.deviceToken)return{ok:false,bound:false,action:'DEVICE_NOT_PAIRED'};try{const response=await fetch(`${config.backendUrl.replace(/\/$/,'')}${path}`,{method,headers:{'Content-Type':'application/json',Authorization:`Device ${deviceCredentials.deviceToken}`},body:body===undefined?undefined:JSON.stringify(body)});if(!response.ok)return{ok:false,bound:false,action:response.status===401?'DEVICE_UNAUTHORIZED':'BACKEND_REJECTED'};return{ok:true,...await response.json()}}catch{return{ok:false,bound:false,action:'BACKEND_UNREACHABLE'}}}
+function freshRuntime(){return{state:'DISABLED',reason:'',day:localDay(),sentToday:0,lastSentAt:0,lastHeartbeatAt:0,lastRemoteHeartbeatAt:0,leaderTabId:null,leaderLeaseUntil:0,url:''}}
+function rollDay(runtime){if(runtime.day!==localDay()){runtime.day=localDay();runtime.sentToday=0}return runtime}
