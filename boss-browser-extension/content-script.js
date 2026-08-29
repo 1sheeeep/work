@@ -57,7 +57,8 @@
   const missing=['conversationIdentity','activeConversation','message'].filter(key=>!String(s?.[key]||'').trim())
   if(missing.length)return{ok:false,reason:`页面适配器尚未配置：${missing.join(', ')}`}
   try{active=firstVisible(s.activeConversation);identity=firstVisible(s.conversationIdentity);editor=s.editor?firstVisible(s.editor):null;sendButton=s.sendButton?firstVisible(s.sendButton):null;const items=visibleMessages(active,s.message);last=items.filter(item=>directionOf(item,s)).at(-1)}catch{return{ok:false,reason:'页面选择器无效'}}
-  if(!active||!identity)return{ok:false,reason:'未找到当前会话或选中会话标识'}
+  if(!identity)return{ok:false,reason:'未找到选中会话标识'}
+  if(!active)return{ok:false,reason:'未找到当前会话消息容器'}
   if(!active.isConnected||!identity.isConnected)return{ok:false,reason:'会话页面正在重新加载'}
   if(!last)return{ok:false,reason:'当前会话暂无可识别消息'}
   const chatId=attribute(identity,s.conversationIdAttribute),direction=directionOf(last,s),content=last.textContent?.trim()||'',rawMessageId=attribute(last,s.messageIdAttribute),messageId=rawMessageId||`derived-${await digest(`${chatId}|${direction}|${content}`)}`,rawTime=attribute(last,s.timeAttribute)||(s.messageTime?last.querySelector(s.messageTime)?.textContent?.trim()||'':''),parsed=parseVisibleTime(rawTime),createdAt=Number.isFinite(parsed)?parsed:firstObserved(messageId)

@@ -28,7 +28,7 @@ export const DEFAULTS = Object.freeze({
 export const REAL_BOSS_MONITOR_SELECTORS = Object.freeze({
   conversation: '.geek-item', conversationUnread: '.badge-count',
   conversationJob: '.source-job', conversationTime: '.time', conversationPreview: '.push-text',
-  conversationIdentity: '.geek-item.selected', activeConversation: '.chat-conversation',
+  conversationIdentity: '.geek-item.selected', activeConversation: '.conversation-message',
   conversationIdAttribute: 'data-id', candidateName: '.geek-item.selected .geek-name', jobTitle: '',
   message: '.item-friend, .item-myself', messageIdAttribute: '', directionAttribute: '',
   inboundMarker: '.item-friend', outboundMarker: '.item-myself', messageTime: '.message-time',

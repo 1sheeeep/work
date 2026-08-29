@@ -23,6 +23,7 @@ test('fails closed until selectors are explicitly learned', () => {
 
 test('real BOSS preset remains monitor-only and has no send target', () => {
   assert.equal(REAL_BOSS_MONITOR_SELECTORS.conversationIdentity, '.geek-item.selected')
+  assert.equal(REAL_BOSS_MONITOR_SELECTORS.activeConversation, '.conversation-message')
   assert.equal(REAL_BOSS_MONITOR_SELECTORS.message, '.item-friend, .item-myself')
   assert.equal(REAL_BOSS_MONITOR_SELECTORS.sendButton, '')
 })
