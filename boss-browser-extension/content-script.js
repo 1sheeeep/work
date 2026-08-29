@@ -1,8 +1,15 @@
 (()=>{
+ if(globalThis.__recruitmentBossCompanionLoaded)return
+ globalThis.__recruitmentBossCompanionLoaded=true
  const RISK_TEXT=/(验证码|安全验证|操作频繁|异常访问|账号异常|请完成验证|登录状态已失效|重新登录)/
  let busy=false,timer=0
  const schedule=(delay=1000)=>{clearTimeout(timer);timer=setTimeout(tick,delay)}
- chrome.runtime.onMessage.addListener((message,_sender,respond)=>{if(message.type!=='START_PICKER')return false;startPicker(message.label).then(selector=>respond({ok:Boolean(selector),selector}));return true})
+ chrome.runtime.onMessage.addListener((message,_sender,respond)=>{
+  if(message.type==='PING'){respond({ok:true,readyState:document.readyState});return false}
+  if(message.type==='RUN_DIAGNOSTIC'){schedule(0);respond({ok:true});return false}
+  if(message.type!=='START_PICKER')return false
+  startPicker(message.label).then(selector=>respond({ok:Boolean(selector),selector}));return true
+ })
  new MutationObserver(()=>schedule()).observe(document.documentElement,{subtree:true,childList:true,attributes:true,attributeFilter:['class','data-direction','data-message-id','data-created-at']})
  setInterval(()=>schedule(0),60_000);schedule(0)
 
