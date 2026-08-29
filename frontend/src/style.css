@@ -10,10 +10,14 @@
   --brand-600: #0d9488;
   --brand-100: #ccfbf1;
   --brand-50: #f0fdfa;
+  --primary: var(--brand-700);
+  --primary-soft: var(--brand-100);
   --surface: #ffffff;
   --surface-soft: #f7faf9;
+  --surface-muted: var(--surface-soft);
   --border: #dce5e2;
   --text: #172826;
+  --text-primary: var(--text);
   --text-secondary: #5d6f6b;
   --danger: #b42318;
   --success: #087f5b;
