@@ -16,6 +16,27 @@ function appendDiagnostic(container,label,value){const term=document.createEleme
 function formatDiagnostic(value){if(value===true)return'是';if(value===false)return'否';if(value===null||value===undefined||value==='')return'-';if(typeof value==='string'&&/^\d{4}-\d\d-\d\dT/.test(value)){const date=new Date(value);if(Number.isFinite(date.getTime()))return date.toLocaleString('zh-CN',{hour12:false})}return String(value)}
 document.querySelector('#refreshDiagnostics').onclick=refreshDiagnostics
 document.querySelector('#detectCurrentPage').onclick=async()=>{const output=document.querySelector('#pageDetectionResult');output.textContent='正在连接当前 BOSS 页面…';try{const target=await bossTab();if(!target)throw new Error('没有找到已打开的 zhipin.com 页面');await ensureContentScript(target);await chrome.tabs.sendMessage(target.id,{type:'RUN_DIAGNOSTIC'});output.textContent='页面脚本已连接，正在生成脱敏诊断…';setTimeout(refreshDiagnostics,1500)}catch(error){output.textContent=`检测失败：${String(error?.message||error)}。请刷新 BOSS 页面后重试。`}}
-document.querySelector('#clearDiagnostics').onclick=async()=>{await chrome.runtime.sendMessage({type:'CLEAR_DIAGNOSTICS'});await refreshDiagnostics()}
-document.querySelector('#exportDiagnostics').onclick=async()=>{const response=await chrome.runtime.sendMessage({type:'GET_DIAGNOSTICS'}),blob=new Blob([JSON.stringify({exportedAt:new Date().toISOString(),privacy:'No plaintext, credentials, cookies or raw external identifiers',...response},null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=`boss-companion-diagnostics-${Date.now()}.json`;link.click();URL.revokeObjectURL(url)}
+document.querySelector('#collectStructure').onclick=async()=>{const output=document.querySelector('#structureResult');output.textContent='正在被动扫描当前页面及子页面结构…';try{const target=await bossTab();if(!target)throw new Error('没有找到已打开的 zhipin.com 页面');const frames=await chrome.scripting.executeScript({target:{tabId:target.id,allFrames:true},func:passiveStructureScan});const report={version:1,collectedAt:new Date().toISOString(),tabOrigin:new URL(target.url).origin,frames:frames.map(item=>item.result).filter(Boolean)};await chrome.storage.local.set({passiveStructureReport:report});const candidates=report.frames.reduce((sum,frame)=>sum+frame.candidates.length,0);output.textContent=`采集完成：${report.frames.length} 个页面层级，${candidates} 个脱敏结构候选。请导出报告发给开发人员。`}catch(error){output.textContent=`采集失败：${String(error?.message||error)}。请保持 BOSS 会话页打开并刷新后重试。`}}
+function passiveStructureScan(){
+ const visible=element=>{const rect=element.getBoundingClientRect(),style=getComputedStyle(element);return rect.width>0&&rect.height>0&&style.display!=='none'&&style.visibility!=='hidden'&&Number(style.opacity)!==0}
+ const safeClasses=element=>[...element.classList].filter(value=>/^[A-Za-z_-][A-Za-z0-9_-]{0,79}$/.test(value)&&!/[0-9]{5,}/.test(value)).slice(0,8)
+ const selectorFor=(element,classes)=>classes.length?`${element.localName}.${classes.map(value=>CSS.escape(value)).join('.')}`:element.localName
+ const candidates=[]
+ for(const element of [...document.querySelectorAll('*')].slice(0,6000)){
+  if(!visible(element))continue
+  const classes=safeClasses(element),classText=classes.join(' '),rawText=String(element.textContent||'').trim()
+  const editor=element.matches('textarea,[contenteditable="true"],[role="textbox"]')
+  const control=element.matches('button,[role="button"]')
+  const structural=/(chat|message|conversation|dialog|geek|friend|item|bubble|unread|badge|input|editor|send|resume|file)/i.test(classText)
+  const roleHint=editor?'editor':(/^(发送|send)$/i.test(rawText)&&control?'send-control':(/^(在线简历|附件简历|求简历)$/i.test(rawText)?'resume-control':(control?'button':null)))
+  if(!structural&&!roleHint)continue
+  const rect=element.getBoundingClientRect()
+  candidates.push({tag:element.localName,classes,attributeNames:[...element.attributes].map(attribute=>attribute.name).filter(name=>name.startsWith('data-')||['role','contenteditable','aria-label'].includes(name)).slice(0,12),roleHint,selectorCandidate:selectorFor(element,classes),childCount:element.children.length,rect:{width:Math.round(rect.width),height:Math.round(rect.height)},repeatedSiblingCount:element.parentElement?[...element.parentElement.children].filter(sibling=>sibling.localName===element.localName&&safeClasses(sibling).join(' ')===classText).length:1})
+  if(candidates.length>=300)break
+ }
+ let path='';try{path=location.pathname}catch{}
+ return{origin:location.origin==='null'?'embedded':location.origin,path,candidateCount:candidates.length,candidates}
+}
+document.querySelector('#clearDiagnostics').onclick=async()=>{await chrome.runtime.sendMessage({type:'CLEAR_DIAGNOSTICS'});await chrome.storage.local.remove('passiveStructureReport');document.querySelector('#structureResult').textContent='';await refreshDiagnostics()}
+document.querySelector('#exportDiagnostics').onclick=async()=>{const response=await chrome.runtime.sendMessage({type:'GET_DIAGNOSTICS'}),{passiveStructureReport=null}=await chrome.storage.local.get('passiveStructureReport'),blob=new Blob([JSON.stringify({exportedAt:new Date().toISOString(),privacy:'No plaintext, credentials, cookies or raw external identifiers',passiveStructureReport,...response},null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=`boss-companion-diagnostics-${Date.now()}.json`;link.click();URL.revokeObjectURL(url)}
 await refreshDiagnostics();setInterval(refreshDiagnostics,10_000)
