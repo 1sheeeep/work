@@ -40,7 +40,7 @@ public class BossAccount {
     private BossGatewayType gatewayType;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "mock_profile", nullable = false, length = 20)
+    @Column(name = "mock_profile", length = 20)
     private MockBossProfile mockProfile;
 
     @Enumerated(EnumType.STRING)
@@ -66,24 +66,30 @@ public class BossAccount {
     }
 
     public BossAccount(Company company, String displayName, String externalIdentifier, MockBossProfile mockProfile) {
+        this(company,displayName,externalIdentifier,BossGatewayType.MOCK,mockProfile);
+    }
+
+    public BossAccount(Company company,String displayName,String externalIdentifier,BossGatewayType gatewayType,MockBossProfile mockProfile) {
         this.id = UUID.randomUUID();
         this.company = company;
         this.displayName = displayName;
         this.externalIdentifier = externalIdentifier;
-        this.gatewayType = BossGatewayType.MOCK;
-        this.mockProfile = mockProfile;
+        this.gatewayType = gatewayType;
+        this.mockProfile = gatewayType==BossGatewayType.MOCK?mockProfile:null;
         this.status = BossAccountStatus.ACTIVE;
         this.connectionStatus = BossConnectionStatus.UNVERIFIED;
         this.createdAt = Instant.now();
         this.updatedAt = this.createdAt;
     }
 
-    public void update(Company company, String displayName, String externalIdentifier, MockBossProfile mockProfile) {
+    public void update(Company company, String displayName, String externalIdentifier, BossGatewayType gatewayType,MockBossProfile mockProfile) {
         this.company = company;
         this.displayName = displayName;
         this.externalIdentifier = externalIdentifier;
-        if (this.mockProfile != mockProfile) {
-            this.mockProfile = mockProfile;
+        MockBossProfile normalized=gatewayType==BossGatewayType.MOCK?mockProfile:null;
+        if(this.gatewayType!=gatewayType||this.mockProfile!=normalized){
+            this.gatewayType=gatewayType;
+            this.mockProfile=normalized;
             this.connectionStatus = BossConnectionStatus.UNVERIFIED;
             this.capabilities.clear();
             this.lastCheckedAt = null;

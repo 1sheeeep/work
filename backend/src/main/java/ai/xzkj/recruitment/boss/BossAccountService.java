@@ -62,10 +62,11 @@ public class BossAccountService {
         Company company = requireActiveAccessibleCompany(request.companyId(), user);
         String externalIdentifier = cleanRequired(request.externalIdentifier());
         ensureUnique(company.getId(), externalIdentifier, null);
+        validateGateway(request);
         BossAccount account = accountRepository.save(new BossAccount(
-                company, cleanRequired(request.displayName()), externalIdentifier, request.mockProfile()));
+                company, cleanRequired(request.displayName()), externalIdentifier, request.gatewayType(),request.mockProfile()));
         auditService.success("CREATE_BOSS_ACCOUNT", "BOSS_ACCOUNT", account.getId(), account.getDisplayName(),
-                "新增 Mock BOSS 账号，归属企业 " + company.getCode());
+                "新增 "+(request.gatewayType()==BossGatewayType.MOCK?"Mock":"浏览器伴随")+" BOSS 账号，归属企业 " + company.getCode());
         return BossAccountResponse.from(account);
     }
 
@@ -76,9 +77,10 @@ public class BossAccountService {
         Company company = requireActiveAccessibleCompany(request.companyId(), user);
         String externalIdentifier = cleanRequired(request.externalIdentifier());
         ensureUnique(company.getId(), externalIdentifier, id);
-        account.update(company, cleanRequired(request.displayName()), externalIdentifier, request.mockProfile());
+        validateGateway(request);
+        account.update(company, cleanRequired(request.displayName()), externalIdentifier,request.gatewayType(),request.mockProfile());
         auditService.success("UPDATE_BOSS_ACCOUNT", "BOSS_ACCOUNT", account.getId(), account.getDisplayName(),
-                "更新 Mock BOSS 账号和归属");
+                "更新 BOSS 账号连接方式和归属");
         return BossAccountResponse.from(account);
     }
 
@@ -101,6 +103,7 @@ public class BossAccountService {
     public BossAccountResponse checkCapabilities(UUID id) {
         SystemUser user = requireManager();
         BossAccount account = requireAccessibleAccount(id, user);
+        if(account.getGatewayType()==BossGatewayType.BROWSER_COMPANION)throw new ApiException(HttpStatus.BAD_REQUEST,"BROWSER_DEVICE_CHECK_REQUIRED","浏览器账号能力由配对设备和页面心跳自动确认");
         if (account.getStatus() != BossAccountStatus.ACTIVE) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "BOSS_ACCOUNT_INACTIVE", "请先启用 BOSS 账号再检查能力");
         }
@@ -163,4 +166,5 @@ public class BossAccountService {
     }
 
     private String cleanRequired(String value) { return value.trim(); }
+    private void validateGateway(BossAccountUpsertRequest request){if(request.gatewayType()==BossGatewayType.MOCK&&request.mockProfile()==null)throw new ApiException(HttpStatus.BAD_REQUEST,"MOCK_PROFILE_REQUIRED","Mock 账号必须选择测试场景");}
 }

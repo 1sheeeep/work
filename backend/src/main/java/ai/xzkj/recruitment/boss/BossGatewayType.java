@@ -1,5 +1,6 @@
 package ai.xzkj.recruitment.boss;
 
 public enum BossGatewayType {
-    MOCK
+    MOCK,
+    BROWSER_COMPANION
 }
