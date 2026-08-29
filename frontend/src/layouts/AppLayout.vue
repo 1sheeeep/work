@@ -12,24 +12,24 @@ const loggingOut = ref(false)
 const activePath = computed(() => route.path)
 const user = computed(() => authStore.state.user)
 const navigationGroups = computed(() => [
-  { label: '工作台', items: [{ path: '/dashboard', label: '招聘概览', icon: Grid }] },
-  { label: '招聘业务', items: [
-    { path: '/job-positions', label: '职位管理', icon: Briefcase },
-    { path: '/candidates', label: '候选人工作台', icon: UserFilled },
-    { path: '/auto-replies', label: '自动跟进', icon: ChatDotRound },
+  { label: '离开托管', items: [
+    { path: '/dashboard', label: '托管概览', icon: Grid },
+    { path: '/candidates', label: '待跟进会话', icon: UserFilled },
+    { path: '/auto-replies', label: '托管设置', icon: ChatDotRound },
+    { path: '/boss-accounts', label: 'BOSS 账号连接', icon: Connection },
   ] },
-  { label: '账号与组织', items: [
+  ...(user.value?.role !== 'RECRUITER' ? [{ label: '业务配置', items: [
+    { path: '/job-positions', label: '职位资料', icon: Briefcase },
     { path: '/organization', label: '集团与企业', icon: OfficeBuilding },
-    { path: '/boss-accounts', label: 'BOSS 账号', icon: Connection },
     ...(user.value?.role === 'SYSTEM_ADMIN' ? [{ path: '/hr-users', label: 'HR 用户', icon: User }] : []),
-  ] },
+  ] }] : []),
   ...(user.value?.role === 'SYSTEM_ADMIN' ? [{ label: '系统管理', items: [
     { path: '/audit-logs', label: '操作日志', icon: DataAnalysis },
     { path: '/operations', label: '运行保障', icon: Monitor },
   ] }] : []),
 ])
 const roleLabel = computed(() => ({ SYSTEM_ADMIN: '系统管理员', RECRUITMENT_ADMIN: '招聘管理员', RECRUITER: '招聘专员' }[user.value?.role ?? 'SYSTEM_ADMIN']))
-const workspaceLabel = computed(() => ({ dashboard: '招聘概览', organization: '组织管理', 'boss-accounts': 'BOSS 账号', 'job-positions': '职位管理', candidates: '候选人工作台', 'auto-replies': '多账号自动跟进', 'hr-users': 'HR 用户', 'audit-logs': '操作日志', operations: '运行保障' }[String(route.name)] ?? '招聘工作台'))
+const workspaceLabel = computed(() => ({ dashboard: '托管概览', organization: '组织管理', 'boss-accounts': 'BOSS 账号连接', 'job-positions': '职位资料', candidates: '待跟进会话', 'auto-replies': '离开托管设置', 'hr-users': 'HR 用户', 'audit-logs': '操作日志', operations: '运行保障' }[String(route.name)] ?? '离开托管助手'))
 
 function navigate(path: string) {
   mobileNavOpen.value = false
@@ -55,7 +55,7 @@ async function handleLogout() {
     <aside class="sidebar">
       <div class="brand-block">
         <div class="brand-mark" aria-hidden="true">招</div>
-        <div><strong>招聘自动化控制台</strong><span>集团 HR 工作台</span></div>
+        <div><strong>HR 离开托管助手</strong><span>候选人消息接待</span></div>
       </div>
       <nav class="nav-list" aria-label="主导航">
         <section v-for="group in navigationGroups" :key="group.label" class="nav-group">
@@ -70,7 +70,7 @@ async function handleLogout() {
           </button>
         </section>
       </nav>
-      <div class="sidebar-foot"><span>核心主链路</span><strong>BOSS 超时自动回复</strong></div>
+      <div class="sidebar-foot"><span>当前模式</span><strong>离开期间安全接待</strong></div>
     </aside>
 
     <section class="workspace">
@@ -89,7 +89,7 @@ async function handleLogout() {
     </section>
 
     <el-drawer v-model="mobileNavOpen" direction="ltr" size="280px" :show-close="false">
-      <template #header><div class="drawer-brand"><span class="brand-mark">招</span><strong>招聘自动化控制台</strong></div></template>
+      <template #header><div class="drawer-brand"><span class="brand-mark">招</span><strong>HR 离开托管助手</strong></div></template>
       <nav class="drawer-nav" aria-label="移动端主导航">
         <section v-for="group in navigationGroups" :key="group.label"><span class="drawer-group-label">{{ group.label }}</span><button v-for="item in group.items" :key="item.path" type="button" :class="{ active: activePath === item.path }" @click="navigate(item.path)"><el-icon :size="20"><component :is="item.icon" /></el-icon>{{ item.label }}</button></section>
       </nav>

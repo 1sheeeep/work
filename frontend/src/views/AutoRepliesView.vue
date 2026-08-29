@@ -34,12 +34,12 @@ onMounted(load)
 </script>
 
 <template><div class="page-shell auto-page">
-  <header class="page-heading"><div><span class="eyebrow">AUTOMATED FOLLOW-UP</span><h1>多账号自动跟进</h1><p>统一观察回复链路、账号风险与发送结果，只在满足超时、频率、时段和设备在线条件后执行。</p></div><el-button :icon="Refresh" :loading="loading" @click="load">刷新状态</el-button></header>
-  <el-alert class="safety-alert" type="warning" :closable="false" show-icon title="网页伴随端存在平台限制风险。遇到验证码、登录失效或页面结构变化立即暂停，不导出 Cookie、不绕过平台风控。"/>
+  <header class="page-heading"><div><span class="eyebrow">AWAY MODE</span><h1>离开托管设置</h1><p>HR 离开期间接待长时间未回复的候选人消息；返回后关闭托管并继续跟进。</p></div><el-button :icon="Refresh" :loading="loading" @click="load">刷新状态</el-button></header>
+  <el-alert class="safety-alert" type="warning" :closable="false" show-icon title="托管回复只用于确认消息已收到，不代替 HR 做薪资、录用或面试承诺。遇到验证码、登录失效或页面变化时自动暂停。"/>
   <div v-if="loading" class="surface-panel"><el-skeleton :rows="8" animated/></div>
   <div v-else-if="errorMessage" class="surface-panel error-state"><el-icon><Warning/></el-icon><strong>自动跟进状态暂时无法加载</strong><span>{{errorMessage}}</span><el-button @click="load">重试</el-button></div>
   <template v-else>
-    <nav class="module-nav"><button v-for="t in [{id:'overview',name:'运行总览',desc:'健康与待办'},{id:'accounts',name:'账号策略',desc:'触发与限流'},{id:'devices',name:'浏览器设备',desc:'连接与诊断'},{id:'attempts',name:'发送记录',desc:'结果与追踪'}]" :key="t.id" :class="{active:activeTab===t.id}" @click="activeTab=t.id"><strong>{{t.name}}</strong><span>{{t.desc}}</span></button></nav>
+    <nav class="module-nav"><button v-for="t in [{id:'overview',name:'托管总览',desc:'状态与待办'},{id:'accounts',name:'托管策略',desc:'超时与模板'},{id:'devices',name:'账号连接',desc:'登录与诊断'},{id:'attempts',name:'接待记录',desc:'结果与追踪'}]" :key="t.id" :class="{active:activeTab===t.id}" @click="activeTab=t.id"><strong>{{t.name}}</strong><span>{{t.desc}}</span></button></nav>
     <template v-if="activeTab==='overview'">
       <div class="metrics"><article><span>自动运行账号</span><strong>{{stats.running}}<small> / {{stats.total}}</small></strong></article><article><span>需要关注</span><strong :class="{danger:stats.attention}">{{stats.attention}}</strong></article><article><span>今日已发送</span><strong>{{stats.sentToday}}</strong></article><article><span>在线浏览器</span><strong>{{stats.online}}</strong></article></div>
       <div class="overview-grid"><section class="surface-panel"><div class="section-title-row"><div><h2>账号运行状态</h2><p>先处理红色异常，再开启自动发送。</p></div><el-button text @click="activeTab='accounts'">管理策略</el-button></div><div v-if="!runtimeAccounts.length" class="empty">还没有可管理的招聘账号</div><article v-for="x in runtimeAccounts" :key="x.policy.accountId" class="health-row"><i>{{x.policy.accountName.slice(0,1)}}</i><div class="identity"><strong>{{x.policy.accountName}}</strong><span>{{x.policy.companyName}}</span></div><el-tag :type="runtimeMeta[x.state].type">{{runtimeMeta[x.state].label}}</el-tag><div class="quota"><span>今日额度 {{x.policy.sentToday}}/{{x.policy.dailyLimit}}</span><el-progress :percentage="quota(x.policy)" :show-text="false" :stroke-width="6"/></div><el-button v-if="canManage" text @click="openPolicy(x.policy)">配置</el-button></article></section>
