@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.ArrayList;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
@@ -113,6 +114,46 @@ public class JobPositionService {
         return JobPositionResponse.from(job);
     }
 
+    @Transactional
+    public JobPositionResponse updateKnowledge(UUID id, JobKnowledgeRequest request) {
+        SystemUser user = requireManager();
+        JobPosition job = requireAccessibleJob(id, user);
+        String summary = cleanOptional(request.replySummary());
+        String salary = cleanOptional(request.salaryDisplay());
+        if (request.approved() && summary == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "INCOMPLETE_JOB_KNOWLEDGE", "审核通过前请填写岗位简介");
+        }
+        job.updateKnowledge(summary, salary, request.approved());
+        auditService.success("UPDATE_JOB_KNOWLEDGE", "JOB_POSITION", job.getId(), job.getTitle(),
+                request.approved() ? "更新并审核通过岗位回复知识" : "更新岗位回复知识（未审核）");
+        return JobPositionResponse.from(job);
+    }
+
+    @Transactional(readOnly = true)
+    public ReplyPreviewResponse previewReply(UUID id) {
+        SystemUser user = currentUserService.requireCurrentUser();
+        JobPosition job = requireAccessibleJob(id, user);
+        Company company = job.getCompany();
+        List<String> missing = new ArrayList<>();
+        if (!company.isKnowledgeApproved()) missing.add("公司知识未审核");
+        if (isBlank(company.getKnowledgeIndustry())) missing.add("公司行业");
+        if (isBlank(company.getKnowledgeSummary())) missing.add("公司介绍");
+        if (!job.isKnowledgeApproved()) missing.add("岗位知识未审核");
+        if (isBlank(job.getReplySummary())) missing.add("岗位简介");
+        if (!missing.isEmpty()) {
+            return new ReplyPreviewResponse("GENERIC",
+                    "您好，已收到您的消息。招聘同事当前暂时不在线，稍后会尽快与您沟通。",
+                    List.copyOf(missing), company.getKnowledgeVersion(), job.getKnowledgeVersion());
+        }
+        String salary = isBlank(job.getSalaryDisplay()) ? "" : "，薪资说明为" + job.getSalaryDisplay();
+        String content = "您好，已收到您关于「" + job.getTitle() + "」的消息。该岗位工作地点为"
+                + job.getLocation() + salary + "，主要工作是" + job.getReplySummary() + "。"
+                + company.getName() + "属于" + company.getKnowledgeIndustry() + "行业，"
+                + company.getKnowledgeSummary() + "。招聘同事当前暂时不在线，稍后会继续与您沟通。";
+        return new ReplyPreviewResponse("KNOWLEDGE", content, List.of(),
+                company.getKnowledgeVersion(), job.getKnowledgeVersion());
+    }
+
     private void validateTransition(JobPositionStatus current, JobPositionStatus target) {
         boolean allowed = (current == JobPositionStatus.DRAFT
                 && (target == JobPositionStatus.ACTIVE || target == JobPositionStatus.CLOSED))
@@ -188,4 +229,6 @@ public class JobPositionService {
         if (value == null || value.isBlank()) return null;
         return value.trim();
     }
+
+    private boolean isBlank(String value) { return value == null || value.isBlank(); }
 }

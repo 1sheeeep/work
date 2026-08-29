@@ -48,4 +48,16 @@ public class JobPositionController {
                                              @Valid @RequestBody JobPositionStatusRequest request) {
         return service.changeStatus(id, request.status());
     }
+
+    @PutMapping("/{id}/knowledge")
+    @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'RECRUITMENT_ADMIN')")
+    public JobPositionResponse updateKnowledge(@PathVariable UUID id,
+                                                @Valid @RequestBody JobKnowledgeRequest request) {
+        return service.updateKnowledge(id, request);
+    }
+
+    @GetMapping("/{id}/reply-preview")
+    public ReplyPreviewResponse previewReply(@PathVariable UUID id) {
+        return service.previewReply(id);
+    }
 }

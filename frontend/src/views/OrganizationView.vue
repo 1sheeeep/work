@@ -37,6 +37,10 @@ const companyError = ref('')
 const companyFormRef = ref<FormInstance>()
 const companyForm = reactive<CompanyFormValue>({ name: '', code: '', location: '', notes: '' })
 const companyFieldErrors = reactive<Record<string, string>>({})
+const knowledgeDialogOpen = ref(false)
+const knowledgeCompany = ref<Company | null>(null)
+const knowledgeSaving = ref(false)
+const knowledgeForm = reactive({ industry: '', scale: '', summary: '', approved: false })
 const companyRules: FormRules<CompanyFormValue> = {
   name: [{ required: true, message: '请输入企业名称', trigger: 'blur' }, { max: 120, message: '最多 120 个字符', trigger: 'blur' }],
   code: [
@@ -213,6 +217,25 @@ async function toggleCompanyStatus(company: Company) {
   }
 }
 
+function openCompanyKnowledge(company: Company) {
+  knowledgeCompany.value = company
+  Object.assign(knowledgeForm, { industry: company.knowledgeIndustry ?? '', scale: company.knowledgeScale ?? '', summary: company.knowledgeSummary ?? '', approved: company.knowledgeApproved })
+  knowledgeDialogOpen.value = true
+}
+
+async function saveCompanyKnowledge() {
+  if (!knowledgeCompany.value) return
+  knowledgeSaving.value = true
+  try {
+    await ensureCsrf()
+    await api.put(`/organization/companies/${knowledgeCompany.value.id}/knowledge`, knowledgeForm)
+    ElMessage.success(knowledgeForm.approved ? '公司知识已审核，可用于安全回复' : '公司知识草稿已保存')
+    knowledgeDialogOpen.value = false
+    await refreshCompanyViews()
+  } catch (error) { ElMessage.error(apiErrorMessage(error, '公司知识保存失败')) }
+  finally { knowledgeSaving.value = false }
+}
+
 function formatDate(value: string) {
   return new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
 }
@@ -293,9 +316,9 @@ onMounted(loadAll)
           <el-table v-loading="companiesLoading" :data="companies" class="company-table">
             <el-table-column label="企业" min-width="210"><template #default="{ row }"><div class="company-name"><strong>{{ row.name }}</strong><span>{{ row.code }}</span></div></template></el-table-column>
             <el-table-column prop="location" label="所在地" min-width="140"><template #default="{ row }">{{ row.location || '未填写' }}</template></el-table-column>
-            <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'" effect="light">{{ row.status === 'ACTIVE' ? '正常' : '已停用' }}</el-tag></template></el-table-column>
+            <el-table-column label="回复知识" width="120"><template #default="{ row }"><el-tag :type="row.knowledgeApproved ? 'success' : 'warning'">{{ row.knowledgeApproved ? `已审核 v${row.knowledgeVersion}` : '待审核' }}</el-tag></template></el-table-column><el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'" effect="light">{{ row.status === 'ACTIVE' ? '正常' : '已停用' }}</el-tag></template></el-table-column>
             <el-table-column label="更新时间" min-width="180"><template #default="{ row }">{{ formatDate(row.updatedAt) }}</template></el-table-column>
-            <el-table-column v-if="canManage" label="操作" width="180" fixed="right"><template #default="{ row }"><el-button link type="primary" @click="openEditCompany(row as Company)">编辑</el-button><el-button link :type="row.status === 'ACTIVE' ? 'danger' : 'success'" @click="toggleCompanyStatus(row as Company)">{{ row.status === 'ACTIVE' ? '停用' : '启用' }}</el-button></template></el-table-column>
+            <el-table-column v-if="canManage" label="操作" width="230" fixed="right"><template #default="{ row }"><el-button link type="primary" @click="openCompanyKnowledge(row as Company)">回复知识</el-button><el-button link type="primary" @click="openEditCompany(row as Company)">编辑</el-button><el-button link :type="row.status === 'ACTIVE' ? 'danger' : 'success'" @click="toggleCompanyStatus(row as Company)">{{ row.status === 'ACTIVE' ? '停用' : '启用' }}</el-button></template></el-table-column>
           </el-table>
           <div class="company-cards">
             <article v-for="company in companies" :key="company.id" class="company-card">
@@ -320,6 +343,7 @@ onMounted(loadAll)
       </el-form>
       <template #footer><el-button @click="companyDialogOpen = false">取消</el-button><el-button type="primary" :loading="companySaving" @click="saveCompany">{{ editingCompany ? '保存修改' : '确认新增' }}</el-button></template>
     </el-dialog>
+    <el-dialog v-model="knowledgeDialogOpen" :title="`${knowledgeCompany?.name ?? ''} · 公司回复知识`" width="620px"><el-alert title="仅审核通过的信息才会进入回复预览；不完整时系统统一回退到通用接待语。" type="info" :closable="false" show-icon class="dialog-alert"/><el-form label-position="top"><div class="form-grid"><el-form-item label="所属行业"><el-input v-model="knowledgeForm.industry" maxlength="120" placeholder="例如：企业软件服务" /></el-form-item><el-form-item label="公司规模（可选）"><el-input v-model="knowledgeForm.scale" maxlength="120" placeholder="例如：100-499人" /></el-form-item></div><el-form-item label="候选人可见的公司介绍"><el-input v-model="knowledgeForm.summary" type="textarea" :rows="5" maxlength="1000" show-word-limit placeholder="填写准确、可公开、不夸大的公司情况" /></el-form-item><el-checkbox v-model="knowledgeForm.approved">我已核对内容，同意用于回复预览</el-checkbox></el-form><template #footer><el-button @click="knowledgeDialogOpen = false">取消</el-button><el-button type="primary" :loading="knowledgeSaving" @click="saveCompanyKnowledge">保存</el-button></template></el-dialog>
   </div>
 </template>
 

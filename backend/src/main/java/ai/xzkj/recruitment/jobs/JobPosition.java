@@ -39,6 +39,11 @@ public class JobPosition {
     @Column(name = "education_requirement", nullable = false, length = 80) private String educationRequirement;
     @Column(nullable = false, columnDefinition = "TEXT") private String description;
     @Column(name = "screening_requirements", columnDefinition = "TEXT") private String screeningRequirements;
+    @Column(name = "reply_summary", columnDefinition = "TEXT") private String replySummary;
+    @Column(name = "salary_display", length = 120) private String salaryDisplay;
+    @Column(name = "knowledge_approved", nullable = false) private boolean knowledgeApproved;
+    @Column(name = "knowledge_version", nullable = false) private int knowledgeVersion;
+    @Column(name = "knowledge_approved_at") private Instant knowledgeApprovedAt;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 16)
@@ -91,6 +96,14 @@ public class JobPosition {
 
     public void changeStatus(JobPositionStatus status) { this.status = status; }
 
+    public void updateKnowledge(String replySummary, String salaryDisplay, boolean approved) {
+        this.replySummary = replySummary;
+        this.salaryDisplay = salaryDisplay;
+        this.knowledgeApproved = approved;
+        this.knowledgeApprovedAt = approved ? Instant.now() : null;
+        this.knowledgeVersion++;
+    }
+
     @PreUpdate
     void preUpdate() { this.updatedAt = Instant.now(); }
 
@@ -106,6 +119,11 @@ public class JobPosition {
     public String getEducationRequirement() { return educationRequirement; }
     public String getDescription() { return description; }
     public String getScreeningRequirements() { return screeningRequirements; }
+    public String getReplySummary() { return replySummary; }
+    public String getSalaryDisplay() { return salaryDisplay; }
+    public boolean isKnowledgeApproved() { return knowledgeApproved; }
+    public int getKnowledgeVersion() { return knowledgeVersion; }
+    public Instant getKnowledgeApprovedAt() { return knowledgeApprovedAt; }
     public JobPositionStatus getStatus() { return status; }
     public long getVersion() { return version; }
     public Instant getCreatedAt() { return createdAt; }

@@ -41,6 +41,24 @@ public class Company {
     @Column(length = 500)
     private String notes;
 
+    @Column(name = "knowledge_industry", length = 120)
+    private String knowledgeIndustry;
+
+    @Column(name = "knowledge_scale", length = 120)
+    private String knowledgeScale;
+
+    @Column(name = "knowledge_summary", columnDefinition = "TEXT")
+    private String knowledgeSummary;
+
+    @Column(name = "knowledge_approved", nullable = false)
+    private boolean knowledgeApproved;
+
+    @Column(name = "knowledge_version", nullable = false)
+    private int knowledgeVersion;
+
+    @Column(name = "knowledge_approved_at")
+    private Instant knowledgeApprovedAt;
+
     @Version
     private long version;
 
@@ -74,6 +92,15 @@ public class Company {
 
     public void changeStatus(CompanyStatus status) { this.status = status; }
 
+    public void updateKnowledge(String industry, String scale, String summary, boolean approved) {
+        this.knowledgeIndustry = industry;
+        this.knowledgeScale = scale;
+        this.knowledgeSummary = summary;
+        this.knowledgeApproved = approved;
+        this.knowledgeApprovedAt = approved ? Instant.now() : null;
+        this.knowledgeVersion++;
+    }
+
     @PreUpdate
     void preUpdate() { this.updatedAt = Instant.now(); }
 
@@ -83,6 +110,12 @@ public class Company {
     public CompanyStatus getStatus() { return status; }
     public String getLocation() { return location; }
     public String getNotes() { return notes; }
+    public String getKnowledgeIndustry() { return knowledgeIndustry; }
+    public String getKnowledgeScale() { return knowledgeScale; }
+    public String getKnowledgeSummary() { return knowledgeSummary; }
+    public boolean isKnowledgeApproved() { return knowledgeApproved; }
+    public int getKnowledgeVersion() { return knowledgeVersion; }
+    public Instant getKnowledgeApprovedAt() { return knowledgeApprovedAt; }
     public long getVersion() { return version; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }

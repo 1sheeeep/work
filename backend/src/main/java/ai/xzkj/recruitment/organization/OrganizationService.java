@@ -107,6 +107,21 @@ public class OrganizationService {
         return CompanyResponse.from(company);
     }
 
+    @Transactional
+    public CompanyResponse updateCompanyKnowledge(UUID id, CompanyKnowledgeRequest request) {
+        Company company = requireCompany(id);
+        String industry = cleanOptional(request.industry());
+        String scale = cleanOptional(request.scale());
+        String summary = cleanOptional(request.summary());
+        if (request.approved() && (industry == null || summary == null)) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "INCOMPLETE_COMPANY_KNOWLEDGE", "审核通过前请填写行业和公司介绍");
+        }
+        company.updateKnowledge(industry, scale, summary, request.approved());
+        auditService.success("UPDATE_COMPANY_KNOWLEDGE", "COMPANY", company.getId(), company.getName(),
+                request.approved() ? "更新并审核通过公司回复知识" : "更新公司回复知识（未审核）");
+        return CompanyResponse.from(company);
+    }
+
     private GroupProfile requireGroup() {
         return groupRepository.findAll().stream().findFirst()
                 .orElseThrow(() -> new ApiException(

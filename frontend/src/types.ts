@@ -2,7 +2,7 @@ export type UserRole = 'SYSTEM_ADMIN' | 'RECRUITMENT_ADMIN' | 'RECRUITER'
 export interface AuthenticatedUser { id: string; username: string; displayName: string; role: UserRole }
 export interface GroupProfile { id: string; name: string; shortName: string; timezone: string; description?: string; version: number; updatedAt: string }
 export type CompanyStatus = 'ACTIVE' | 'INACTIVE'
-export interface Company { id: string; name: string; code: string; status: CompanyStatus; location?: string; notes?: string; version: number; createdAt: string; updatedAt: string }
+export interface Company { id: string; name: string; code: string; status: CompanyStatus; location?: string; notes?: string; knowledgeIndustry?: string; knowledgeScale?: string; knowledgeSummary?: string; knowledgeApproved: boolean; knowledgeVersion: number; knowledgeApprovedAt?: string; version: number; createdAt: string; updatedAt: string }
 export interface CompanyFormValue { name: string; code: string; location: string; notes: string }
 export interface CompanyScope { id: string; name: string; code: string; status: CompanyStatus }
 export interface HrUser { id: string; username: string; displayName: string; role: Exclude<UserRole, 'SYSTEM_ADMIN'>; enabled: boolean; companies: CompanyScope[]; createdAt: string; updatedAt: string }
@@ -13,7 +13,7 @@ export type MockBossProfile = 'FULL' | 'READ_ONLY' | 'UNAVAILABLE'
 export interface BossAccount { id: string; company: CompanyScope; displayName: string; externalIdentifier: string; gatewayType: 'MOCK'; mockProfile: MockBossProfile; status: BossAccountStatus; connectionStatus: BossConnectionStatus; capabilities: BossCapability[]; lastCheckedAt?: string; version: number; createdAt: string; updatedAt: string }
 export type JobPositionStatus = 'DRAFT' | 'ACTIVE' | 'CLOSED'
 export interface JobPositionBossAccount { id: string; displayName: string; externalIdentifier: string; status: BossAccountStatus; connectionStatus: BossConnectionStatus }
-export interface JobPosition { id: string; company: CompanyScope; bossAccount: JobPositionBossAccount; title: string; location: string; salaryMinK: number; salaryMaxK: number; salaryMonths: number; experienceRequirement: string; educationRequirement: string; description: string; screeningRequirements?: string; status: JobPositionStatus; version: number; createdAt: string; updatedAt: string }
+export interface JobPosition { id: string; company: CompanyScope; bossAccount: JobPositionBossAccount; title: string; location: string; salaryMinK: number; salaryMaxK: number; salaryMonths: number; experienceRequirement: string; educationRequirement: string; description: string; screeningRequirements?: string; replySummary?: string; salaryDisplay?: string; knowledgeApproved: boolean; knowledgeVersion: number; knowledgeApprovedAt?: string; status: JobPositionStatus; version: number; createdAt: string; updatedAt: string }
 export type CandidateSource = 'BOSS_MOCK' | 'MANUAL' | 'IMPORT'
 export type CandidatePrivacyStatus = 'ACTIVE' | 'ANONYMIZED'
 export type CandidateContactStatus = 'NEW' | 'SCREENING' | 'QUALIFIED' | 'REJECTED' | 'CONTACTING'

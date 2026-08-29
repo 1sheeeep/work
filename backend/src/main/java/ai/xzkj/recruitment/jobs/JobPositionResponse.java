@@ -20,6 +20,11 @@ public record JobPositionResponse(
         String educationRequirement,
         String description,
         String screeningRequirements,
+        String replySummary,
+        String salaryDisplay,
+        boolean knowledgeApproved,
+        int knowledgeVersion,
+        Instant knowledgeApprovedAt,
         JobPositionStatus status,
         long version,
         Instant createdAt,
@@ -35,7 +40,9 @@ public record JobPositionResponse(
                         account.getStatus(), account.getConnectionStatus()),
                 job.getTitle(), job.getLocation(), job.getSalaryMinK(), job.getSalaryMaxK(), job.getSalaryMonths(),
                 job.getExperienceRequirement(), job.getEducationRequirement(), job.getDescription(),
-                job.getScreeningRequirements(), job.getStatus(), job.getVersion(), job.getCreatedAt(), job.getUpdatedAt());
+                job.getScreeningRequirements(), job.getReplySummary(), job.getSalaryDisplay(), job.isKnowledgeApproved(),
+                job.getKnowledgeVersion(), job.getKnowledgeApprovedAt(), job.getStatus(), job.getVersion(),
+                job.getCreatedAt(), job.getUpdatedAt());
     }
 
     public record CompanySummary(UUID id, String name, String code, CompanyStatus status) {

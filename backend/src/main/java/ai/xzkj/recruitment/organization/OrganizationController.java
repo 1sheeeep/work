@@ -66,4 +66,11 @@ public class OrganizationController {
     ) {
         return service.changeCompanyStatus(id, request.status());
     }
+
+    @PutMapping("/companies/{id}/knowledge")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN')")
+    public CompanyResponse updateCompanyKnowledge(@PathVariable UUID id,
+                                                   @Valid @RequestBody CompanyKnowledgeRequest request) {
+        return service.updateCompanyKnowledge(id, request);
+    }
 }

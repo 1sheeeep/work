@@ -136,6 +136,36 @@ class JobPositionServiceTest {
                 .hasMessage("已关闭职位不能再编辑");
     }
 
+    @Test
+    void previewUsesOnlyApprovedCompanyAndJobKnowledge() {
+        SystemUser recruiter = user(UserRole.RECRUITER, allowedCompany);
+        JobPosition job = job(allowedCompany, eligibleAccount, "Java 开发工程师");
+        allowedCompany.updateKnowledge("企业软件服务", "100-499人", "专注于企业数字化产品", true);
+        job.updateKnowledge("负责稳定的后端服务开发", "20-35K·13薪", true);
+        when(currentUserService.requireCurrentUser()).thenReturn(recruiter);
+        when(jobRepository.findWithDetailsById(job.getId())).thenReturn(Optional.of(job));
+
+        ReplyPreviewResponse response = service.previewReply(job.getId());
+
+        assertThat(response.mode()).isEqualTo("KNOWLEDGE");
+        assertThat(response.content()).contains("Java 开发工程师", "企业软件服务", "负责稳定的后端服务开发");
+        assertThat(response.missingFields()).isEmpty();
+    }
+
+    @Test
+    void previewFallsBackWhenKnowledgeIsMissingOrUnapproved() {
+        SystemUser recruiter = user(UserRole.RECRUITER, allowedCompany);
+        JobPosition job = job(allowedCompany, eligibleAccount, "Java 开发工程师");
+        when(currentUserService.requireCurrentUser()).thenReturn(recruiter);
+        when(jobRepository.findWithDetailsById(job.getId())).thenReturn(Optional.of(job));
+
+        ReplyPreviewResponse response = service.previewReply(job.getId());
+
+        assertThat(response.mode()).isEqualTo("GENERIC");
+        assertThat(response.content()).doesNotContain("Java 开发工程师", allowedCompany.getName());
+        assertThat(response.missingFields()).contains("公司知识未审核", "岗位知识未审核");
+    }
+
     private BossAccount account(Company company, String name) {
         BossAccount account = new BossAccount(company, name, name + "-id", MockBossProfile.FULL);
         account.applyCapabilityCheck(BossConnectionStatus.CONNECTED, Set.of(BossCapability.JOB_SYNC));
