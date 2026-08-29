@@ -60,7 +60,7 @@
   if(!identity)return{ok:false,reason:'未找到选中会话标识'}
   if(!active)return{ok:false,reason:'未找到当前会话消息容器'}
   if(!active.isConnected||!identity.isConnected)return{ok:false,reason:'会话页面正在重新加载'}
-  if(!last)return{ok:false,reason:'当前会话暂无可识别消息'}
+  if(!last)return{ok:false,reason:items.length?`找到 ${items.length} 个消息候选，但无法识别候选人/HR 方向`:'当前会话暂无可识别消息'}
   const chatId=attribute(identity,s.conversationIdAttribute),direction=directionOf(last,s),content=last.textContent?.trim()||'',rawMessageId=attribute(last,s.messageIdAttribute),messageId=rawMessageId||`derived-${await digest(`${chatId}|${direction}|${content}`)}`,rawTime=attribute(last,s.timeAttribute)||(s.messageTime?last.querySelector(s.messageTime)?.textContent?.trim()||'':''),parsed=parseVisibleTime(rawTime),createdAt=Number.isFinite(parsed)?parsed:firstObserved(messageId)
   if(!chatId)return{ok:false,reason:'页面未提供稳定会话 ID，已禁止猜测'}
   if(!direction)return{ok:false,reason:'无法确定最后一条消息方向'}
