@@ -10,8 +10,8 @@
   if(busy)return;busy=true
   try{
    const state=await send({type:'GET_STATE'}),config=state.config
-   if(RISK_TEXT.test(document.body?.innerText||'')){await report(config,null,'RISK','检测到登录、验证码或平台风险提示');return pause('检测到登录、验证码或平台风险提示')}
-   const snapshot=readSnapshot(config.selectors);if(!snapshot.ok){await report(config,null,'BLOCKED',snapshot.reason);return heartbeat('PAUSED',snapshot.reason)}
+   const risk=visibleRisk();if(risk){await report(config,null,'RISK',risk);return pause(risk)}
+   const snapshot=await stableSnapshot(config.selectors,config.stabilityDelayMs);if(!snapshot.ok){await report(config,null,'BLOCKED',snapshot.reason);return heartbeat('PAUSED',snapshot.reason)}
    await report(config,snapshot,'OBSERVING',config.emergencyStop?'本机紧急停止已开启':'页面结构识别成功')
    if(config.emergencyStop)return heartbeat('PAUSED','本机紧急停止已开启')
    if(!config.enabled)return heartbeat('DISABLED','后端监测策略未开启')
@@ -28,11 +28,13 @@
    if(!claim?.ok)return pause('无法向后端申请发送租约')
    if(!claim.allowed)return handleDenial(claim.action)
    await delay(3000)
-   const verified=readSnapshot(config.selectors)
+   const verified=await stableSnapshot(config.selectors,config.stabilityDelayMs)
    if(!verified.ok||verified.messageKey!==snapshot.messageKey||verified.direction!=='INBOUND'){await receipt(claim.claimId,'UNKNOWN');return}
+   const blocked=interactionBlocker(verified);if(blocked){await report(config,verified,'BLOCKED',blocked,true);await receipt(claim.claimId,'UNKNOWN');return pause(blocked)}
    fillEditor(verified.editor,content)
    const finalCheck=readSnapshot(config.selectors)
-   if(!finalCheck.ok||finalCheck.messageKey!==snapshot.messageKey||finalCheck.direction!=='INBOUND'){clearEditor(verified.editor);await receipt(claim.claimId,'UNKNOWN');return}
+   const finalBlocker=finalCheck.ok?interactionBlocker(finalCheck):'填写回复后页面结构发生变化'
+   if(!finalCheck.ok||finalCheck.messageKey!==snapshot.messageKey||finalCheck.direction!=='INBOUND'||finalBlocker){clearEditor(verified.editor);await report(config,finalCheck.ok?finalCheck:null,'BLOCKED',finalBlocker||'发送前会话发生变化',true);await receipt(claim.claimId,'UNKNOWN');return pause(finalBlocker||'发送前会话发生变化')}
    verified.sendButton.click()
    const outbound=await waitForOutbound(config.selectors,content,15_000)
    if(!outbound){await receipt(claim.claimId,'UNKNOWN');return}
@@ -44,6 +46,7 @@
   let active,editor,sendButton,last
   try{active=document.querySelector(s.activeConversation);editor=document.querySelector(s.editor);sendButton=document.querySelector(s.sendButton);last=[...(active?.querySelectorAll(s.message)||[])].at(-1)}catch{return{ok:false,reason:'页面选择器无效'}}
   if(!active||!editor||!sendButton)return{ok:false,reason:'未找到当前会话、输入框或发送按钮'}
+  if(!active.isConnected||!editor.isConnected||!sendButton.isConnected)return{ok:false,reason:'会话页面正在重新加载'}
   if(!last)return{ok:false,reason:'当前会话暂无可识别消息'}
   const chatId=attribute(active,s.conversationIdAttribute),messageId=attribute(last,s.messageIdAttribute),rawDirection=attribute(last,s.directionAttribute).toUpperCase(),rawTime=attribute(last,s.timeAttribute),parsed=Date.parse(rawTime)
   if(!chatId)return{ok:false,reason:'页面未提供稳定会话 ID，已禁止猜测'}
@@ -53,6 +56,11 @@
   if(!Number.isFinite(parsed))return{ok:false,reason:'无法确定最后一条消息时间'}
   return{ok:true,chatId,messageId,content:last.textContent?.trim()||'',messageKey:`${chatId}:${messageId}`,direction:inbound?'INBOUND':'OUTBOUND',createdAt:parsed,candidateName:text(s.candidateName),jobTitle:text(s.jobTitle),editor,sendButton}
  }
+ async function stableSnapshot(selectors,wait=800){const first=readSnapshot(selectors);if(!first.ok)return first;await delay(Math.max(300,Math.min(2000,Number(wait)||800)));const second=readSnapshot(selectors);if(!second.ok)return second;if(first.messageKey!==second.messageKey||first.direction!==second.direction)return{ok:false,reason:'会话消息仍在更新，等待页面稳定'};return second}
+ function visibleRisk(){const walker=document.createTreeWalker(document.body||document.documentElement,NodeFilter.SHOW_TEXT);let node,scanned=0;while(scanned++<5000&&(node=walker.nextNode())){const value=node.nodeValue?.trim();if(!value||!RISK_TEXT.test(value))continue;const element=node.parentElement;if(element&&isVisible(element))return`检测到可见安全提示：${value.slice(0,60)}`}return''}
+ function interactionBlocker(snapshot){if(!isVisible(snapshot.editor)||!isVisible(snapshot.sendButton))return'输入框或发送按钮当前不可见';if(snapshot.editor.disabled||snapshot.editor.readOnly||snapshot.editor.getAttribute('aria-disabled')==='true')return'输入框当前不可编辑';if(snapshot.sendButton.disabled||snapshot.sendButton.getAttribute('aria-disabled')==='true')return'发送按钮当前不可用';if(!isTopmost(snapshot.editor)||!isTopmost(snapshot.sendButton))return'页面弹窗或遮罩层覆盖了消息输入区域';return''}
+ function isVisible(element){const style=getComputedStyle(element),rect=element.getBoundingClientRect();return style.display!=='none'&&style.visibility!=='hidden'&&Number(style.opacity)!==0&&rect.width>0&&rect.height>0}
+ function isTopmost(element){const rect=element.getBoundingClientRect(),x=Math.min(innerWidth-1,Math.max(0,rect.left+rect.width/2)),y=Math.min(innerHeight-1,Math.max(0,rect.top+rect.height/2)),top=document.elementFromPoint(x,y);return Boolean(top&&(top===element||element.contains(top)||top.contains(element)))}
  async function waitForOutbound(selectors,expected,timeout){const end=Date.now()+timeout;while(Date.now()<end){await delay(400);const current=readSnapshot(selectors);if(current.ok&&current.direction==='OUTBOUND'&&current.content===expected)return current}return null}
  async function receipt(claimId,status,externalOutboundMessageId){return send({type:'SEND_RECEIPT',claimId,payload:{status,externalOutboundMessageId}})}
  async function report(config,snapshot,status,reason,bound){const adapterDigest=await digest(JSON.stringify(config.selectors||{})),payload={status,reason,adapterDigest,visible:document.visibilityState==='visible',bound};if(snapshot){payload.chatDigest=await digest(snapshot.chatId);payload.messageDigest=await digest(snapshot.messageId);payload.direction=snapshot.direction;payload.createdAt=new Date(snapshot.createdAt).toISOString();payload.ageMinutes=(Date.now()-snapshot.createdAt)/60_000}return send({type:'DIAGNOSTIC',payload})}

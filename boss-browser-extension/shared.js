@@ -11,6 +11,7 @@ export const DEFAULTS = Object.freeze({
   windowEnd: '21:00',
   template: '您好，已收到您关于「{jobTitle}」的消息，招聘团队会尽快查看并与您沟通。',
   requireVisibleTab: true,
+  stabilityDelayMs: 800,
   selectors: {
     conversation: '', conversationIdAttribute: 'data-conversation-id',
     activeConversation: '', candidateName: '', jobTitle: '',
