@@ -28,10 +28,21 @@ class AutoReplyPolicyTest {
         assertThat(policy.canSend(now.plus(Duration.ofHours(1)))).isFalse();
     }
 
+    @Test void stopsSendingWhenAwayPeriodExpires() {
+        var user = mock(SystemUser.class); var account = mock(BossAccount.class);
+        var policy = new AutoReplyPolicy(account, user, AutoReplyService.DEFAULT_TEMPLATE);
+        Instant end = Instant.now().plus(Duration.ofHours(1));
+        policy.update(true, AwayMode.TEMPORARY, end, true, 120, 20, 30,
+                LocalTime.of(9,0), LocalTime.of(21,0), "Asia/Shanghai", 2,
+                AutoReplyService.DEFAULT_TEMPLATE, user);
+        assertThat(policy.canSend(end.minusSeconds(1))).isTrue();
+        assertThat(policy.canSend(end)).isFalse();
+    }
+
     private AutoReplyPolicy policy(int interval, int maxFailures) {
         var user = mock(SystemUser.class); var account = mock(BossAccount.class);
         var policy = new AutoReplyPolicy(account, user, AutoReplyService.DEFAULT_TEMPLATE);
-        policy.update(true, true, 120, 20, interval, LocalTime.of(9,0), LocalTime.of(21,0),
+        policy.update(true, AwayMode.TEMPORARY, Instant.now().plus(Duration.ofHours(2)), true, 120, 20, interval, LocalTime.of(9,0), LocalTime.of(21,0),
                 "Asia/Shanghai", maxFailures, AutoReplyService.DEFAULT_TEMPLATE, user);
         return policy;
     }

@@ -1,10 +1,11 @@
 package ai.xzkj.recruitment.autoreply;
 
 import jakarta.validation.constraints.*;
+import java.time.Instant;
 import java.time.LocalTime;
 
 public record AutoReplyRequest(
-        boolean enabled, boolean autoSendEnabled,
+        boolean enabled, @NotNull AwayMode awayMode, Instant awayEndsAt, boolean autoSendEnabled,
         @Min(5) @Max(10080) int responseTimeoutMinutes,
         @Min(1) @Max(200) int dailyLimit,
         @Min(30) @Max(86400) int minimumIntervalSeconds,
