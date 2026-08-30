@@ -89,7 +89,7 @@
       if (!second.ok) { await send({ type: 'BRIDGE_JOB_BLOCKED', payload: second }); return { ok: false, error: second.reason }; }
       if (first.signature !== second.signature) return { ok: false, error: '职位列表仍在变化，请等待页面稳定后重试。' };
       const response = await send({ type: 'BRIDGE_JOB_SNAPSHOT', payload: { pageState: 'JOB_MANAGEMENT_READY', entries: second.entries, observedAt: new Date().toISOString() } });
-      return response?.ok ? response : { ok: false, error: response?.error || '本地服务未接受职位快照。' };
+      return response?.ok ? response : { ok: false, pageMatched: true, error: response?.error || '本地服务未接受职位快照。' };
     } finally { collecting = false; }
   }
 

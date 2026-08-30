@@ -92,6 +92,7 @@ async function collectJobsFromAllFrames(tabId) {
     try {
       const response = await chrome.tabs.sendMessage(tabId, { type: 'BRIDGE_COLLECT_JOBS', allowEmbeddedJobList: frameId !== 0 }, { frameId });
       if (response?.ok) return response;
+      if (response?.pageMatched) throw new Error(response.error || '本地服务未接受已识别的职位详情。');
       failures.push(response?.error || `frame ${frameId} 未返回职位数据`);
     } catch (error) { failures.push(safeError(error)); }
   }
