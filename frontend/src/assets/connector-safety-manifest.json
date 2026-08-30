@@ -3,6 +3,7 @@
   "mode": "FIXTURE_ONLY",
   "productionEnabled": false,
   "controlledActions": 4,
+  "accountIsolationScenarios": 3,
   "faultScenarios": [
     "目标身份漂移",
     "风险或验证页面",

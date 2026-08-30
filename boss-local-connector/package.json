@@ -12,7 +12,8 @@
     "status": "node src/index.mjs status",
     "drill": "node scripts/offline-drill.mjs",
     "drill:faults": "node scripts/offline-faults.mjs",
-    "check": "node --check src/index.mjs && node --check src/lib/config.mjs && node --check src/lib/chrome.mjs && node --check src/lib/page-probe.mjs && node --check src/lib/conversation-monitor.mjs && node --check src/lib/controlled-action.mjs && node --check src/lib/action-lease-contract.mjs && node --check src/lib/offline-action-executor.mjs && node --check src/lib/offline-drill-suite.mjs && node --check src/lib/offline-fault-matrix.mjs && node --check src/lib/drill-circuit-breaker.mjs && node --check src/lib/backend.mjs && node --check src/lib/state.mjs && node --check scripts/offline-drill.mjs && node --check scripts/offline-faults.mjs",
+    "drill:isolation": "node scripts/offline-isolation.mjs",
+    "check": "node --check src/index.mjs && node --check src/lib/config.mjs && node --check src/lib/chrome.mjs && node --check src/lib/page-probe.mjs && node --check src/lib/conversation-monitor.mjs && node --check src/lib/controlled-action.mjs && node --check src/lib/action-lease-contract.mjs && node --check src/lib/offline-action-executor.mjs && node --check src/lib/offline-drill-suite.mjs && node --check src/lib/offline-fault-matrix.mjs && node --check src/lib/offline-isolation-drill.mjs && node --check src/lib/account-runtime-supervisor.mjs && node --check src/lib/drill-circuit-breaker.mjs && node --check src/lib/backend.mjs && node --check src/lib/state.mjs && node --check scripts/offline-drill.mjs && node --check scripts/offline-faults.mjs && node --check scripts/offline-isolation.mjs",
     "test": "node --test"
   },
   "dependencies": {

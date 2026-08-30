@@ -126,11 +126,14 @@ cd boss-local-connector
 npm test
 npm run drill
 npm run drill:faults
+npm run drill:isolation
 ```
 
 `npm run drill` 会依次演练四类受控动作，并只输出动作类型、结果和证据来源。演练不会启动 Chrome、不会读取真实账号页面、不会写入业务数据库、不会创建生产批准，也不会解锁页面写能力。真实页面执行器在逐动作人工验收完成前保持不存在。
 
 `npm run drill:faults` 会注入目标漂移、风险页、状态不变、浏览器输入企图和执行超时五类故障；所有故障都必须被阻断，否则命令以失败状态退出。运行保障页显示的是该版本的离线构建清单，不等同于真实页面验收。
+
+`npm run drill:isolation` 会验证多账号隔离：异常只冻结当前账号、健康探测不能自动解冻、人工恢复必须有三次稳定只读探测，并且恢复后仍保持写能力关闭。
 
 ## 安全边界
 
