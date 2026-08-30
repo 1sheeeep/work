@@ -72,3 +72,9 @@ app:
     admin-password: ${APP_BOOTSTRAP_ADMIN_PASSWORD:}
     group-name: ${APP_BOOTSTRAP_GROUP_NAME:}
     group-short-name: ${APP_BOOTSTRAP_GROUP_SHORT_NAME:}
+  openai:
+    enabled: ${APP_OPENAI_ENABLED:false}
+    api-key: ${OPENAI_API_KEY:}
+    model: ${OPENAI_MODEL:}
+    base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+    timeout: ${OPENAI_TIMEOUT:60s}

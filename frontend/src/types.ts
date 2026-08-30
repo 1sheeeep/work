@@ -35,6 +35,10 @@ export interface BrowserUnreadObservation {id:string;accountId:string;accountNam
 export type ResumeIntakeSource='MANUAL'|'BOSS_VISIBLE'
 export type ResumeIntakeStatus='PENDING_REVIEW'|'APPROVED_FOR_AI'|'REJECTED'
 export interface ResumeIntake {id:string;contactId:string;candidateName:string;jobTitle:string;accountName:string;source:ResumeIntakeSource;anonymousKey:string;displayLabel:string;status:ResumeIntakeStatus;receivedAt:string;reviewedBy?:string;reviewedAt?:string;reviewNote?:string;createdAt:string}
+export type ResumeAnalysisRecommendation='PRIORITY_VIEW'|'NORMAL_VIEW'|'INFORMATION_NEEDED'
+export interface ResumeAnalysisEvidence {criterion:string;finding:string;status:'FOUND'|'NOT_FOUND'|'UNCLEAR'}
+export interface ResumeAnalysisResult {recommendation:ResumeAnalysisRecommendation;summary:string;evidence:ResumeAnalysisEvidence[];gaps:string[];risks:string[];followUpQuestions:string[]}
+export interface ResumeAnalysisRun {id:string;resumeIntakeId:string;candidateName:string;jobTitle:string;provider:string;modelVersion:string;status:'SUCCEEDED'|'FAILED';result?:ResumeAnalysisResult;errorMessage?:string;createdBy:string;createdAt:string}
 export interface AuditLog { id: string; actorName: string; action: string; targetType: string; targetId?: string; targetLabel?: string; result: 'SUCCESS' | 'FAILURE'; details?: string; requestId?:string; occurredAt: string }
 export interface GatewaySnapshot { operation:string;consecutiveFailures:number;circuitOpenUntil?:string;requestsInWindow:number;availablePermits:number }
 export interface OperationsSummary { status:'READY';flywayVersion:string;auditAppendOnly:boolean;activeBrowserDevices:number;staleBrowserDevices:number;unreadObservations:number;unverifiedPageCaptures:number;checkedAt:string;gateways:GatewaySnapshot[] }

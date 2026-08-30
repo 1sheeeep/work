@@ -29,6 +29,18 @@ public class AuditService {
         ));
     }
 
+    public void failure(String action, String targetType, UUID targetId, String targetLabel, String details) {
+        repository.save(new AuditLog(
+                currentUserService.requireCurrentUser(),
+                action,
+                targetType,
+                targetId,
+                sanitize(targetLabel, 160),
+                AuditResult.FAILURE,
+                sanitize(details, 1000)
+        ));
+    }
+
     public void anonymousFailure(String action, String targetType, String targetLabel, String details) {
         repository.save(new AuditLog("anonymous", action, targetType, sanitize(targetLabel, 160),
                 AuditResult.FAILURE, sanitize(details, 1000)));
