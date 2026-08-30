@@ -24,8 +24,6 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
-import java.time.Instant;
-import java.time.Duration;
 
 @Service
 public class CandidateService {
@@ -35,7 +33,6 @@ public class CandidateService {
     private final ConversationMessageRepository messageRepository;
     private final JobPositionRepository jobRepository;
     private final CurrentUserService currentUserService;
-    private final BossGateway gateway;
     private final AuditService auditService;
     private final AutoReplyAttemptRepository autoReplyAttempts;
 
@@ -44,11 +41,11 @@ public class CandidateService {
                             ScreeningDecisionRepository decisionRepository,
                             ConversationMessageRepository messageRepository,
                             JobPositionRepository jobRepository, CurrentUserService currentUserService,
-                            BossGateway gateway, AuditService auditService, AutoReplyAttemptRepository autoReplyAttempts) {
+                            AuditService auditService, AutoReplyAttemptRepository autoReplyAttempts) {
         this.profileRepository = profileRepository; this.contactRepository = contactRepository;
         this.decisionRepository = decisionRepository; this.messageRepository = messageRepository;
         this.jobRepository = jobRepository; this.currentUserService = currentUserService;
-        this.gateway = gateway; this.auditService = auditService; this.autoReplyAttempts = autoReplyAttempts;
+        this.auditService = auditService; this.autoReplyAttempts = autoReplyAttempts;
     }
 
     @Transactional(readOnly = true)
@@ -140,79 +137,6 @@ public class CandidateService {
     }
 
     @Transactional
-    public MessageMutationResponse inbound(UUID id, InboundMessageRequest request) {
-        SystemUser user = currentUserService.requireCurrentUser();
-        CandidateJobContact contact = requireAccessibleContact(id, user);
-        String externalId = cleanRequired(request.externalMessageId());
-        var existing = messageRepository.findByContactIdAndExternalMessageId(id, externalId);
-        if (existing.isPresent()) return new MessageMutationResponse(ConversationMessageResponse.from(existing.get()), true);
-        Instant receivedAt=request.receivedAt()==null?Instant.now():request.receivedAt();
-        if(receivedAt.isAfter(Instant.now().plusSeconds(300))||receivedAt.isBefore(Instant.now().minus(Duration.ofDays(365))))throw new ApiException(HttpStatus.BAD_REQUEST,"INVALID_RECEIVED_AT","候选人消息时间必须在最近一年内且不能晚于当前时间");
-        ConversationMessage message = messageRepository.save(new ConversationMessage(contact, externalId,
-                MessageDirection.INBOUND, MessageSenderType.CANDIDATE, MessageDeliveryStatus.RECEIVED,
-                cleanRequired(request.content()), null, null, user,receivedAt));
-        auditService.success("IMPORT_CANDIDATE_MESSAGE", "CANDIDATE_CONTACT", id, auditLabel(contact.getCandidate()),
-                "按外部消息 ID 幂等写入候选人消息");
-        return new MessageMutationResponse(ConversationMessageResponse.from(message), false);
-    }
-
-    @Transactional
-    public ConversationMessageResponse draft(UUID id, MessageDraftRequest request) {
-        SystemUser user = currentUserService.requireCurrentUser();
-        CandidateJobContact contact = requireAccessibleContact(id, user);
-        if (request.senderType() != MessageSenderType.AI && request.senderType() != MessageSenderType.HR) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_DRAFT_SENDER", "外发草稿只能由 AI 或 HR 创建");
-        }
-        if (request.senderType() == MessageSenderType.AI) {
-            if (contact.isHumanTakenOver()) throw new ApiException(HttpStatus.CONFLICT, "CANDIDATE_TAKEN_OVER", "人工接管期间不能生成 AI 草稿");
-            if (cleanOptional(request.modelVersion()) == null || cleanOptional(request.promptVersion()) == null) {
-                throw new ApiException(HttpStatus.BAD_REQUEST, "AI_VERSION_REQUIRED", "AI 草稿必须记录模型和提示版本");
-            }
-        } else {
-            contact.takeOver(user);
-        }
-        ConversationMessage message = messageRepository.save(new ConversationMessage(contact, "draft-" + UUID.randomUUID(),
-                MessageDirection.OUTBOUND, request.senderType(), MessageDeliveryStatus.PENDING_REVIEW,
-                cleanRequired(request.content()), cleanOptional(request.modelVersion()), cleanOptional(request.promptVersion()), user));
-        auditService.success("CREATE_MESSAGE_DRAFT", "CANDIDATE_CONTACT", id, auditLabel(contact.getCandidate()),
-                request.senderType().name() + " 外发草稿进入人工审核");
-        return ConversationMessageResponse.from(message);
-    }
-
-    @Transactional
-    public ConversationMessageResponse approve(UUID contactId, UUID messageId) {
-        SystemUser user = currentUserService.requireCurrentUser();
-        CandidateJobContact contact = requireAccessibleContact(contactId, user);
-        ConversationMessage message = requireMessage(contactId, messageId);
-        if (message.getDeliveryStatus() == MessageDeliveryStatus.SENT) return ConversationMessageResponse.from(message);
-        if (message.getDeliveryStatus() != MessageDeliveryStatus.PENDING_REVIEW) {
-            throw new ApiException(HttpStatus.CONFLICT, "MESSAGE_NOT_REVIEWABLE", "只有待审核消息可以发送");
-        }
-        requireMessageCapability(contact.getBossAccount());
-        var result = gateway.sendMessage(contact.getBossAccount(), new BossGateway.MessageSendRequest(
-                contactId, message.getExternalMessageId(), message.getContent()));
-        if (result.succeeded()) { message.sent(); contact.markContacting(); }
-        else message.failed();
-        auditService.success("REVIEW_AND_SEND_MESSAGE", "CANDIDATE_CONTACT", contactId, auditLabel(contact.getCandidate()),
-                result.message() + "，未记录消息正文");
-        return ConversationMessageResponse.from(message);
-    }
-
-    @Transactional
-    public ConversationMessageResponse reject(UUID contactId, UUID messageId) {
-        SystemUser user = currentUserService.requireCurrentUser();
-        CandidateJobContact contact = requireAccessibleContact(contactId, user);
-        ConversationMessage message = requireMessage(contactId, messageId);
-        if (message.getDeliveryStatus() == MessageDeliveryStatus.REJECTED) return ConversationMessageResponse.from(message);
-        if (message.getDeliveryStatus() != MessageDeliveryStatus.PENDING_REVIEW) {
-            throw new ApiException(HttpStatus.CONFLICT, "MESSAGE_NOT_REVIEWABLE", "只有待审核消息可以驳回");
-        }
-        message.reject();
-        auditService.success("REJECT_MESSAGE_DRAFT", "CANDIDATE_CONTACT", contactId, auditLabel(contact.getCandidate()), "人工驳回外发草稿");
-        return ConversationMessageResponse.from(message);
-    }
-
-    @Transactional
     public CandidateContactResponse anonymize(UUID id) {
         SystemUser user = requireManager();
         CandidateJobContact contact = requireAccessibleContact(id, user);
@@ -239,10 +163,6 @@ public class CandidateService {
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "CANDIDATE_CONTACT_NOT_FOUND", "候选人职位关系不存在"));
         requireCompanyAccess(contact.getCandidate().getCompany().getId(), user); return contact;
     }
-    private ConversationMessage requireMessage(UUID contactId, UUID messageId) {
-        return messageRepository.findByIdAndContactId(messageId, contactId)
-                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "MESSAGE_NOT_FOUND", "会话消息不存在"));
-    }
     private JobPosition requireEligibleJob(UUID id, SystemUser user) {
         JobPosition job = jobRepository.findWithDetailsById(id)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "JOB_POSITION_NOT_FOUND", "职位不存在"));
@@ -253,11 +173,6 @@ public class CandidateService {
             throw new ApiException(HttpStatus.BAD_REQUEST, "CANDIDATE_READ_UNAVAILABLE", "职位 BOSS 账号不具备候选人读取能力");
         }
         return job;
-    }
-    private void requireMessageCapability(BossAccount account) {
-        if (account.getStatus() != BossAccountStatus.ACTIVE || !account.getCapabilities().contains(BossCapability.MESSAGE_SEND)) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "MESSAGE_SEND_UNAVAILABLE", "BOSS 账号不具备消息发送能力");
-        }
     }
     private SystemUser requireManager() {
         SystemUser user = currentUserService.requireCurrentUser();

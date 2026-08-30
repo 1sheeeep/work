@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-test('administrator can manage a mock BOSS account and inspect capabilities', async ({ page }, testInfo) => {
+test('administrator can manage a local connector BOSS account', async ({ page }, testInfo) => {
   const adminUsername = process.env.E2E_USERNAME
   const adminPassword = process.env.E2E_PASSWORD
   if (!adminUsername || !adminPassword) throw new Error('E2E credentials are not configured')
@@ -10,7 +10,7 @@ test('administrator can manage a mock BOSS account and inspect capabilities', as
   const companyName = `E2E BOSS 授权企业 ${suffix}`
   const companyCode = `E2E_BOSS_${suffix}`.toUpperCase()
   const accountName = `E2E BOSS 账号 ${suffix}`
-  const externalIdentifier = `mock-boss-${suffix}`
+  const externalIdentifier = `local-boss-${suffix}`
 
   await page.goto('/login?redirect=/organization')
   await page.getByLabel('用户名').fill(adminUsername)
@@ -81,24 +81,7 @@ test('administrator can manage a mock BOSS account and inspect capabilities', as
     await expect(page.getByText('BOSS 账号已启用')).toBeVisible()
   }
 
-  await accountContainer.getByRole('button', { name: '编辑' }).click()
-  let editDialog = page.getByRole('dialog', { name: '编辑 BOSS 账号' })
-  await editDialog.locator('.el-form-item', { hasText: 'Mock 场景' }).locator('.el-select').click()
-  await page.getByRole('option', { name: '完整能力' }).click()
-  await editDialog.getByRole('button', { name: '保存修改' }).click()
-  await expect(page.getByText('BOSS 账号已更新')).toBeVisible()
-  await accountContainer.getByRole('button', { name: '检查能力' }).click()
-  await expect(page.getByText('能力检查完成：连接正常')).toBeVisible()
-  await expect(accountContainer.getByText('消息发送')).toBeVisible()
-
-  await accountContainer.getByRole('button', { name: '编辑' }).click()
-  editDialog = page.getByRole('dialog', { name: '编辑 BOSS 账号' })
-  await editDialog.locator('.el-form-item', { hasText: 'Mock 场景' }).locator('.el-select').click()
-  await page.getByRole('option', { name: '只读能力' }).click()
-  await editDialog.getByRole('button', { name: '保存修改' }).click()
-  await accountContainer.getByRole('button', { name: '检查能力' }).click()
-  await expect(page.getByText('能力检查完成：能力受限')).toBeVisible()
-  await expect(accountContainer.getByText('候选人读取')).toBeVisible()
+  await expect(accountContainer.getByText('本地连接器')).toBeVisible()
 
   const dimensions = await page.evaluate(() => ({ width: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth }))
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.width)

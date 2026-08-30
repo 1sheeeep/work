@@ -74,15 +74,7 @@ test('administrator can create, edit, activate and close job positions', async (
     await accountContainer.getByRole('button', { name: '启用' }).click()
     await expect(page.getByText('BOSS 账号已启用')).toBeVisible()
   }
-  await accountContainer.getByRole('button', { name: '编辑' }).click()
-  const accountDialog = page.getByRole('dialog', { name: '编辑 BOSS 账号' })
-  await accountDialog.locator('.el-form-item', { hasText: 'Mock 场景' }).locator('.el-select').click()
-  await page.getByRole('option', { name: '完整能力' }).click()
-  await accountDialog.getByRole('button', { name: '保存修改' }).click()
-  await expect(page.getByText('BOSS 账号已更新')).toBeVisible()
-  await accountContainer.getByRole('button', { name: '检查能力' }).click()
-  await expect(page.getByText('能力检查完成：连接正常')).toBeVisible()
-  await expect(accountContainer.getByText('职位同步')).toBeVisible()
+  await expect(accountContainer.getByText('本地连接器')).toBeVisible()
 
   await navigate('职位管理')
   await expect(page.getByRole('heading', { name: '职位管理' })).toBeVisible()

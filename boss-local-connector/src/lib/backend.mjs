@@ -1,12 +1,12 @@
 export async function pairConnector(config, account, pairingToken) {
-  return request(config.backendUrl, '/api/browser-runtime/pair', {
+  return request(config.backendUrl, '/api/local-connector/runtime/pair', {
     method: 'POST',
     body: { pairingToken, deviceName: `${config.machineName} · ${account.label}` },
   });
 }
 
 export async function sendHeartbeat(config, account, deviceToken, state, reason) {
-  return request(config.backendUrl, '/api/browser-runtime/heartbeat', {
+  return request(config.backendUrl, '/api/local-connector/runtime/heartbeat', {
     method: 'POST',
     token: deviceToken,
     body: { state, reason },
@@ -14,7 +14,7 @@ export async function sendHeartbeat(config, account, deviceToken, state, reason)
 }
 
 export async function syncUnreadObservations(config, deviceToken, entries) {
-  return request(config.backendUrl, '/api/browser-runtime/unread-observations', {
+  return request(config.backendUrl, '/api/local-connector/runtime/unread-observations', {
     method: 'POST',
     token: deviceToken,
     body: { entries },
@@ -22,7 +22,7 @@ export async function syncUnreadObservations(config, deviceToken, entries) {
 }
 
 export async function verifySelectedConversation(config, deviceToken, snapshot) {
-  return request(config.backendUrl, '/api/browser-runtime/selected-conversation', {
+  return request(config.backendUrl, '/api/local-connector/runtime/selected-conversation', {
     method: 'POST',
     token: deviceToken,
     body: snapshot,

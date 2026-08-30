@@ -8,7 +8,6 @@ import ai.xzkj.recruitment.boss.BossAccount;
 import ai.xzkj.recruitment.boss.BossAccountRepository;
 import ai.xzkj.recruitment.boss.BossCapability;
 import ai.xzkj.recruitment.boss.BossConnectionStatus;
-import ai.xzkj.recruitment.boss.MockBossProfile;
 import ai.xzkj.recruitment.common.ApiException;
 import ai.xzkj.recruitment.organization.Company;
 import ai.xzkj.recruitment.organization.CompanyRepository;
@@ -96,7 +95,7 @@ class JobPositionServiceTest {
 
     @Test
     void rejectsAccountWithoutJobSyncCapability() {
-        BossAccount uncheckedAccount = new BossAccount(allowedCompany, "未检查账号", "unchecked", MockBossProfile.FULL);
+        BossAccount uncheckedAccount = new BossAccount(allowedCompany, "未检查账号", "unchecked");
         SystemUser admin = user(UserRole.RECRUITMENT_ADMIN, allowedCompany);
         when(currentUserService.requireCurrentUser()).thenReturn(admin);
         when(companyRepository.findById(allowedCompany.getId())).thenReturn(Optional.of(allowedCompany));
@@ -167,7 +166,7 @@ class JobPositionServiceTest {
     }
 
     private BossAccount account(Company company, String name) {
-        BossAccount account = new BossAccount(company, name, name + "-id", MockBossProfile.FULL);
+        BossAccount account = new BossAccount(company, name, name + "-id");
         account.applyCapabilityCheck(BossConnectionStatus.CONNECTED, Set.of(BossCapability.JOB_SYNC));
         return account;
     }

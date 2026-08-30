@@ -7,7 +7,6 @@ import ai.xzkj.recruitment.auth.UserRole;
 import ai.xzkj.recruitment.boss.BossAccount;
 import ai.xzkj.recruitment.boss.BossAccountRepository;
 import ai.xzkj.recruitment.boss.BossGateway;
-import ai.xzkj.recruitment.boss.MockBossProfile;
 import ai.xzkj.recruitment.common.ApiException;
 import ai.xzkj.recruitment.organization.Company;
 import ai.xzkj.recruitment.organization.GroupProfile;
@@ -31,7 +30,7 @@ class AutoReplyMonitorOnlyTest {
         CurrentUserService users = mock(CurrentUserService.class);
         GroupProfile group = new GroupProfile("测试集团", "测试");
         Company company = new Company(group, "测试企业", "TEST", null, null);
-        BossAccount account = new BossAccount(company, "测试账号", "test-account", MockBossProfile.FULL);
+        BossAccount account = new BossAccount(company, "测试账号", "test-account");
         SystemUser admin = new SystemUser("admin", "hash", "管理员", UserRole.RECRUITMENT_ADMIN);
         admin.assignCompanyScopes(Set.of(company));
         when(users.requireCurrentUser()).thenReturn(admin);

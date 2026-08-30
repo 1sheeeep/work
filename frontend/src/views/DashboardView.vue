@@ -48,7 +48,7 @@ const statusHint = computed(() => activePolicies.value.length ? '离开托管中
 async function load() {
   loading.value = true
   const results = await Promise.allSettled([
-    api.get<BossAccount[]>('/boss-accounts'), api.get<CandidateContact[]>('/candidate-contacts'), api.get<AutoReplyPolicy[]>('/auto-replies/policies'), api.get<BrowserDevice[]>('/browser-devices'), api.get<AutoReplyAttempt[]>('/auto-replies/attempts'), api.get<Company[]>('/organization/companies'), api.get<JobPosition[]>('/job-positions'),
+    api.get<BossAccount[]>('/boss-accounts'), api.get<CandidateContact[]>('/candidate-contacts'), api.get<AutoReplyPolicy[]>('/auto-replies/policies'), api.get<BrowserDevice[]>('/local-connector/devices'), api.get<AutoReplyAttempt[]>('/auto-replies/attempts'), api.get<Company[]>('/organization/companies'), api.get<JobPosition[]>('/job-positions'),
   ])
   const targets = [accounts, candidates, policies, devices, attempts, companies, jobs]
   results.forEach((result, index) => { if (result.status === 'fulfilled' && result.value?.data) targets[index]!.value = result.value.data as never })

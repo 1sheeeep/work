@@ -1,3 +1,3 @@
 package ai.xzkj.recruitment.candidates;
 
-public enum CandidateSource { BOSS_MOCK, MANUAL, IMPORT }
+public enum CandidateSource { BOSS, MANUAL }

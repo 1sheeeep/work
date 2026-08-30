@@ -9,13 +9,12 @@ export interface HrUser { id: string; username: string; displayName: string; rol
 export type BossAccountStatus = 'ACTIVE' | 'INACTIVE'
 export type BossConnectionStatus = 'UNVERIFIED' | 'CONNECTED' | 'DEGRADED' | 'UNAVAILABLE'
 export type BossCapability = 'JOB_SYNC' | 'CANDIDATE_READ' | 'MESSAGE_SEND' | 'INTERVIEW_INVITE'
-export type MockBossProfile = 'FULL' | 'READ_ONLY' | 'UNAVAILABLE'
-export type BossGatewayType='MOCK'|'LOCAL_CDP_CONNECTOR'
-export interface BossAccount { id: string; company: CompanyScope; displayName: string; externalIdentifier: string; gatewayType: BossGatewayType; mockProfile?: MockBossProfile; status: BossAccountStatus; connectionStatus: BossConnectionStatus; capabilities: BossCapability[]; lastCheckedAt?: string; version: number; createdAt: string; updatedAt: string }
+export type BossGatewayType='LOCAL_CDP_CONNECTOR'
+export interface BossAccount { id: string; company: CompanyScope; displayName: string; externalIdentifier: string; gatewayType: BossGatewayType; status: BossAccountStatus; connectionStatus: BossConnectionStatus; capabilities: BossCapability[]; lastCheckedAt?: string; version: number; createdAt: string; updatedAt: string }
 export type JobPositionStatus = 'DRAFT' | 'ACTIVE' | 'CLOSED'
 export interface JobPositionBossAccount { id: string; displayName: string; externalIdentifier: string; status: BossAccountStatus; connectionStatus: BossConnectionStatus }
 export interface JobPosition { id: string; company: CompanyScope; bossAccount: JobPositionBossAccount; title: string; location: string; salaryMinK: number; salaryMaxK: number; salaryMonths: number; experienceRequirement: string; educationRequirement: string; description: string; screeningRequirements?: string; captureSource: 'MANUAL' | 'VISIBLE_PAGE'; captureCompleteness?: number; capturedAt?: string; captureVerified: boolean; captureVerifiedAt?: string; replySummary?: string; salaryDisplay?: string; knowledgeApproved: boolean; knowledgeVersion: number; knowledgeApprovedAt?: string; safeReplyReady: boolean; safeReplyIssues: string[]; status: JobPositionStatus; version: number; createdAt: string; updatedAt: string }
-export type CandidateSource = 'BOSS_MOCK' | 'MANUAL' | 'IMPORT'
+export type CandidateSource = 'BOSS' | 'MANUAL'
 export type CandidatePrivacyStatus = 'ACTIVE' | 'ANONYMIZED'
 export type CandidateContactStatus = 'NEW' | 'SCREENING' | 'QUALIFIED' | 'REJECTED' | 'CONTACTING'
 export type ScreeningOutcome = 'PASS' | 'REJECT' | 'REVIEW'

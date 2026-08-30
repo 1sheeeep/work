@@ -1,4 +1,4 @@
-package ai.xzkj.recruitment.browsercompanion;
+package ai.xzkj.recruitment.localconnector;
 
 import ai.xzkj.recruitment.auth.SystemUser;
 import ai.xzkj.recruitment.boss.BossAccount;
@@ -13,21 +13,18 @@ import static org.mockito.Mockito.when;
 class BrowserUnreadObservationTest {
     private static final String DIGEST="a".repeat(64);
 
-    @Test void confirmsHrReplyAfterFilledDraftAndResetsForNextInboundCycle(){
+    @Test void confirmsHrReplyAndResetsForNextInboundCycle(){
         BrowserDevice device=mock(BrowserDevice.class);when(device.getBossAccount()).thenReturn(mock(BossAccount.class));
         Instant first=Instant.parse("2026-08-29T12:00:00Z"),now=first.plusSeconds(10);
         BrowserUnreadObservation observation=new BrowserUnreadObservation(device,DIGEST,first,first);
         observation.observe(entry(1,first),first);
         observation.verifyDetail("b".repeat(64),"INBOUND",first,true,first);
         observation.review("APPROVED","已收到您的消息",null,mock(SystemUser.class),first);
-        assertThat(observation.claimFill(device,first)).isTrue();
-        observation.finishFill("FILLED",now);
-
         observation.verifyDetail("c".repeat(64),"OUTBOUND",now,false,now);
         observation.evaluate(now,120,true);
 
         assertThat(observation.isUnread()).isFalse();
-        assertThat(observation.getResolutionStatus()).isEqualTo("HR_SENT_AFTER_DRAFT");
+        assertThat(observation.getResolutionStatus()).isEqualTo("HR_REPLIED");
         assertThat(observation.getResolvedAt()).isEqualTo(now);
         assertThat(observation.getEligibilityStatus()).isEqualTo("HR_HANDLED");
 
@@ -37,7 +34,6 @@ class BrowserUnreadObservationTest {
         assertThat(observation.isUnread()).isTrue();
         assertThat(observation.getResolutionStatus()).isEqualTo("UNRESOLVED");
         assertThat(observation.getReviewStatus()).isEqualTo("PENDING");
-        assertThat(observation.getFillStatus()).isEqualTo("NONE");
         assertThat(observation.getLatestDirection()).isNull();
     }
 

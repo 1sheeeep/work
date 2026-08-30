@@ -1,4 +1,4 @@
-package ai.xzkj.recruitment.browsercompanion;
+package ai.xzkj.recruitment.localconnector;
 
 import ai.xzkj.recruitment.auth.SystemUser;
 import ai.xzkj.recruitment.boss.BossAccount;
@@ -6,7 +6,7 @@ import jakarta.persistence.*;
 import java.time.Instant;
 import java.util.UUID;
 
-@Entity @Table(name="browser_companion_devices")
+@Entity @Table(name="local_connector_devices")
 public class BrowserDevice {
     @Id private UUID id;
     @ManyToOne(fetch=FetchType.LAZY,optional=false) @JoinColumn(name="boss_account_id") private BossAccount bossAccount;

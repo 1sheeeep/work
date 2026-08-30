@@ -49,9 +49,4 @@ public class BossAccountController {
         return service.changeStatus(id, request.status());
     }
 
-    @PostMapping("/{id}/capabilities/check")
-    @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'RECRUITMENT_ADMIN')")
-    public BossAccountResponse checkCapabilities(@PathVariable UUID id) {
-        return service.checkCapabilities(id);
-    }
 }

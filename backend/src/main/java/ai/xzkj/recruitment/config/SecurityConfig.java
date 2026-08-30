@@ -67,13 +67,13 @@ public class SecurityConfig {
         csrfRepository.setCookiePath("/");
 
         http
-                .csrf(csrf -> csrf.ignoringRequestMatchers("/api/browser-runtime/**").csrfTokenRepository(csrfRepository))
+                .csrf(csrf -> csrf.ignoringRequestMatchers("/api/local-connector/runtime/**").csrfTokenRepository(csrfRepository))
                 .securityContext(context -> context
                         .securityContextRepository(securityContextRepository)
                         .requireExplicitSave(true))
                 .authorizeHttpRequests(authorize -> authorize
-                        .requestMatchers(HttpMethod.OPTIONS, "/api/browser-runtime/**").permitAll()
-                        .requestMatchers("/actuator/health/**", "/api/auth/csrf", "/api/auth/login", "/api/browser-runtime/**").permitAll()
+                        .requestMatchers(HttpMethod.OPTIONS, "/api/local-connector/runtime/**").permitAll()
+                        .requestMatchers("/actuator/health/**", "/api/auth/csrf", "/api/auth/login", "/api/local-connector/runtime/**").permitAll()
                         .anyRequest().authenticated())
                 .formLogin(form -> form.disable())
                 .httpBasic(basic -> basic.disable())

@@ -23,15 +23,13 @@ public class BossAccountService {
     private final BossAccountRepository accountRepository;
     private final CompanyRepository companyRepository;
     private final CurrentUserService currentUserService;
-    private final BossGateway gateway;
     private final AuditService auditService;
 
     public BossAccountService(BossAccountRepository accountRepository, CompanyRepository companyRepository,
-                              CurrentUserService currentUserService, BossGateway gateway, AuditService auditService) {
+                              CurrentUserService currentUserService, AuditService auditService) {
         this.accountRepository = accountRepository;
         this.companyRepository = companyRepository;
         this.currentUserService = currentUserService;
-        this.gateway = gateway;
         this.auditService = auditService;
     }
 
@@ -62,11 +60,10 @@ public class BossAccountService {
         Company company = requireActiveAccessibleCompany(request.companyId(), user);
         String externalIdentifier = cleanRequired(request.externalIdentifier());
         ensureUnique(company.getId(), externalIdentifier, null);
-        validateGateway(request);
         BossAccount account = accountRepository.save(new BossAccount(
-                company, cleanRequired(request.displayName()), externalIdentifier, request.gatewayType(),request.mockProfile()));
+                company, cleanRequired(request.displayName()), externalIdentifier));
         auditService.success("CREATE_BOSS_ACCOUNT", "BOSS_ACCOUNT", account.getId(), account.getDisplayName(),
-                "新增 "+(request.gatewayType()==BossGatewayType.MOCK?"Mock":"本地 CDP 连接器")+" BOSS 账号，归属企业 " + company.getCode());
+                "新增本地 CDP 连接器 BOSS 账号，归属企业 " + company.getCode());
         return BossAccountResponse.from(account);
     }
 
@@ -77,8 +74,7 @@ public class BossAccountService {
         Company company = requireActiveAccessibleCompany(request.companyId(), user);
         String externalIdentifier = cleanRequired(request.externalIdentifier());
         ensureUnique(company.getId(), externalIdentifier, id);
-        validateGateway(request);
-        account.update(company, cleanRequired(request.displayName()), externalIdentifier,request.gatewayType(),request.mockProfile());
+        account.update(company, cleanRequired(request.displayName()), externalIdentifier);
         auditService.success("UPDATE_BOSS_ACCOUNT", "BOSS_ACCOUNT", account.getId(), account.getDisplayName(),
                 "更新 BOSS 账号连接方式和归属");
         return BossAccountResponse.from(account);
@@ -96,24 +92,6 @@ public class BossAccountService {
             auditService.success("CHANGE_BOSS_ACCOUNT_STATUS", "BOSS_ACCOUNT", account.getId(), account.getDisplayName(),
                     status == BossAccountStatus.ACTIVE ? "启用 BOSS 账号" : "停用 BOSS 账号");
         }
-        return BossAccountResponse.from(account);
-    }
-
-    @Transactional
-    public BossAccountResponse checkCapabilities(UUID id) {
-        SystemUser user = requireManager();
-        BossAccount account = requireAccessibleAccount(id, user);
-        if(account.getGatewayType()==BossGatewayType.LOCAL_CDP_CONNECTOR)throw new ApiException(HttpStatus.BAD_REQUEST,"LOCAL_CONNECTOR_CHECK_REQUIRED","本地连接器账号能力由连接器心跳和页面状态自动确认");
-        if (account.getStatus() != BossAccountStatus.ACTIVE) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "BOSS_ACCOUNT_INACTIVE", "请先启用 BOSS 账号再检查能力");
-        }
-        if (account.getCompany().getStatus() != CompanyStatus.ACTIVE) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "INACTIVE_COMPANY", "企业已停用，无法检查 BOSS 账号能力");
-        }
-        BossGateway.BossCapabilityCheckResult result = gateway.inspect(account);
-        account.applyCapabilityCheck(result.status(), result.capabilities());
-        auditService.success("CHECK_BOSS_CAPABILITIES", "BOSS_ACCOUNT", account.getId(), account.getDisplayName(),
-                "能力检查结果 " + result.status().name() + "，可用能力 " + result.capabilities().size() + " 项");
         return BossAccountResponse.from(account);
     }
 
@@ -166,5 +144,4 @@ public class BossAccountService {
     }
 
     private String cleanRequired(String value) { return value.trim(); }
-    private void validateGateway(BossAccountUpsertRequest request){if(request.gatewayType()==BossGatewayType.MOCK&&request.mockProfile()==null)throw new ApiException(HttpStatus.BAD_REQUEST,"MOCK_PROFILE_REQUIRED","Mock 账号必须选择测试场景");}
 }

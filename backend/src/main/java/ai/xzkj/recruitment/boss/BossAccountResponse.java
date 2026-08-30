@@ -13,7 +13,6 @@ public record BossAccountResponse(
         String displayName,
         String externalIdentifier,
         BossGatewayType gatewayType,
-        MockBossProfile mockProfile,
         BossAccountStatus status,
         BossConnectionStatus connectionStatus,
         List<BossCapability> capabilities,
@@ -26,7 +25,7 @@ public record BossAccountResponse(
         var company = account.getCompany();
         return new BossAccountResponse(
                 account.getId(), new CompanySummary(company.getId(), company.getName(), company.getCode(), company.getStatus()),
-                account.getDisplayName(), account.getExternalIdentifier(), account.getGatewayType(), account.getMockProfile(),
+                account.getDisplayName(), account.getExternalIdentifier(), account.getGatewayType(),
                 account.getStatus(), account.getConnectionStatus(), account.getCapabilities().stream()
                 .sorted(Comparator.comparing(Enum::name)).toList(), account.getLastCheckedAt(), account.getVersion(),
                 account.getCreatedAt(), account.getUpdatedAt());

@@ -1,7 +1,6 @@
 package ai.xzkj.recruitment.jobs;
 
 import ai.xzkj.recruitment.boss.BossAccount;
-import ai.xzkj.recruitment.boss.MockBossProfile;
 import ai.xzkj.recruitment.organization.Company;
 import ai.xzkj.recruitment.organization.GroupProfile;
 import org.junit.jupiter.api.Test;
@@ -60,7 +59,7 @@ class SafeReplyComposerTest {
     private JobPosition job(String title) {
         GroupProfile group = new GroupProfile("新知科技集团", "新知");
         Company company = new Company(group, "新知科技集团", "XINZHI_GROUP", "上海", null);
-        BossAccount account = new BossAccount(company, "BOSS 主招聘账号", "boss-main-01", MockBossProfile.FULL);
+        BossAccount account = new BossAccount(company, "BOSS 主招聘账号", "boss-main-01");
         return new JobPosition(company, account, title, "上海", 20, 35, 13,
                 "3-5 年", "本科", "负责后端系统开发", null);
     }

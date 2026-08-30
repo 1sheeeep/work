@@ -40,10 +40,6 @@ public class BossAccount {
     private BossGatewayType gatewayType;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "mock_profile", length = 20)
-    private MockBossProfile mockProfile;
-
-    @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 16)
     private BossAccountStatus status;
 
@@ -65,35 +61,23 @@ public class BossAccount {
     protected BossAccount() {
     }
 
-    public BossAccount(Company company, String displayName, String externalIdentifier, MockBossProfile mockProfile) {
-        this(company,displayName,externalIdentifier,BossGatewayType.MOCK,mockProfile);
-    }
-
-    public BossAccount(Company company,String displayName,String externalIdentifier,BossGatewayType gatewayType,MockBossProfile mockProfile) {
+    public BossAccount(Company company,String displayName,String externalIdentifier) {
         this.id = UUID.randomUUID();
         this.company = company;
         this.displayName = displayName;
         this.externalIdentifier = externalIdentifier;
-        this.gatewayType = gatewayType;
-        this.mockProfile = gatewayType==BossGatewayType.MOCK?mockProfile:null;
+        this.gatewayType = BossGatewayType.LOCAL_CDP_CONNECTOR;
         this.status = BossAccountStatus.ACTIVE;
         this.connectionStatus = BossConnectionStatus.UNVERIFIED;
         this.createdAt = Instant.now();
         this.updatedAt = this.createdAt;
     }
 
-    public void update(Company company, String displayName, String externalIdentifier, BossGatewayType gatewayType,MockBossProfile mockProfile) {
+    public void update(Company company, String displayName, String externalIdentifier) {
         this.company = company;
         this.displayName = displayName;
         this.externalIdentifier = externalIdentifier;
-        MockBossProfile normalized=gatewayType==BossGatewayType.MOCK?mockProfile:null;
-        if(this.gatewayType!=gatewayType||this.mockProfile!=normalized){
-            this.gatewayType=gatewayType;
-            this.mockProfile=normalized;
-            this.connectionStatus = BossConnectionStatus.UNVERIFIED;
-            this.capabilities.clear();
-            this.lastCheckedAt = null;
-        }
+        this.gatewayType=BossGatewayType.LOCAL_CDP_CONNECTOR;
     }
 
     public void changeStatus(BossAccountStatus status) { this.status = status; }
@@ -113,7 +97,6 @@ public class BossAccount {
     public String getDisplayName() { return displayName; }
     public String getExternalIdentifier() { return externalIdentifier; }
     public BossGatewayType getGatewayType() { return gatewayType; }
-    public MockBossProfile getMockProfile() { return mockProfile; }
     public BossAccountStatus getStatus() { return status; }
     public BossConnectionStatus getConnectionStatus() { return connectionStatus; }
     public Set<BossCapability> getCapabilities() { return Set.copyOf(capabilities); }

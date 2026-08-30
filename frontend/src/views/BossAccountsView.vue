@@ -5,9 +5,9 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Connection, Plus, Refresh } from '@element-plus/icons-vue'
 import { api, apiErrorMessage, apiFieldErrors, ensureCsrf } from '../services/api'
 import { authStore } from '../stores/auth'
-import type { BossAccount, BossAccountStatus, BossGatewayType, BrowserDevice, Company, MockBossProfile } from '../types'
+import type { BossAccount, BossAccountStatus, BrowserDevice, Company } from '../types'
 
-interface AccountFormValue { companyId: string; displayName: string; externalIdentifier: string; gatewayType: BossGatewayType; mockProfile: MockBossProfile }
+interface AccountFormValue { companyId: string; displayName: string; externalIdentifier: string }
 
 const loading = ref(true)
 const loadError = ref('')
@@ -18,7 +18,7 @@ const dialogOpen = ref(false)
 const saving = ref(false)
 const editingAccount = ref<BossAccount | null>(null)
 const formRef = ref<FormInstance>()
-const form = reactive<AccountFormValue>({ companyId: '', displayName: '', externalIdentifier: '', gatewayType: 'LOCAL_CDP_CONNECTOR', mockProfile: 'FULL' })
+const form = reactive<AccountFormValue>({ companyId: '', displayName: '', externalIdentifier: '' })
 const formError = ref('')
 const fieldErrors = reactive<Record<string, string>>({})
 const changingStatusId = ref('')
@@ -56,7 +56,7 @@ async function loadData() {
   loadError.value = ''
   try {
     const [accountResponse, companyResponse, deviceResponse] = await Promise.all([
-      api.get<BossAccount[]>('/boss-accounts'), api.get<Company[]>('/organization/companies'), api.get<BrowserDevice[]>('/browser-devices'),
+      api.get<BossAccount[]>('/boss-accounts'), api.get<Company[]>('/organization/companies'), api.get<BrowserDevice[]>('/local-connector/devices'),
     ])
     accounts.value = accountResponse.data
     companies.value = companyResponse.data
@@ -77,7 +77,7 @@ async function generatePairing() {
   pairingLoading.value = true
   try {
     await ensureCsrf()
-    const { data } = await api.post<{ pairingToken: string; expiresAt: string }>('/browser-devices/pairings', { accountId: selectedAccount.value.id })
+    const { data } = await api.post<{ pairingToken: string; expiresAt: string }>('/local-connector/devices/pairings', { accountId: selectedAccount.value.id })
     pairingToken.value = data.pairingToken
     pairingExpiresAt.value = data.expiresAt
     ElMessage.success('临时接入码已生成，仅用于本机配对')
@@ -90,14 +90,14 @@ async function copyToken() {
 }
 function openCreate() {
   editingAccount.value = null
-  Object.assign(form, { companyId: activeCompanies.value[0]?.id ?? '', displayName: '', externalIdentifier: '', gatewayType: 'LOCAL_CDP_CONNECTOR', mockProfile: 'FULL' })
+  Object.assign(form, { companyId: activeCompanies.value[0]?.id ?? '', displayName: '', externalIdentifier: '' })
   formError.value = ''
   clearFieldErrors()
   dialogOpen.value = true
 }
 function openEdit(account: BossAccount) {
   editingAccount.value = account
-  Object.assign(form, { companyId: account.company.id, displayName: account.displayName, externalIdentifier: account.externalIdentifier, gatewayType: 'LOCAL_CDP_CONNECTOR', mockProfile: 'FULL' })
+  Object.assign(form, { companyId: account.company.id, displayName: account.displayName, externalIdentifier: account.externalIdentifier })
   formError.value = ''
   clearFieldErrors()
   dialogOpen.value = true

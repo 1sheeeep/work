@@ -3,7 +3,6 @@ import { computed, onMounted, reactive, ref } from "vue";
 import type { FormInstance, FormRules } from "element-plus";
 import { ElMessage, ElMessageBox } from "element-plus";
 import {
-  ChatLineRound,
   Plus,
   Refresh,
   Search,
@@ -21,15 +20,13 @@ import type {
   CandidateContactStatus,
   CandidateDetail,
   Company,
-  ConversationMessage,
   JobPosition,
-  MessageSenderType,
   ScreeningOutcome,
 } from "../types";
 
 interface CandidateForm {
   jobPositionId: string;
-  source: "BOSS_MOCK" | "MANUAL";
+  source: "BOSS" | "MANUAL";
   externalCandidateId: string;
   displayName: string;
   currentTitle: string;
@@ -60,7 +57,7 @@ const createOpen = ref(false),
   fieldErrors = reactive<Record<string, string>>({});
 const form = reactive<CandidateForm>({
   jobPositionId: "",
-  source: "BOSS_MOCK",
+  source: "MANUAL",
   externalCandidateId: "",
   displayName: "",
   currentTitle: "",
@@ -71,27 +68,13 @@ const form = reactive<CandidateForm>({
   hardRuleRationale: "满足职位硬性要求",
   aiOutcome: "REVIEW",
   aiRationale: "建议 HR 进一步确认项目经验",
-  modelVersion: "mock-screening-v1",
+  modelVersion: "human-screening-v1",
   promptVersion: "candidate-screening-v1",
 });
 const detailOpen = ref(false),
   detailLoading = ref(false),
   detail = ref<CandidateDetail | null>(null),
   acting = ref(false);
-const inboundOpen = ref(false),
-  inbound = reactive({ externalMessageId: "", content: "" });
-const draftOpen = ref(false),
-  draft = reactive<{
-    senderType: Extract<MessageSenderType, "AI" | "HR">;
-    content: string;
-    modelVersion: string;
-    promptVersion: string;
-  }>({
-    senderType: "AI",
-    content: "您好，我们正在招聘该职位，想进一步了解您的求职意向。",
-    modelVersion: "mock-chat-v1",
-    promptVersion: "outreach-v1",
-  });
 const activeJobs = computed(() =>
   jobs.value.filter((j) => j.status === "ACTIVE"),
 );
@@ -253,7 +236,7 @@ function relativeTime(value: string) {
 function openCreate() {
   Object.assign(form, {
     jobPositionId: activeJobs.value[0]?.id ?? "",
-    source: "BOSS_MOCK",
+    source: "MANUAL",
     externalCandidateId: "",
     displayName: "",
     currentTitle: "",
@@ -264,7 +247,7 @@ function openCreate() {
     hardRuleRationale: "满足职位硬性要求",
     aiOutcome: "REVIEW",
     aiRationale: "建议 HR 进一步确认项目经验",
-    modelVersion: "mock-screening-v1",
+    modelVersion: "human-screening-v1",
     promptVersion: "candidate-screening-v1",
   });
   formError.value = "";
@@ -358,83 +341,6 @@ async function humanDecision(outcome: ScreeningOutcome) {
   } catch (e) {
     if (e !== "cancel" && e !== "close")
       ElMessage.error(apiErrorMessage(e, "人工结论保存失败"));
-  }
-}
-function openInbound() {
-  Object.assign(inbound, {
-    externalMessageId: `mock-in-${Date.now()}`,
-    content: "您好，我对这个职位有兴趣，方便进一步沟通吗？",
-  });
-  inboundOpen.value = true;
-}
-async function saveInbound() {
-  if (!detail.value) return;
-  acting.value = true;
-  try {
-    await ensureCsrf();
-    const { data } = await api.post(
-      `/candidate-contacts/${detail.value.candidate.id}/messages/inbound`,
-      inbound,
-    );
-    ElMessage.success(
-      data.replayed ? "该外部消息已存在" : "候选人消息已幂等写入",
-    );
-    inboundOpen.value = false;
-    await refreshDetail();
-  } catch (e) {
-    ElMessage.error(apiErrorMessage(e, "消息写入失败"));
-  } finally {
-    acting.value = false;
-  }
-}
-function openDraft() {
-  Object.assign(draft, {
-    senderType: detail.value?.candidate.humanTakenOver ? "HR" : "AI",
-    content: "您好，我们正在招聘该职位，想进一步了解您的求职意向。",
-    modelVersion: "mock-chat-v1",
-    promptVersion: "outreach-v1",
-  });
-  draftOpen.value = true;
-}
-async function saveDraft() {
-  if (!detail.value) return;
-  acting.value = true;
-  try {
-    await ensureCsrf();
-    await api.post(
-      `/candidate-contacts/${detail.value.candidate.id}/messages/drafts`,
-      draft,
-    );
-    ElMessage.success("外发草稿已进入人工审核");
-    draftOpen.value = false;
-    await refreshDetail();
-    await loadData();
-  } catch (e) {
-    ElMessage.error(apiErrorMessage(e, "草稿创建失败"));
-  } finally {
-    acting.value = false;
-  }
-}
-async function reviewMessage(
-  message: ConversationMessage,
-  action: "approve" | "reject",
-) {
-  if (!detail.value) return;
-  acting.value = true;
-  try {
-    await ensureCsrf();
-    const { data } = await api.post(
-      `/candidate-contacts/${detail.value.candidate.id}/messages/${message.id}/${action}`,
-    );
-    ElMessage.success(
-      data.deliveryStatus === "SENT" ? "Mock 消息已审核并发送" : "草稿已驳回",
-    );
-    await refreshDetail();
-    await loadData();
-  } catch (e) {
-    ElMessage.error(apiErrorMessage(e, "消息审核失败"));
-  } finally {
-    acting.value = false;
   }
 }
 async function anonymize() {
@@ -551,7 +457,7 @@ onMounted(loadData);
         <div v-if="!candidates.length" class="empty-state">
           <el-icon><UserFilled /></el-icon
           ><strong>还没有符合条件的候选人</strong
-          ><span>可通过 Mock 来源或人工录入建立首个候选人职位关系。</span
+          ><span>可通过本地连接器识别或由 HR 人工登记首个候选人职位关系。</span
           ><el-button type="primary" @click="openCreate">新增候选人</el-button>
         </div>
         <template v-else>
@@ -804,9 +710,7 @@ onMounted(loadData);
                 :value="job.id" /></el-select></el-form-item
           ><el-form-item label="候选人来源"
             ><el-select v-model="form.source"
-              ><el-option label="BOSS Mock" value="BOSS_MOCK" /><el-option
-                label="人工录入"
-                value="MANUAL" /></el-select></el-form-item
+              ><el-option label="人工录入" value="MANUAL" /></el-select></el-form-item
           ><el-form-item label="来源候选人 ID" prop="externalCandidateId"
             ><el-input
               v-model="form.externalCandidateId"
@@ -936,15 +840,13 @@ onMounted(loadData);
                 </footer>
               </article>
             </div></el-tab-pane
-          ><el-tab-pane label="会话与审核"
-            ><div class="conversation-actions">
-              <el-button :icon="ChatLineRound" @click="openInbound"
-                >写入 Mock 来信</el-button
-              ><el-button type="primary" @click="openDraft"
-                >新增外发草稿</el-button
-              >
-            </div>
-            <el-empty
+          ><el-tab-pane label="会话记录"
+            ><el-alert
+              class="conversation-source-note"
+              type="info"
+              :closable="false"
+              title="会话记录来自本地连接器，当前页面不提供手工补录或发送入口。"
+            /><el-empty
               v-if="!detail.messages.length"
               description="暂无会话消息"
             />
@@ -974,23 +876,6 @@ onMounted(loadData);
                   >
                 </header>
                 <p>{{ message.content }}</p>
-                <div
-                  v-if="message.deliveryStatus === 'PENDING_REVIEW'"
-                  class="message-review"
-                >
-                  <el-button
-                    type="success"
-                    size="small"
-                    @click="reviewMessage(message, 'approve')"
-                    >审核并发送</el-button
-                  ><el-button
-                    type="danger"
-                    plain
-                    size="small"
-                    @click="reviewMessage(message, 'reject')"
-                    >驳回</el-button
-                  >
-                </div>
                 <footer>
                   {{ formatDate(message.createdAt)
                   }}<span v-if="message.modelVersion"
@@ -1005,56 +890,6 @@ onMounted(loadData);
       ></el-drawer
     >
 
-    <el-dialog v-model="inboundOpen" title="写入 Mock 候选人来信" width="560px"
-      ><el-form label-position="top"
-        ><el-form-item label="外部消息 ID"
-          ><el-input v-model="inbound.externalMessageId" /></el-form-item
-        ><el-form-item label="消息内容"
-          ><el-input
-            v-model="inbound.content"
-            type="textarea"
-            :rows="4" /></el-form-item></el-form
-      ><template #footer
-        ><el-button @click="inboundOpen = false">取消</el-button
-        ><el-button type="primary" :loading="acting" @click="saveInbound"
-          >幂等写入</el-button
-        ></template
-      ></el-dialog
-    >
-    <el-dialog v-model="draftOpen" title="新增外发草稿" width="560px"
-      ><el-alert
-        title="草稿不会自动发送，必须由 HR 审核。"
-        type="warning"
-        :closable="false"
-      /><el-form label-position="top"
-        ><el-form-item label="草稿来源"
-          ><el-select v-model="draft.senderType"
-            ><el-option
-              label="AI 草稿"
-              value="AI"
-              :disabled="detail?.candidate.humanTakenOver" /><el-option
-              label="HR 草稿"
-              value="HR" /></el-select></el-form-item
-        ><el-form-item label="草稿内容"
-          ><el-input
-            v-model="draft.content"
-            type="textarea"
-            :rows="5" /></el-form-item
-        ><template v-if="draft.senderType === 'AI'"
-          ><el-form-item label="模型版本"
-            ><el-input v-model="draft.modelVersion" /></el-form-item
-          ><el-form-item label="提示版本"
-            ><el-input
-              v-model="
-                draft.promptVersion
-              " /></el-form-item></template></el-form
-      ><template #footer
-        ><el-button @click="draftOpen = false">取消</el-button
-        ><el-button type="primary" :loading="acting" @click="saveDraft"
-          >提交人工审核</el-button
-        ></template
-      ></el-dialog
-    >
   </div>
 </template>
 
@@ -1070,6 +905,9 @@ onMounted(loadData);
   border-radius: 12px;
   background: var(--surface);
   overflow: hidden;
+}
+.conversation-source-note {
+  margin-bottom: 16px;
 }
 .candidate-metrics div {
   padding: 18px 22px;
@@ -1363,8 +1201,7 @@ onMounted(loadData);
   align-items: flex-start;
   gap: 8px;
 }
-.decision-actions,
-.conversation-actions {
+.decision-actions {
   display: flex;
   gap: 8px;
   margin-bottom: 16px;
@@ -1402,11 +1239,6 @@ onMounted(loadData);
 }
 .message-list article.inbound {
   margin-right: 32px;
-}
-.message-review {
-  display: flex;
-  gap: 8px;
-  margin: 10px 0;
 }
 .message-list footer span {
   float: right;
@@ -1491,14 +1323,12 @@ onMounted(loadData);
     display: grid;
   }
   .profile-actions,
-  .decision-actions,
-  .conversation-actions {
+  .decision-actions {
     display: grid;
     grid-template-columns: 1fr;
   }
   .profile-actions .el-button,
-  .decision-actions .el-button,
-  .conversation-actions .el-button {
+  .decision-actions .el-button {
     margin: 0;
   }
   .message-list article.outbound,
