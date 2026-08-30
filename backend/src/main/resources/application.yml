@@ -90,3 +90,9 @@ app:
       port: ${APP_RESUME_MALWARE_SCAN_PORT:3310}
       connect-timeout: ${APP_RESUME_MALWARE_SCAN_CONNECT_TIMEOUT:3s}
       read-timeout: ${APP_RESUME_MALWARE_SCAN_READ_TIMEOUT:12s}
+    ocr:
+      enabled: ${APP_RESUME_OCR_ENABLED:false}
+      host: ${APP_RESUME_OCR_HOST:resume-ocr}
+      port: ${APP_RESUME_OCR_PORT:8090}
+      connect-timeout: ${APP_RESUME_OCR_CONNECT_TIMEOUT:3s}
+      timeout: ${APP_RESUME_OCR_TIMEOUT:30s}

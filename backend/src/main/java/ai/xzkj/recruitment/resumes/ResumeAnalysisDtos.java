@@ -17,6 +17,14 @@ record ResumeAnalysisRequest(
         @AssertTrue(message = "请确认已获授权将该简历内容发送给 OpenAI 分析") boolean externalProcessingConfirmed
 ) {}
 
+record ResumeDocumentPreviewResponse(
+        String documentType,
+        String extractedText,
+        String documentHashPrefix,
+        boolean malwareScanned,
+        String reviewMessage
+) {}
+
 record ResumeAnalysisFeedbackRequest(
         @NotNull ResumeAnalysisFeedbackType feedbackType,
         @NotBlank @Size(max = 1000) String note

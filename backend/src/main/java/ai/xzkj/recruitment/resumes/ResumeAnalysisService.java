@@ -28,11 +28,12 @@ public class ResumeAnalysisService {
     private final OpenAiProperties properties;
     private final ResumeDocumentTextExtractor documents;
     private final ResumeMalwareScanner malwareScanner;
+    private final ResumeImageOcrClient imageOcr;
     private final ObjectMapper mapper;
     private final AuditService audit;
 
     public ResumeAnalysisService(ResumeIntakeRepository intakes, AiAssistanceRunRepository runs, ResumeAnalysisFeedbackRepository feedback,
-                                 CurrentUserService users, OpenAiResumeClient client, OpenAiProperties properties, ResumeDocumentTextExtractor documents, ResumeMalwareScanner malwareScanner,
+                                 CurrentUserService users, OpenAiResumeClient client, OpenAiProperties properties, ResumeDocumentTextExtractor documents, ResumeMalwareScanner malwareScanner, ResumeImageOcrClient imageOcr,
                                  ObjectMapper mapper, AuditService audit) {
         this.intakes = intakes;
         this.runs = runs;
@@ -42,6 +43,7 @@ public class ResumeAnalysisService {
         this.properties = properties;
         this.documents = documents;
         this.malwareScanner = malwareScanner;
+        this.imageOcr = imageOcr;
         this.mapper = mapper;
         this.audit = audit;
     }
@@ -54,23 +56,38 @@ public class ResumeAnalysisService {
     }
 
     @Transactional(noRollbackFor = ApiException.class)
-    public ResumeAnalysisResponse analyzeFile(UUID intakeId, MultipartFile file, boolean externalProcessingConfirmed) {
-        if (!externalProcessingConfirmed) throw new ApiException(HttpStatus.BAD_REQUEST, "EXTERNAL_PROCESSING_CONFIRMATION_REQUIRED", "请确认可将提取的简历文本发送给 OpenAI 分析");
+    public ResumeDocumentPreviewResponse previewFile(UUID intakeId, MultipartFile file) {
         SystemUser user = users.requireCurrentUser();
         ResumeIntake intake = requireApprovedIntake(intakeId, user);
-        ResumeDocumentTextExtractor.ExtractedResumeDocument document;
+        String text;
+        String type;
+        String documentHashPrefix;
         ResumeMalwareScanner.ScanResult scan;
         try {
             byte[] content = documents.readBytes(file);
             scan = malwareScanner.scan(content);
-            document = documents.extract(content);
+            if (imageOcr.supports(content)) {
+                if (!scan.scanned()) {
+                    throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "RESUME_IMAGE_MALWARE_SCAN_REQUIRED", "扫描件 OCR 必须先启用并通过病毒扫描，文件未被提取或发送");
+                }
+                text = imageOcr.extract(content).text();
+                type = "IMAGE_OCR";
+            } else {
+                ResumeDocumentTextExtractor.ExtractedResumeDocument document = documents.extract(content);
+                text = document.text();
+                type = document.type();
+            }
+            documentHashPrefix = hashBytes(content).substring(0, 12);
         } catch (ApiException exception) {
             audit.failure("REJECT_RESUME_DOCUMENT", "RESUME_INTAKE", intake.getId(), intake.getDisplayLabel(),
                     "本机临时简历文件处理被拒绝，原因代码：" + exception.getCode() + "；原文件未写入业务数据库或持久卷");
             throw exception;
         }
-        String scanSource = scan.scanned() ? "已通过病毒扫描；" : "病毒扫描门禁未启用；";
-        return analyzeText(intake, user, document.text(), scanSource + "本机临时提取的 " + document.type() + " 简历文本（文件摘要 " + document.documentHash().substring(0, 12) + "）");
+        String scanText = scan.scanned() ? "已通过病毒扫描" : "病毒扫描门禁未启用";
+        audit.success("EXTRACT_RESUME_DOCUMENT", "RESUME_INTAKE", intake.getId(), intake.getDisplayLabel(),
+                "HR 请求本机临时提取 " + type + " 简历文本（文件摘要 " + documentHashPrefix + "，" + scanText + "）；仅返回当前浏览器人工校验，未发送外部服务");
+        String review = "已在本机临时提取 " + type + " 文本（" + scanText + "）。请逐项核对、修正后，再单独确认是否发送给 OpenAI。";
+        return new ResumeDocumentPreviewResponse(type, text, documentHashPrefix, scan.scanned(), review);
     }
 
     private ResumeAnalysisResponse analyzeText(ResumeIntake intake, SystemUser user, String resumeText, String source) {
@@ -166,6 +183,14 @@ public class ResumeAnalysisService {
     private String hash(String value) {
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception exception) {
+            throw new IllegalStateException("SHA-256 unavailable", exception);
+        }
+    }
+
+    private String hashBytes(byte[] value) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value));
         } catch (Exception exception) {
             throw new IllegalStateException("SHA-256 unavailable", exception);
         }
