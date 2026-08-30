@@ -47,6 +47,8 @@ public class JobPosition {
     @Column(name = "capture_source", nullable = false, length = 32) private String captureSource;
     @Column(name = "capture_completeness") private Short captureCompleteness;
     @Column(name = "captured_at") private Instant capturedAt;
+    @Column(name = "capture_verified", nullable = false) private boolean captureVerified;
+    @Column(name = "capture_verified_at") private Instant captureVerifiedAt;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 16)
@@ -96,6 +98,10 @@ public class JobPosition {
         this.educationRequirement = educationRequirement;
         this.description = description;
         this.screeningRequirements = screeningRequirements;
+        if ("VISIBLE_PAGE".equals(captureSource)) {
+            this.captureVerified = false;
+            this.captureVerifiedAt = null;
+        }
     }
 
     public void changeStatus(JobPositionStatus status) { this.status = status; }
@@ -112,6 +118,13 @@ public class JobPosition {
         this.captureSource = "VISIBLE_PAGE";
         this.captureCompleteness = (short) completeness;
         this.capturedAt = Instant.now();
+        this.captureVerified = false;
+        this.captureVerifiedAt = null;
+    }
+
+    public void verifyVisiblePageCapture() {
+        this.captureVerified = true;
+        this.captureVerifiedAt = Instant.now();
     }
 
     @PreUpdate
@@ -137,6 +150,8 @@ public class JobPosition {
     public String getCaptureSource() { return captureSource; }
     public Short getCaptureCompleteness() { return captureCompleteness; }
     public Instant getCapturedAt() { return capturedAt; }
+    public boolean isCaptureVerified() { return captureVerified; }
+    public Instant getCaptureVerifiedAt() { return captureVerifiedAt; }
     public JobPositionStatus getStatus() { return status; }
     public long getVersion() { return version; }
     public Instant getCreatedAt() { return createdAt; }

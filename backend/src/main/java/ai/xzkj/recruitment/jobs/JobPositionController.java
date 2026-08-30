@@ -56,6 +56,12 @@ public class JobPositionController {
         return service.updateKnowledge(id, request);
     }
 
+    @PatchMapping("/{id}/capture-verification")
+    @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'RECRUITMENT_ADMIN')")
+    public JobPositionResponse verifyVisiblePageCapture(@PathVariable UUID id) {
+        return service.verifyVisiblePageCapture(id);
+    }
+
     @GetMapping("/{id}/reply-preview")
     public ReplyPreviewResponse previewReply(@PathVariable UUID id) {
         return service.previewReply(id);

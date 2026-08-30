@@ -128,6 +128,21 @@ public class JobPositionService {
         return JobPositionResponse.from(job);
     }
 
+    @Transactional
+    public JobPositionResponse verifyVisiblePageCapture(UUID id) {
+        SystemUser user = requireManager();
+        JobPosition job = requireAccessibleJob(id, user);
+        if (!"VISIBLE_PAGE".equals(job.getCaptureSource())) {
+            throw new ApiException(HttpStatus.CONFLICT, "JOB_CAPTURE_NOT_VISIBLE_PAGE", "该职位不是从页面采集，无需执行页面核对");
+        }
+        if (!job.isCaptureVerified()) {
+            job.verifyVisiblePageCapture();
+            auditService.success("VERIFY_JOB_CAPTURE", "JOB_POSITION", job.getId(), job.getTitle(),
+                    "HR 已人工核对页面采集的岗位资料；页面 URL 和 Cookie 均未记录");
+        }
+        return JobPositionResponse.from(job);
+    }
+
     @Transactional(readOnly = true)
     public ReplyPreviewResponse previewReply(UUID id) {
         SystemUser user = currentUserService.requireCurrentUser();
