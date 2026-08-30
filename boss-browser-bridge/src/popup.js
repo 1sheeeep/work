@@ -12,7 +12,13 @@ elements.pairForm.addEventListener('submit', async (event) => {
 });
 elements.enabled.addEventListener('change', () => void act({ type: 'BRIDGE_SET_ENABLED', enabled: elements.enabled.checked }));
 elements.collect.addEventListener('click', () => void busy(elements.collect, async () => { const result = await send({ type: 'BRIDGE_COLLECT_NOW' }); if (!result.ok) throw new Error(result.error); render(result.status); }));
-elements.collectJobs.addEventListener('click', () => void busy(elements.collectJobs, async () => { const result = await send({ type: 'BRIDGE_COLLECT_JOBS_NOW' }); if (!result.ok) throw new Error(result.error); render(result.status); show(result.status.jobState); }));
+elements.collectJobs.addEventListener('click', () => void busy(elements.collectJobs, async () => {
+  show('正在读取当前职位页并进行稳定性校验，请稍候…');
+  const result = await send({ type: 'BRIDGE_COLLECT_JOBS_NOW' });
+  if (!result.ok) throw new Error(result.error);
+  render(result.status);
+  show(result.status.jobState);
+}, '同步中…'));
 elements.forget.addEventListener('click', () => void busy(elements.forget, async () => { const result = await send({ type: 'BRIDGE_FORGET_DEVICE' }); if (!result.ok) throw new Error(result.error); render(result.status); }));
 
 void act({ type: 'BRIDGE_GET_STATUS' });
@@ -22,7 +28,7 @@ async function act(message) {
   catch (error) { show(error.message, true); }
 }
 async function send(message) { return chrome.runtime.sendMessage(message); }
-async function busy(button, operation) { button.disabled = true; try { await operation(); } catch (error) { show(error.message, true); } finally { button.disabled = false; } }
+async function busy(button, operation, busyText = '') { const original = button.textContent; button.disabled = true; if (busyText) button.textContent = busyText; try { await operation(); } catch (error) { show(error.message, true); } finally { button.disabled = false; button.textContent = original; } }
 function render(status) {
   elements.summary.hidden = !status.paired; elements.pairForm.hidden = status.paired;
   elements.accountName.textContent = status.accountName || '-'; elements.totalCount.textContent = status.total; elements.currentUnreadCount.textContent = status.currentUnread; elements.trackedUnreadCount.textContent = status.trackedUnread;

@@ -42,8 +42,7 @@ async function handleMessage(message, sender) {
       await collectFromBestTab();
       return { ok: true, status: await getPublicStatus() };
     case 'BRIDGE_COLLECT_JOBS_NOW':
-      await collectJobsFromBestTab();
-      return { ok: true, status: await getPublicStatus() };
+      return { ok: true, jobSync: await collectJobsFromBestTab(), status: await getPublicStatus() };
     case 'BRIDGE_PAGE_SNAPSHOT':
       if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的快照。');
       return submitSnapshot(message.payload);
@@ -63,18 +62,23 @@ async function handleMessage(message, sender) {
 
 async function collectJobsFromBestTab() {
   const settings = await getSettings();
-  if (!settings.deviceToken || settings.enabled === false) return;
+  if (!settings.deviceToken) throw new Error('请先完成本机账号配对。');
+  if (settings.enabled === false) throw new Error('只读桥接已暂停，请先开启只读观测。');
   const tabs = await chrome.tabs.query({ url: ['https://*.zhipin.com/*'] });
   const tab = tabs.find((item) => item.active && !(item.url || '').includes('/web/chat/')) || tabs.find((item) => looksLikeJobPage(item.url));
   if (!tab?.id) {
-    await setRuntime({ jobState: '请先在当前招聘账号中手动打开“职位管理”页面；扩展不会自动跳转。' });
-    return;
+    const reason = '请先在当前招聘账号中手动打开“职位管理”页面；扩展不会自动跳转。';
+    await setRuntime({ jobState: reason });
+    throw new Error(reason);
   }
   try {
     const response = await chrome.tabs.sendMessage(tab.id, { type: 'BRIDGE_COLLECT_JOBS' });
     if (!response?.ok) throw new Error(response?.error || '职位页面脚本未连接。');
+    return response.sync || { received: 0, created: 0, updated: 0, unchanged: 0 };
   } catch (error) {
-    await setRuntime({ jobState: `职位页暂未采集：${safeError(error)} 请刷新 BOSS 页面后重试。` });
+    const reason = `职位页暂未采集：${safeError(error)} 请刷新 BOSS 页面后重试。`;
+    await setRuntime({ jobState: reason });
+    throw new Error(reason);
   }
 }
 
