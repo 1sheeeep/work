@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const STATE_FILE = 'connector-state.json';
@@ -16,6 +16,17 @@ export async function loadState(dataDirectory) {
   } catch (error) {
     if (error.code === 'ENOENT') return { accounts: {} };
     throw new Error(`无法读取本地连接器状态：${error.message}`);
+  }
+}
+
+export async function inspectStateFileSecurity(dataDirectory) {
+  try {
+    const info=await stat(join(dataDirectory,STATE_FILE));
+    const mode=info.mode&0o777;
+    return { exists:true, mode:mode.toString(8).padStart(3,'0'), secure:process.platform==='win32'||(mode&0o077)===0 };
+  } catch(error) {
+    if(error.code==='ENOENT')return {exists:false,mode:null,secure:false};
+    throw error;
   }
 }
 

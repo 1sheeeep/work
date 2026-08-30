@@ -115,6 +115,15 @@ OCR 只在本机 Docker 网络中调用 Tesseract，不会把图片发送到外�
 - 后台账号 ID；
 - 本地连接器凭据。
 
+正式验收前可运行：
+
+```bash
+cd boss-local-connector
+node src/index.mjs preflight --config connector.config.json
+```
+
+综合自检不会连接页面执行器或开放生产发送；全部通过仅代表工程环境可以进入真实账号只读验收。
+
 账号掉线、登录失效、验证码、风险提示或页面不确定时，只暂停该账号，不影响其他账号。
 
 ### 离线动作演练

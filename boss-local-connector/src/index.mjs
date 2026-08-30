@@ -1,8 +1,9 @@
 import { parseArgs } from 'node:util';
 import { loadConfig, connectorDataDirectory } from './lib/config.mjs';
-import { startAccountChrome } from './lib/chrome.mjs';
+import { cdpStatus, startAccountChrome } from './lib/chrome.mjs';
 import { pairConnector, sendHeartbeat, syncUnreadObservations, verifySelectedConversation } from './lib/backend.mjs';
-import { accountSafety, freezeAccount, loadState, recoverAccountMonitoring, saveDeviceCredentials } from './lib/state.mjs';
+import { accountSafety, freezeAccount, inspectStateFileSecurity, loadState, recoverAccountMonitoring, saveDeviceCredentials } from './lib/state.mjs';
+import { runConnectorPreflight } from './lib/preflight.mjs';
 import { inspectAccountPage } from './lib/page-probe.mjs';
 import { observeUnreadConversations, readSelectedConversation } from './lib/conversation-monitor.mjs';
 
@@ -28,7 +29,7 @@ try {
   const dataDirectory = connectorDataDirectory(values['data-dir']);
   const config = await loadConfig(values.config, dataDirectory);
   const state = await loadState(dataDirectory);
-  const selected = selectAccounts(config.accounts, values.account, ['start', 'status', 'observe'].includes(command));
+  const selected = selectAccounts(config.accounts, values.account, ['start', 'status', 'observe', 'preflight'].includes(command));
 
   if (command === 'login') {
     for (const account of selected) {
@@ -48,6 +49,10 @@ try {
     await printStatus(selected, state);
   } else if (command === 'observe') {
     await Promise.all(selected.map((account) => heartbeatOne(config, state, account, dataDirectory)));
+  } else if (command === 'preflight') {
+    const report=await runConnectorPreflight({...config,accounts:selected},state,{stateFileSecurity:await inspectStateFileSecurity(dataDirectory),cdpProbe:cdpStatus});
+    console.log(JSON.stringify(report,null,2));
+    if(!report.readyForRealPageValidation)process.exitCode=2;
   } else if (command === 'recover') {
     if (selected.length !== 1 || !values['confirm-recovery']) throw new Error('恢复时必须指定一个账号并添加 --confirm-recovery，表示 HR 已人工处理登录或验证问题。');
     const account=selected[0];
@@ -156,6 +161,7 @@ function printHelp() {
   node src/index.mjs start  --config connector.config.json
   node src/index.mjs status --config connector.config.json
   node src/index.mjs observe --config connector.config.json
+  node src/index.mjs preflight --config connector.config.json
   node src/index.mjs recover --config connector.config.json --account <账号 UUID> --confirm-recovery
 
 每个账号必须使用不同的 profileKey 和 cdpPort。连接器只启动可见 Chrome；它只同步会话未读计数和不可逆摘要，不读取或导出 Cookie、候选人姓名、消息正文，也不会处理验证码或发送消息。`);

@@ -33,6 +33,14 @@
    node src/index.mjs observe --config connector.config.json
    ```
 
+进入真实页面验收前运行综合自检：
+
+```bash
+node src/index.mjs preflight --config connector.config.json
+```
+
+自检只输出账号标签、检查项和状态，不显示账号 UUID、设备令牌、Cookie 或页面内容。阻断项包括远程 HTTP、状态文件权限过宽、Profile/端口未隔离、未配对和账号冻结；Chrome 尚未运行属于提示项。即使全部通过也只表示可以开始真实页面验收，`readyForProduction` 始终为 `false`。
+
 账号因验证码、风险页或登录失效被冻结后，关闭或重启连接器不会自动恢复。HR 处理完成并停留在沟通页后，执行：
 
 ```bash
