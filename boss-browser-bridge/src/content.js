@@ -81,15 +81,65 @@
     try {
       const page = classifyJobPage(allowEmbeddedJobList);
       if (!page.ok) { await send({ type: 'BRIDGE_JOB_BLOCKED', payload: page }); return { ok: false, error: page.reason }; }
-      const first = await collectJobSnapshot();
+      const collectCurrentJobPage = isJobDetailPage() ? collectJobDetailSnapshot : collectJobSnapshot;
+      const first = await collectCurrentJobPage();
       if (!first.ok) { await send({ type: 'BRIDGE_JOB_BLOCKED', payload: first }); return { ok: false, error: first.reason }; }
       await delay(900);
-      const second = await collectJobSnapshot();
+      const second = await collectCurrentJobPage();
       if (!second.ok) { await send({ type: 'BRIDGE_JOB_BLOCKED', payload: second }); return { ok: false, error: second.reason }; }
       if (first.signature !== second.signature) return { ok: false, error: '职位列表仍在变化，请等待页面稳定后重试。' };
       const response = await send({ type: 'BRIDGE_JOB_SNAPSHOT', payload: { pageState: 'JOB_MANAGEMENT_READY', entries: second.entries, observedAt: new Date().toISOString() } });
       return response?.ok ? response : { ok: false, error: response?.error || '本地服务未接受职位快照。' };
     } finally { collecting = false; }
+  }
+
+  function isJobDetailPage() {
+    return /\/web\/chat\/job\/(?:edit|detail)(?:[/?#]|$)/i.test(location.pathname)
+      || Boolean(document.querySelector('.job-edit-container.edit-job'));
+  }
+
+  async function collectJobDetailSnapshot() {
+    const root = document.querySelector('.job-edit-container.edit-job');
+    if (!root || !visible(root)) return blocked('JOB_DETAIL_NOT_FOUND', '当前职位详情尚未加载完成。');
+    const rowValue = (label) => {
+      const row = [...root.querySelectorAll('.form-row')].find((item) => compact(item.querySelector('.title')?.textContent).includes(label));
+      if (!row) return '';
+      const control = row.querySelector('input:not([type="hidden"]), textarea');
+      if (control && compact(control.value)) return compact(control.value);
+      return compact(row.querySelector('.ui-select-selected-value, .content')?.textContent);
+    };
+    const title = compact(root.querySelector("input[name='jobName'], .job-name input")?.value) || rowValue('职位名称');
+    if (!title || title.length < 2) return blocked('JOB_TITLE_MISSING', '职位详情没有可识别的职位名称。');
+    const descriptionNode = root.querySelector('.performance-row textarea, textarea');
+    const description = cleanMultiline(descriptionNode?.value).slice(0, 10000);
+    const recruitmentType = compact(root.querySelector('.recruitment-type-wrap .ui-select-selected-value')?.textContent) || rowValue('招聘类型');
+    const jobCategory = compact(root.querySelector("input[name='jobCategory']")?.value)
+      || compact(root.querySelector('.job-category-tag-container')?.innerText) || rowValue('职位类型');
+    const overseasRequirement = compact(root.querySelector('.overseas-entry-container .chose-item.active')?.textContent) || rowValue('是否驻外');
+    const experienceRequirement = compact(root.querySelector('.job-experience-row .ui-select-selected-value')?.textContent) || rowValue('经验');
+    const educationRequirement = rowValue('学历');
+    const salaryValues = [...root.querySelectorAll('.scope-selecter .scope-select .ui-select-selected-value')].map((node) => compact(node.textContent)).filter(Boolean);
+    const salaryDisplay = salaryValues.length >= 2 ? `${salaryValues[0]}-${salaryValues[1]}` : (rowValue('薪资详情') || salaryValues.join('-'));
+    const salary = parseSalary(salaryDisplay);
+    const salaryMonthsText = compact(root.querySelector('.salaryMonth-select .ui-select-selected-value')?.textContent) || rowValue('薪数');
+    const salaryMonthsMatch = salaryMonthsText.match(/(?:^|\D)(1[2-6])(?:\D|$)/);
+    const salaryMonths = salaryMonthsMatch ? Number(salaryMonthsMatch[1]) : null;
+    const jobKeywords = [...root.querySelectorAll('.job-skill-content .job-skill-item, .job-skill-content .skill-tag, .job-skill-content .tag')]
+      .map((node) => compact(node.textContent)).filter(Boolean).filter((value, index, list) => list.indexOf(value) === index).join('｜').slice(0, 500);
+    const workAddress = compact(root.querySelector('.job-address input.ipt, .job-address input')?.value) || rowValue('工作地址') || rowValue('工作地点');
+    const sourceDigest = await digest(`detail:${location.pathname}:${new URLSearchParams(location.search).get('encryptId') || title}`);
+    const values = [title, recruitmentType, description, jobCategory, overseasRequirement, experienceRequirement,
+      educationRequirement, salaryDisplay, salaryMonths, jobKeywords, workAddress];
+    const entry = {
+      sourceDigest, title, location: null, salaryDisplay: salaryDisplay || null,
+      salaryMinK: salary.min, salaryMaxK: salary.max, salaryMonths,
+      experienceRequirement: experienceRequirement || null, educationRequirement: educationRequirement || null,
+      description: description || null, recruitmentType: recruitmentType || null, jobCategory: jobCategory || null,
+      overseasRequirement: overseasRequirement || null, jobKeywords: jobKeywords || null, workAddress: workAddress || null,
+      completeness: values.filter(Boolean).length,
+    };
+    const signature = Object.values(entry).map((value) => value ?? '').join('|');
+    return { ok: true, entries: [entry], signature };
   }
 
   function classifyPage() {
@@ -236,6 +286,7 @@
   }
 
   function compact(value) { return String(value || '').replace(/\s+/g, ' ').trim(); }
+  function cleanMultiline(value) { return String(value || '').replace(/\r\n?/g, '\n').replace(/[ \t]+\n/g, '\n').trim(); }
   function matchText(value, pattern) { return compact(value.match(pattern)?.[0]); }
   function parseSalary(value) {
     const match = String(value || '').match(/(\d{1,3}(?:\.\d+)?)\s*[-–~至]\s*(\d{1,3}(?:\.\d+)?)\s*[Kk]/);

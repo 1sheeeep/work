@@ -74,7 +74,7 @@ describe('JobPositionsView', () => {
     const wrapper = mount(JobPositionsView)
     await flushPromises()
 
-    expect(wrapper.text()).toContain('BOSS 职位页已同步 · 公开字段 5/6')
+    expect(wrapper.text()).toContain('BOSS 职位页已同步 · 5 个公开字段')
     expect(wrapper.text()).not.toContain('在未读列表出现 129 次')
     wrapper.unmount()
   })

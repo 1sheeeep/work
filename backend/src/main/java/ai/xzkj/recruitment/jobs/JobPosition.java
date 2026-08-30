@@ -37,6 +37,11 @@ public class JobPosition {
     @Column(name = "salary_months", nullable = false) private short salaryMonths;
     @Column(name = "experience_requirement", nullable = false, length = 80) private String experienceRequirement;
     @Column(name = "education_requirement", nullable = false, length = 80) private String educationRequirement;
+    @Column(name = "recruitment_type", length = 40) private String recruitmentType;
+    @Column(name = "job_category", length = 120) private String jobCategory;
+    @Column(name = "overseas_requirement", length = 40) private String overseasRequirement;
+    @Column(name = "job_keywords", length = 500) private String jobKeywords;
+    @Column(name = "work_address", length = 240) private String workAddress;
     @Column(nullable = false, columnDefinition = "TEXT") private String description;
     @Column(name = "screening_requirements", columnDefinition = "TEXT") private String screeningRequirements;
     @Column(name = "reply_summary", columnDefinition = "TEXT") private String replySummary;
@@ -129,7 +134,10 @@ public class JobPosition {
                                                Integer observedSalaryMinK, Integer observedSalaryMaxK,
                                                Integer observedSalaryMonths, String observedExperience,
                                                String observedEducation, String observedDescription,
-                                               String observedSalaryDisplay, int completeness, Instant observedAt) {
+                                               String observedSalaryDisplay, String observedRecruitmentType,
+                                               String observedJobCategory, String observedOverseasRequirement,
+                                               String observedJobKeywords, String observedWorkAddress,
+                                               int completeness, Instant observedAt) {
         this.lastObservedAt = observedAt;
         this.observationCount++;
         if (this.observedSourceKey == null) this.observedSourceKey = sourceKey;
@@ -142,6 +150,11 @@ public class JobPosition {
         changed |= assignText("experience", observedExperience);
         changed |= assignText("education", observedEducation);
         changed |= assignText("description", observedDescription);
+        changed |= assignDetail("recruitmentType", observedRecruitmentType);
+        changed |= assignDetail("jobCategory", observedJobCategory);
+        changed |= assignDetail("overseasRequirement", observedOverseasRequirement);
+        changed |= assignDetail("jobKeywords", observedJobKeywords);
+        changed |= assignDetail("workAddress", observedWorkAddress);
         if (observedSalaryMinK != null && observedSalaryMaxK != null && observedSalaryMaxK >= observedSalaryMinK) {
             if (salaryMinK != observedSalaryMinK || salaryMaxK != observedSalaryMaxK) changed = true;
             salaryMinK = observedSalaryMinK;
@@ -182,6 +195,18 @@ public class JobPosition {
 
     private String cleanObserved(String value) { return value == null || value.isBlank() ? null : value.trim(); }
 
+    private boolean assignDetail(String field, String value) {
+        String clean = cleanObserved(value);
+        if (clean == null) return false;
+        return switch (field) {
+            case "recruitmentType" -> { boolean changed = !clean.equals(recruitmentType); recruitmentType = clean; yield changed; }
+            case "jobCategory" -> { boolean changed = !clean.equals(jobCategory); jobCategory = clean; yield changed; }
+            case "overseasRequirement" -> { boolean changed = !clean.equals(overseasRequirement); overseasRequirement = clean; yield changed; }
+            case "jobKeywords" -> { boolean changed = !clean.equals(jobKeywords); jobKeywords = clean; yield changed; }
+            default -> { boolean changed = !clean.equals(workAddress); workAddress = clean; yield changed; }
+        };
+    }
+
     public void markUnreadObservation(String sourceKey, boolean importedDraft) {
         if (importedDraft) {
             this.captureSource = "UNREAD_OBSERVATION";
@@ -213,6 +238,11 @@ public class JobPosition {
     public int getSalaryMonths() { return salaryMonths; }
     public String getExperienceRequirement() { return experienceRequirement; }
     public String getEducationRequirement() { return educationRequirement; }
+    public String getRecruitmentType() { return recruitmentType; }
+    public String getJobCategory() { return jobCategory; }
+    public String getOverseasRequirement() { return overseasRequirement; }
+    public String getJobKeywords() { return jobKeywords; }
+    public String getWorkAddress() { return workAddress; }
     public String getDescription() { return description; }
     public String getScreeningRequirements() { return screeningRequirements; }
     public String getReplySummary() { return replySummary; }

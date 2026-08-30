@@ -59,3 +59,14 @@ test('accepts minimized job snapshots and rejects duplicate or raw source identi
   assert.throws(() => validateJobSnapshot({ ...payload, entries: [entry, entry] }), /重复/);
   assert.throws(() => validateJobSnapshot({ ...payload, entries: [{ ...entry, sourceDigest: 'raw-platform-id' }] }), /摘要无效/);
 });
+
+test('accepts unified visible job detail fields', () => {
+  const payload = { pageState: 'JOB_MANAGEMENT_READY', observedAt: '2026-08-30T08:00:00.000Z', entries: [{
+    sourceDigest: 'd'.repeat(64), title: '跨境客服主管', location: null, salaryDisplay: '8-13K',
+    salaryMinK: 8, salaryMaxK: 13, salaryMonths: null, experienceRequirement: '1-3年', educationRequirement: '大专',
+    description: '负责客户咨询与售后问题处理。', recruitmentType: '社会全职', jobCategory: '客服主管',
+    overseasRequirement: '境内岗位', jobKeywords: '客服｜跨境电商', workAddress: '东莞中熙时代大厦22楼', completeness: 10,
+  }] };
+  assert.equal(validateJobSnapshot(payload), payload);
+  assert.match(jobSnapshotSignature(payload), /东莞中熙时代大厦22楼/);
+});
