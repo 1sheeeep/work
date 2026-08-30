@@ -49,6 +49,9 @@ public class JobPosition {
     @Column(name = "captured_at") private Instant capturedAt;
     @Column(name = "capture_verified", nullable = false) private boolean captureVerified;
     @Column(name = "capture_verified_at") private Instant captureVerifiedAt;
+    @Column(name = "observed_source_key", length = 64) private String observedSourceKey;
+    @Column(name = "last_observed_at") private Instant lastObservedAt;
+    @Column(name = "observation_count", nullable = false) private int observationCount;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 16)
@@ -98,7 +101,7 @@ public class JobPosition {
         this.educationRequirement = educationRequirement;
         this.description = description;
         this.screeningRequirements = screeningRequirements;
-        if ("VISIBLE_PAGE".equals(captureSource)) {
+        if (!"MANUAL".equals(captureSource)) {
             this.captureVerified = false;
             this.captureVerifiedAt = null;
         }
@@ -120,6 +123,19 @@ public class JobPosition {
         this.capturedAt = Instant.now();
         this.captureVerified = false;
         this.captureVerifiedAt = null;
+    }
+
+    public void markUnreadObservation(String sourceKey, boolean importedDraft) {
+        if (importedDraft) {
+            this.captureSource = "UNREAD_OBSERVATION";
+            this.captureCompleteness = 1;
+            this.capturedAt = Instant.now();
+            this.captureVerified = false;
+            this.captureVerifiedAt = null;
+        }
+        if (importedDraft && this.observedSourceKey == null) this.observedSourceKey = sourceKey;
+        this.lastObservedAt = Instant.now();
+        this.observationCount++;
     }
 
     public void verifyVisiblePageCapture() {
@@ -152,6 +168,8 @@ public class JobPosition {
     public Instant getCapturedAt() { return capturedAt; }
     public boolean isCaptureVerified() { return captureVerified; }
     public Instant getCaptureVerifiedAt() { return captureVerifiedAt; }
+    public Instant getLastObservedAt() { return lastObservedAt; }
+    public int getObservationCount() { return observationCount; }
     public JobPositionStatus getStatus() { return status; }
     public long getVersion() { return version; }
     public Instant getCreatedAt() { return createdAt; }

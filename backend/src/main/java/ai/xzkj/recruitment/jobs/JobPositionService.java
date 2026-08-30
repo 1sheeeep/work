@@ -105,6 +105,9 @@ public class JobPositionService {
         if (targetStatus == JobPositionStatus.ACTIVE) {
             Company company = requireActiveAccessibleCompany(job.getCompany().getId(), user);
             requireEligibleBossAccount(job.getBossAccount().getId(), company, user);
+            if ("UNREAD_OBSERVATION".equals(job.getCaptureSource()) && !job.isCaptureVerified()) {
+                throw new ApiException(HttpStatus.CONFLICT, "OBSERVED_JOB_NOT_VERIFIED", "请先补全并核对未读观察导入的岗位资料");
+            }
         }
         JobPositionStatus previous = job.getStatus();
         job.changeStatus(targetStatus);
@@ -132,7 +135,7 @@ public class JobPositionService {
     public JobPositionResponse verifyVisiblePageCapture(UUID id) {
         SystemUser user = requireManager();
         JobPosition job = requireAccessibleJob(id, user);
-        if (!"VISIBLE_PAGE".equals(job.getCaptureSource())) {
+        if ("MANUAL".equals(job.getCaptureSource())) {
             throw new ApiException(HttpStatus.CONFLICT, "JOB_CAPTURE_NOT_VISIBLE_PAGE", "该职位不是从页面采集，无需执行页面核对");
         }
         if (!job.isCaptureVerified()) {

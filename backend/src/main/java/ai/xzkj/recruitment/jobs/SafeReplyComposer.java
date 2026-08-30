@@ -24,6 +24,7 @@ public final class SafeReplyComposer {
         if (isBlank(company.getKnowledgeIndustry())) missing.add("公司行业");
         if (isBlank(company.getKnowledgeSummary())) missing.add("公司介绍");
         if ("VISIBLE_PAGE".equals(job.getCaptureSource()) && !job.isCaptureVerified()) missing.add("页面采集资料待核对");
+        if ("UNREAD_OBSERVATION".equals(job.getCaptureSource()) && !job.isCaptureVerified()) missing.add("未读观察岗位资料待补全核对");
         if (!job.isKnowledgeApproved()) missing.add("岗位知识未审核");
         if (isBlank(job.getReplySummary())) missing.add("岗位简介");
         if (!missing.isEmpty()) {
