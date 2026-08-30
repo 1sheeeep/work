@@ -19,6 +19,13 @@ export function validateBackendUrl(value) {
   return `${url.protocol}//${url.host}`;
 }
 
+export function isJobManagementUrl(value) {
+  try {
+    const path = new URL(value).pathname.toLowerCase();
+    return /^\/web\/chat\/job\/list\/?$/.test(path) || (/(?:job|position)/.test(path) && !/^\/web\/chat\/(?:index|user-center)\/?$/.test(path));
+  } catch { return false; }
+}
+
 export function validateSnapshot(payload) {
   if (!payload || payload.pageState !== 'CHAT_PAGE_READY') throw new Error('当前不是可观测的沟通页。');
   if (!Array.isArray(payload.entries) || payload.entries.length === 0 || payload.entries.length > MAX_CONVERSATIONS) {

@@ -1,9 +1,10 @@
-import { DEFAULT_BACKEND_URL, jobSnapshotSignature, publicStatus, snapshotSignature, validateBackendUrl, validateJobSnapshot, validateSnapshot } from './bridge-core.mjs';
+import { DEFAULT_BACKEND_URL, isJobManagementUrl, jobSnapshotSignature, publicStatus, snapshotSignature, validateBackendUrl, validateJobSnapshot, validateSnapshot } from './bridge-core.mjs';
 
 const SETTINGS_KEY = 'bridgeSettingsV1';
 const RUNTIME_KEY = 'bridgeRuntimeV1';
 const ALARM_NAME = 'bridge-observe';
 const MIN_SYNC_INTERVAL_MS = 10_000;
+const BOSS_TAB_PATTERNS = ['https://zhipin.com/*', 'https://*.zhipin.com/*'];
 let syncInFlight = null;
 let jobSyncInFlight = null;
 
@@ -64,8 +65,8 @@ async function collectJobsFromBestTab() {
   const settings = await getSettings();
   if (!settings.deviceToken) throw new Error('请先完成本机账号配对。');
   if (settings.enabled === false) throw new Error('只读桥接已暂停，请先开启只读观测。');
-  const tabs = await chrome.tabs.query({ url: ['https://*.zhipin.com/*'] });
-  const tab = tabs.find((item) => item.active && !(item.url || '').includes('/web/chat/')) || tabs.find((item) => looksLikeJobPage(item.url));
+  const tabs = await chrome.tabs.query({ url: BOSS_TAB_PATTERNS });
+  const tab = tabs.find((item) => item.active && isJobManagementUrl(item.url)) || tabs.find((item) => isJobManagementUrl(item.url));
   if (!tab?.id) {
     const reason = '请先在当前招聘账号中手动打开“职位管理”页面；扩展不会自动跳转。';
     await setRuntime({ jobState: reason });
@@ -80,10 +81,6 @@ async function collectJobsFromBestTab() {
     await setRuntime({ jobState: reason });
     throw new Error(reason);
   }
-}
-
-function looksLikeJobPage(value) {
-  try { const path = new URL(value || '').pathname; return /(?:job|position)/i.test(path) && !path.toLowerCase().includes('/web/chat/'); } catch { return false; }
 }
 
 async function pair(payload) {
@@ -137,13 +134,11 @@ async function forgetDevice() {
 async function collectFromBestTab() {
   const settings = await getSettings();
   if (!settings.deviceToken || settings.enabled === false) return;
-  const tabs = await chrome.tabs.query({ url: ['https://*.zhipin.com/*'] });
-  const tab = tabs.find((item) => /\/web\/chat\/(?:index|user-center)(?:[/?#]|$)/i.test(item.url || ''))
-    || tabs.find((item) => item.active)
-    || tabs[0];
+  const tabs = await chrome.tabs.query({ url: BOSS_TAB_PATTERNS });
+  const tab = tabs.find((item) => /\/web\/chat\/(?:index|user-center)(?:[/?#]|$)/i.test(item.url || ''));
   if (!tab?.id) {
-    await sendHeartbeatIfPaired(settings, 'PAUSED', '未找到已打开的 BOSS 页面。');
-    await setRuntime({ state: 'PAUSED', reason: '未找到已打开的 BOSS 页面。' });
+    await sendHeartbeatIfPaired(settings, 'PAUSED', '未找到已打开的 BOSS 沟通页；职位管理页仍可手动同步。');
+    await setRuntime({ state: 'PAUSED', reason: '未找到已打开的 BOSS 沟通页；职位管理页仍可手动同步。' });
     return;
   }
   try {

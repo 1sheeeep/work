@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { jobSnapshotSignature, publicStatus, snapshotSignature, validateBackendUrl, validateJobSnapshot, validateSnapshot } from '../src/bridge-core.mjs';
+import { isJobManagementUrl, jobSnapshotSignature, publicStatus, snapshotSignature, validateBackendUrl, validateJobSnapshot, validateSnapshot } from '../src/bridge-core.mjs';
 
 const digest = 'a'.repeat(64);
 const digest2 = 'b'.repeat(64);
@@ -9,6 +9,13 @@ test('only accepts the local recruitment console URL', () => {
   assert.equal(validateBackendUrl('http://localhost:8088/'), 'http://localhost:8088');
   assert.equal(validateBackendUrl('http://127.0.0.1:8088'), 'http://127.0.0.1:8088');
   assert.throws(() => validateBackendUrl('https://example.com'), /只允许/);
+});
+
+test('recognizes the real BOSS job management route without confusing chat pages', () => {
+  assert.equal(isJobManagementUrl('https://zhipin.com/web/chat/job/list'), true);
+  assert.equal(isJobManagementUrl('https://www.zhipin.com/web/chat/job/list/'), true);
+  assert.equal(isJobManagementUrl('https://zhipin.com/web/chat/index'), false);
+  assert.equal(isJobManagementUrl('https://zhipin.com/web/chat/user-center'), false);
 });
 
 test('accepts a minimized unread snapshot and selected direction', () => {
