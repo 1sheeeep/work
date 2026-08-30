@@ -56,4 +56,26 @@ describe('JobPositionsView', () => {
     expect(wrapper.text()).toContain('先审核企业资料')
     wrapper.unmount()
   })
+
+  it('labels visible-page evidence without presenting sync count as unread occurrences', async () => {
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ data: [{
+        id: 'job-visible', title: 'Node.js 全栈开发工程师', location: '广州', salaryMinK: 20, salaryMaxK: 30,
+        salaryMonths: 13, experienceRequirement: '1-3年', educationRequirement: '本科',
+        description: '由真实 BOSS 职位管理页只读采集，职位描述待 HR 核对补全。', observationCount: 129,
+        captureSource: 'VISIBLE_PAGE', captureCompleteness: 5, captureVerified: false,
+        knowledgeApproved: false, knowledgeVersion: 0, safeReplyReady: false, safeReplyIssues: ['职位描述待补全'], status: 'DRAFT',
+        company: { id: 'company-1', name: '新知科技集团', code: 'XINZHI', status: 'ACTIVE' },
+        bossAccount: { id: 'account-1', displayName: 'BOSS 主招聘账号', externalIdentifier: 'boss-main-01', status: 'ACTIVE', connectionStatus: 'CONNECTED' },
+        reviewReadiness: { importedDraft: true, profileComplete: false, captureReady: false, companyKnowledgeReady: true, jobKnowledgeReady: false, activationReady: false, blockers: ['职位描述待补全'] },
+      }] })
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [] })
+    const wrapper = mount(JobPositionsView)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('BOSS 职位页已同步 · 公开字段 5/6')
+    expect(wrapper.text()).not.toContain('在未读列表出现 129 次')
+    wrapper.unmount()
+  })
 })
