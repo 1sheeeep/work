@@ -1,0 +1,23 @@
+package ai.xzkj.recruitment.localconnector;
+
+import ai.xzkj.recruitment.audit.AuditService;
+import ai.xzkj.recruitment.auth.*;
+import ai.xzkj.recruitment.common.ApiException;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import java.nio.charset.StandardCharsets;
+import java.security.*;
+import java.time.Instant;
+import java.util.*;
+
+@Service
+class LocalConnectorActionLeaseService {
+    private final LocalConnectorService connectors;private final LocalConnectorActionTaskRepository tasks;private final LocalConnectorActionLeaseRepository leases;private final LocalConnectorCapabilityRepository capabilities;private final CurrentUserService users;private final AuditService audit;private final SecureRandom random=new SecureRandom();
+    LocalConnectorActionLeaseService(LocalConnectorService connectors,LocalConnectorActionTaskRepository tasks,LocalConnectorActionLeaseRepository leases,LocalConnectorCapabilityRepository capabilities,CurrentUserService users,AuditService audit){this.connectors=connectors;this.tasks=tasks;this.leases=leases;this.capabilities=capabilities;this.users=users;this.audit=audit;}
+
+    @Transactional ActionLeaseClaimResponse claim(String authorization){BrowserDevice device=connectors.authenticate(authorization);if(!"RUNNING".equals(device.getRuntimeState()))return ActionLeaseClaimResponse.none();LocalConnectorActionTask task=tasks.findFirstByAccountIdAndStatusOrderByCreatedAtAsc(device.getBossAccount().getId(),"READY").orElse(null);if(task==null)return ActionLeaseClaimResponse.none();LocalConnectorCapability capability=capabilities.findByDeviceIdAndCapability(device.getId(),task.getActionType()).orElse(null);if(capability==null||!"PRODUCTION_APPROVED".equals(capability.getStatus()))return ActionLeaseClaimResponse.none();String raw=token();Instant now=Instant.now();LocalConnectorActionLease lease=leases.save(new LocalConnectorActionLease(task,device,hash(raw),now));audit.systemSuccess("CLAIM_CONNECTOR_ACTION_LEASE","LOCAL_CONNECTOR_ACTION_LEASE",lease.getId(),device.getBossAccount().getDisplayName(),task.getActionType()+" 签发 30 秒单次租约；租约不含消息正文或联系方式");String target=task.getObservation()==null?null:task.getObservation().getChatDigest();return new ActionLeaseClaimResponse(true,lease.getId(),task.getId(),task.getActionType(),target,raw,lease.getLeaseUntil(),"CONTRACT_ONLY_NO_EXECUTOR");}
+    @Transactional ActionLeaseResponse receipt(String authorization,ActionLeaseReceiptRequest request){BrowserDevice device=connectors.authenticate(authorization);LocalConnectorActionLease lease=leases.findByLeaseTokenHash(hash(request.leaseToken().trim())).orElseThrow(()->new ApiException(HttpStatus.UNAUTHORIZED,"ACTION_LEASE_INVALID","动作租约无效"));if(!lease.getDevice().getId().equals(device.getId()))throw new ApiException(HttpStatus.FORBIDDEN,"ACTION_LEASE_DEVICE_MISMATCH","动作租约不属于当前设备");try{boolean changed=lease.receipt(request.outcome(),request.receiptDigest(),clean(request.reason(),300),Instant.now());if(changed)audit.systemSuccess("RECEIVE_CONNECTOR_ACTION_RECEIPT","LOCAL_CONNECTOR_ACTION_LEASE",lease.getId(),device.getBossAccount().getDisplayName(),lease.getTask().getActionType()+" · "+lease.getStatus()+"；结果未知时禁止重试");return ActionLeaseResponse.from(lease);}catch(IllegalStateException e){throw new ApiException(HttpStatus.CONFLICT,"ACTION_RECEIPT_CONFLICT",e.getMessage());}}
+    @Transactional(readOnly=true) List<ActionLeaseResponse> list(){SystemUser user=users.requireCurrentUser();return leases.findTop100ByOrderByLeasedAtDesc().stream().filter(x->user.getRole()==UserRole.SYSTEM_ADMIN||user.getCompanyScopes().stream().anyMatch(c->c.getId().equals(x.getTask().getAccount().getCompany().getId()))).map(ActionLeaseResponse::from).toList();}
+    private String token(){byte[] value=new byte[32];random.nextBytes(value);return Base64.getUrlEncoder().withoutPadding().encodeToString(value);}private String hash(String value){try{return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));}catch(Exception e){throw new IllegalStateException(e);}}private String clean(String value,int max){String v=value.trim();return v.length()<=max?v:v.substring(0,max);}
+}

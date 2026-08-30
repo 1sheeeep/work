@@ -37,6 +37,14 @@ export async function reportValidationReadiness(config, deviceToken, readiness) 
   });
 }
 
+export async function claimActionLease(config, deviceToken) {
+  return request(config.backendUrl, '/api/local-connector/runtime/action-leases/claim', { method: 'POST', token: deviceToken });
+}
+
+export async function sendActionReceipt(config, deviceToken, receipt) {
+  return request(config.backendUrl, '/api/local-connector/runtime/action-leases/receipt', { method: 'POST', token: deviceToken, body: receipt });
+}
+
 async function request(backendUrl, path, options) {
   let response;
   try {
