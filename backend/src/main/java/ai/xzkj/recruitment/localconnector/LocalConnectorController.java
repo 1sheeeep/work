@@ -11,4 +11,7 @@ import jakarta.validation.Valid;import org.springframework.http.HttpHeaders;impo
  @PostMapping("/api/local-connector/runtime/selected-conversation")public UnreadObservationResponse selected(@RequestHeader(HttpHeaders.AUTHORIZATION)String token,@Valid@RequestBody SelectedConversationSnapshot r){return service.verifySelectedConversation(token,r);}
  @GetMapping("/api/local-connector/observations")public List<UnreadObservationResponse> observations(){return service.listUnreadObservations();}
  @PutMapping("/api/local-connector/observations/{id}/review")public UnreadObservationResponse review(@PathVariable UUID id,@Valid@RequestBody ObservationReviewRequest r){return service.reviewObservation(id,r);}
+ @GetMapping("/api/local-connector/capabilities")public List<ConnectorCapabilityResponse> capabilities(){return service.listCapabilities();}
+ @GetMapping("/api/local-connector/action-tasks")public List<ConnectorActionTaskResponse> actions(){return service.listActionTasks();}
+ @PostMapping("/api/local-connector/action-tasks")public ConnectorActionTaskResponse createAction(@Valid@RequestBody CreateActionTaskRequest r){return service.createActionTask(r);}
 }
