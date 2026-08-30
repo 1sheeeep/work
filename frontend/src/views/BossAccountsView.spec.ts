@@ -48,8 +48,8 @@ describe('BossAccountsView', () => {
     await wrapper.findAll('button').find((button) => button.text().includes('开始连接'))?.trigger('click')
     await flushPromises()
 
-    expect(document.body.textContent).toContain('安装浏览器助手')
-    expect(document.body.textContent).toContain('复制连接码')
+    expect(document.body.textContent).toContain('启动本地连接器')
+    expect(document.body.textContent).toContain('复制连接码并配对')
     expect(document.body.textContent).toContain('打开 BOSS 聊天页面')
     expect(document.body.textContent).toContain('先安全观察')
 

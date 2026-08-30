@@ -81,7 +81,7 @@ function readiness(account?: BossAccount | null) {
   const device = activeDevice(account.id)
   if (!device) return { step: 1, label: '尚未连接', type: 'info' as const }
   if (device.runtimeState === 'RUNNING') return { step: 4, label: '已准备就绪', type: 'success' as const }
-  if (device.runtimeState === 'PAUSED' && device.stopReason?.includes('紧急停止')) return { step: 4, label: '只监测中', type: 'warning' as const }
+  if (device.runtimeState === 'PAUSED' && /^只监测：/.test(device.stopReason || '')) return { step: 4, label: '只监测中', type: 'warning' as const }
   if (device.runtimeState === 'PAUSED') return { step: 3, label: '需要检查页面', type: 'warning' as const }
   return { step: 2, label: '等待打开招聘页面', type: 'warning' as const }
 }
@@ -208,8 +208,8 @@ onMounted(loadData)
   <div class="page-shell">
     <el-dialog v-model="connectionOpen" :title="`${selectedAccount?.displayName ?? ''} · 开始使用`" width="680px" destroy-on-close>
       <div class="wizard-steps">
-        <article class="done"><b>1</b><div><strong>安装浏览器助手</strong><p>在这台电脑的 Chrome 中安装助手，并正常登录 BOSS 招聘端。你不用把 BOSS 密码填到本系统。</p></div></article>
-        <article :class="{ done: !!activeDevice(selectedAccount?.id ?? '') }"><b>2</b><div><strong>复制连接码</strong><p>点击下方按钮生成连接码，再粘贴到浏览器助手中。连接码 10 分钟后失效，不能用于登录 BOSS。</p><div v-if="pairingToken" class="token-box"><code>{{ pairingToken }}</code><el-button type="primary" @click="copyToken">复制连接码</el-button><small>请在 {{ formatDate(pairingExpiresAt) }} 前完成</small></div><el-button v-else type="primary" :loading="pairingLoading" @click="generatePairing">生成连接码</el-button></div></article>
+        <article class="done"><b>1</b><div><strong>启动本地连接器</strong><p>在这台电脑运行本地 Chrome 连接器，并在它打开的独立 Profile 中手动登录 BOSS。你不用把 BOSS 密码填到本系统。</p></div></article>
+        <article :class="{ done: !!activeDevice(selectedAccount?.id ?? '') }"><b>2</b><div><strong>复制连接码并配对</strong><p>点击下方按钮生成连接码，再粘贴到本地连接器的配对命令中。连接码 10 分钟后失效，不能用于登录 BOSS。</p><div v-if="pairingToken" class="token-box"><code>{{ pairingToken }}</code><el-button type="primary" @click="copyToken">复制连接码</el-button><small>请在 {{ formatDate(pairingExpiresAt) }} 前完成</small></div><el-button v-else type="primary" :loading="pairingLoading" @click="generatePairing">生成连接码</el-button></div></article>
         <article :class="{ done: readiness(selectedAccount).step >= 3 }"><b>3</b><div><strong>打开 BOSS 聊天页面</strong><p>保持登录，然后打开候选人聊天列表。系统识别成功后，这一步会自动变为完成。</p></div></article>
         <article :class="{ done: readiness(selectedAccount).step >= 4 }"><b>4</b><div><strong>先安全观察</strong><p>首次连接只观察消息，不自动回复。确认页面稳定后，再到“离开托管”中开启自动接待。</p></div></article>
       </div>

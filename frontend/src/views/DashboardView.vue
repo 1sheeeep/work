@@ -13,7 +13,8 @@ const displayName=computed(()=>authStore.state.user?.displayName||'HR')
 const activePolicies=computed(()=>policies.value.filter(x=>x.awayActive))
 const followUps=computed(()=>candidates.value.filter(x=>x.needsHrFollowUp))
 const sentToday=computed(()=>policies.value.reduce((n,x)=>n+x.sentToday,0))
-const connectionIssues=computed(()=>policies.value.filter(x=>{const d=devices.value.find(d=>d.accountId===x.accountId&&d.status==='ACTIVE');return x.accountStatus!=='ACTIVE'||!x.messageSendCapable||!d||d.runtimeState!=='RUNNING'}))
+function isSafeMonitoringDevice(device?:BrowserDevice){return device?.runtimeState==='PAUSED'&&/^只监测：/.test(device.stopReason||'')}
+const connectionIssues=computed(()=>policies.value.filter(x=>{const d=devices.value.find(d=>d.accountId===x.accountId&&d.status==='ACTIVE');return x.accountStatus!=='ACTIVE'||!x.messageSendCapable||!d||(d.runtimeState!=='RUNNING'&&!isSafeMonitoringDevice(d))}))
 const recentAttempts=computed(()=>attempts.value.slice(0,5))
 const formalAccounts=computed(()=>accounts.value.filter(x=>x.gatewayType==='LOCAL_CDP_CONNECTOR'&&x.status==='ACTIVE'))
 const linkedFormalAccounts=computed(()=>formalAccounts.value.filter(x=>devices.value.some(d=>d.accountId===x.id&&d.status==='ACTIVE')))
@@ -41,7 +42,7 @@ onMounted(load)
 
 <template><div class="page-shell dashboard-page">
  <header class="hero" :class="{active:activePolicies.length}"><div class="hero-copy"><span class="state-pill"><i></i>{{activePolicies.length?'托管运行中':'当前在岗'}}</span><h1>{{overallState}}</h1><p>{{subtitle}}</p></div><div class="hero-actions"><el-button :icon="Refresh" :loading="loading" @click="load">刷新状态</el-button><el-button v-if="activePolicies.length" type="success" @click="endAll">我已返回，结束全部托管</el-button></div></header>
- <el-alert class="test-mode-alert" type="warning" :closable="false" show-icon title="真实账号测试模式：仅识别和同步消息状态，后端与浏览器助手均已禁止自动发送。" />
+ <el-alert class="test-mode-alert" type="warning" :closable="false" show-icon title="真实账号测试模式：仅识别和同步消息状态，后端与本地 Chrome 连接器均已禁止自动发送。" />
  <div v-if="loading" class="surface-panel skeleton-stack"><el-skeleton :rows="8" animated/></div>
  <template v-else>
   <section class="metric-grid"><button class="metric-running" @click="open('/auto-replies')"><i>托</i><div><span>正在托管</span><strong>{{activePolicies.length}}</strong><small>共 {{policies.length}} 个账号</small></div></button><button class="metric-follow" @click="open('/candidates')"><i>待</i><div><span>待 HR 跟进</span><strong>{{followUps.length}}</strong><small>返回后优先处理</small></div></button><button class="metric-sent" @click="open('/auto-replies')"><i>发</i><div><span>今日自动接待</span><strong>{{sentToday}}</strong><small>查看每次发送结果</small></div></button><button class="metric-warning" @click="open('/boss-accounts')"><i>连</i><div><span>连接异常</span><strong :class="{danger:connectionIssues.length}">{{connectionIssues.length}}</strong><small>异常账号不会发送</small></div></button></section>
