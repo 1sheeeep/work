@@ -95,22 +95,25 @@
 
   function isJobDetailPage() {
     return /\/web\/chat\/job\/(?:edit|detail)(?:[/?#]|$)/i.test(location.pathname)
-      || Boolean(document.querySelector('.job-edit-container.edit-job'));
+      || Boolean(findJobDetailRoot());
   }
 
   async function collectJobDetailSnapshot() {
-    const root = document.querySelector('.job-edit-container.edit-job');
+    const root = findJobDetailRoot();
     if (!root || !visible(root)) return blocked('JOB_DETAIL_NOT_FOUND', '当前职位详情尚未加载完成。');
     const rowValue = (label) => {
       const row = [...root.querySelectorAll('.form-row')].find((item) => compact(item.querySelector('.title')?.textContent).includes(label));
-      if (!row) return '';
-      const control = row.querySelector('input:not([type="hidden"]), textarea');
-      if (control && compact(control.value)) return compact(control.value);
-      return compact(row.querySelector('.ui-select-selected-value, .content')?.textContent);
+      if (row) {
+        const control = row.querySelector('input:not([type="hidden"]), textarea');
+        if (control && compact(control.value)) return compact(control.value);
+        const selected = compact(row.querySelector('.ui-select-selected-value, .content')?.textContent);
+        if (selected) return selected;
+      }
+      return semanticFieldValue(root, label);
     };
-    const title = compact(root.querySelector("input[name='jobName'], .job-name input")?.value) || rowValue('职位名称');
+    const title = compact(root.querySelector("input[name='jobName'], .job-name input, input[placeholder*='职位名称']")?.value) || rowValue('职位名称');
     if (!title || title.length < 2) return blocked('JOB_TITLE_MISSING', '职位详情没有可识别的职位名称。');
-    const descriptionNode = root.querySelector('.performance-row textarea, textarea');
+    const descriptionNode = root.querySelector('.performance-row textarea, textarea[maxlength="5000"], textarea');
     const description = cleanMultiline(descriptionNode?.value).slice(0, 10000);
     const recruitmentType = compact(root.querySelector('.recruitment-type-wrap .ui-select-selected-value')?.textContent) || rowValue('招聘类型');
     const jobCategory = compact(root.querySelector("input[name='jobCategory']")?.value)
@@ -140,6 +143,39 @@
     };
     const signature = Object.values(entry).map((value) => value ?? '').join('|');
     return { ok: true, entries: [entry], signature };
+  }
+
+  function findJobDetailRoot() {
+    const fixed = document.querySelector('.job-edit-container.edit-job, .job-edit-container');
+    if (fixed && visible(fixed)) return fixed;
+    if (!/\/web\/chat\/job\/(?:edit|detail)(?:[/?#]|$)/i.test(location.pathname)) return null;
+    const descriptions = [...document.querySelectorAll('textarea')].filter(visible);
+    for (const description of descriptions) {
+      let node = description.parentElement;
+      for (let depth = 0; node && depth < 10; depth++, node = node.parentElement) {
+        const text = compact(node.innerText || node.textContent);
+        const inputs = node.querySelectorAll('input:not([type="hidden"]), textarea, [class*="select"]');
+        if (text.includes('职位基本信息') && text.includes('职位要求') && inputs.length >= 5) return node;
+      }
+    }
+    return null;
+  }
+
+  function semanticFieldValue(root, label) {
+    const candidates = [...root.querySelectorAll('label, span, div')]
+      .filter((node) => visible(node) && compact(node.textContent).replace(/[：:]/g, '') === label.replace(/[：:]/g, ''));
+    for (const labelNode of candidates) {
+      let row = labelNode.parentElement;
+      for (let depth = 0; row && depth < 5 && root.contains(row); depth++, row = row.parentElement) {
+        const control = row.querySelector('input:not([type="hidden"]), textarea');
+        const value = compact(control?.value);
+        if (value) return value;
+        const selected = [...row.querySelectorAll('.ui-select-selected-value, [class*="selected-value"], [class*="chose-item"].active, [class*="radio"].active')]
+          .map((node) => compact(node.textContent)).find(Boolean);
+        if (selected) return selected;
+      }
+    }
+    return '';
   }
 
   function classifyPage() {
