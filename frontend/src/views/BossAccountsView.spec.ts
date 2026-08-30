@@ -28,11 +28,11 @@ describe('BossAccountsView', () => {
     await flushPromises()
 
     expect(dialog.findAll('.el-form-item.is-error')).toHaveLength(3)
-    expect(api.get).toHaveBeenCalledWith('/boss-accounts', expect.any(Object))
+    expect(api.get).toHaveBeenCalledWith('/boss-accounts')
     wrapper.unmount()
   })
 
-  it('guides an HR through pairing and monitor-only verification', async () => {
+  it('keeps local pairing behind the account preparation view', async () => {
     vi.mocked(api.get)
       .mockResolvedValueOnce({ data: [{
         id: 'account-1', displayName: '上海社招账号', externalIdentifier: 'boss-shanghai', status: 'ACTIVE',
@@ -41,24 +41,16 @@ describe('BossAccountsView', () => {
       }] })
       .mockResolvedValueOnce({ data: [] })
       .mockResolvedValueOnce({ data: [] })
-    vi.mocked(api.post).mockResolvedValueOnce({ data: { pairingToken: 'pairing-token-123', expiresAt: '2026-08-29T16:00:00Z' } })
-
     const wrapper = mount(BossAccountsView, { attachTo: document.body })
     await flushPromises()
-    await wrapper.findAll('button').find((button) => button.text().includes('开始连接'))?.trigger('click')
+    await wrapper.findAll('.el-collapse-item__header').find((item) => item.text().includes('已有账号配置'))?.trigger('click')
+    await wrapper.findAll('button').find((button) => button.text().includes('查看接入说明'))?.trigger('click')
     await flushPromises()
 
-    expect(document.body.textContent).toContain('启动本地连接器')
-    expect(document.body.textContent).toContain('复制连接码并配对')
-    expect(document.body.textContent).toContain('打开 BOSS 聊天页面')
-    expect(document.body.textContent).toContain('先安全观察')
-
-    const generateButton = wrapper.findAll('button').find((button) => button.text().includes('生成连接码'))
-    await generateButton?.trigger('click')
-    await flushPromises()
-
-    expect(api.post).toHaveBeenCalledWith('/browser-devices/pairings', { accountId: 'account-1' })
-    expect(document.body.textContent).toContain('pairing-token-123')
+    expect(document.body.textContent).toContain('本机接入说明')
+    expect(document.body.textContent).toContain('当前是准备阶段')
+    expect(document.body.textContent).toContain('真实账号到位后，再打开本机接入设置')
+    expect(document.body.textContent).not.toContain('复制连接码并配对')
     wrapper.unmount()
   })
 })
