@@ -1,5 +1,6 @@
 const form=document.querySelector('#form'),status=document.querySelector('#status'),quality=document.querySelector('#quality'),save=document.querySelector('#save')
 const requiredLabels={title:'职位名称',location:'工作地点',salaryMinK:'月薪下限',salaryMaxK:'月薪上限',salaryMonths:'薪数',experienceRequirement:'经验要求',educationRequirement:'学历要求',description:'职位描述'}
+let captureConfidence=null
 document.querySelector('#refresh').onclick=load
 form.addEventListener('submit',saveDraft)
 form.addEventListener('input',event=>{const field=event.target;if(field?.name&&field.dataset.capturedValue!==undefined&&field.dataset.capturedValue!==field.value)markCaptured(field,false);renderQuality()})
@@ -14,7 +15,7 @@ async function load(){
  if(!tab?.id)return setStatus('没有找到已打开的 BOSS 页面。请先打开一个岗位详情页。','error')
  try{const result=await chrome.tabs.sendMessage(tab.id,{type:'CAPTURE_CURRENT_JOB'});if(!result?.ok)return setStatus(result?.reason||'当前页面无法采集，请确认已打开岗位详情。','error');fillCapture(result)}catch{setStatus('页面脚本尚未连接。请刷新 BOSS 岗位页后重试。','error')}
 }
-function fillCapture(result){fill(result.data);renderQuality();setStatus(result.missing?.length?`已自动填写，请补充：${result.missing.join('、')}`:'页面信息已自动采集并填写，请核对后保存。',result.missing?.length?'warning':'success')}
+function fillCapture(result){captureConfidence=result.confidence||null;fill(result.data);renderQuality();const confidenceText=captureConfidence?`详情识别 ${captureConfidence.recognized}/${captureConfidence.total} 项。`:'';setStatus(result.missing?.length?`${confidenceText} 已自动填写，请补充：${result.missing.join('、')}`:`${confidenceText} 页面信息已自动采集并填写，请核对后保存。`,result.missing?.length?'warning':'success')}
 function fill(data){for(const [key,value]of Object.entries(data||{})){const field=form.elements.namedItem(key);if(field){field.value=value??'';markCaptured(field,Boolean(String(value??'').trim()))}}}
 function markCaptured(field,captured){const label=field.closest('label');label?.classList.toggle('captured',captured);if(captured)field.dataset.capturedValue=field.value;else delete field.dataset.capturedValue}
 function renderQuality(){
@@ -26,7 +27,7 @@ function renderQuality(){
  if(String(values.title||'').trim().length>0&&String(values.title||'').trim().length<2)warnings.push('职位名称过短，无法稳定匹配会话中的岗位名称')
  const captured=[...form.elements].filter(field=>field?.dataset?.capturedValue!==undefined).length
  quality.hidden=false;quality.className=`capture-quality ${missing.length?'error':warnings.length?'warning':''}`
- quality.replaceChildren();const heading=document.createElement('h2');heading.textContent=missing.length?'请先补齐必填信息':warnings.length?'请核对以下信息':'采集结果可创建岗位草稿';const note=document.createElement('p');note.textContent=`已从页面读取 ${captured}/8 个关键字段。岗位名称应保持与 BOSS 页面展示一致，保存后仍需在控制台审核回复知识。`;quality.append(heading,note)
+ quality.replaceChildren();const heading=document.createElement('h2');heading.textContent=missing.length?'请先补齐必填信息':warnings.length?'请核对以下信息':'采集结果可创建岗位草稿';const note=document.createElement('p');const confidence=captureConfidence?`当前详情识别完整度 ${captureConfidence.recognized}/${captureConfidence.total}。`:'';note.textContent=`已从页面读取 ${captured}/8 个关键字段。${confidence}岗位名称应保持与 BOSS 页面展示一致，保存后仍需在控制台审核回复知识。`;quality.append(heading,note)
  const notices=[...missing.map(label=>`缺少：${label}`),...warnings];if(notices.length){const list=document.createElement('ul');for(const notice of notices){const item=document.createElement('li');item.textContent=notice;list.append(item)}quality.append(list)}
 }
 async function saveDraft(event){
