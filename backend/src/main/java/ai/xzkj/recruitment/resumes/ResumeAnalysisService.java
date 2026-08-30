@@ -27,11 +27,12 @@ public class ResumeAnalysisService {
     private final OpenAiResumeClient client;
     private final OpenAiProperties properties;
     private final ResumeDocumentTextExtractor documents;
+    private final ResumeMalwareScanner malwareScanner;
     private final ObjectMapper mapper;
     private final AuditService audit;
 
     public ResumeAnalysisService(ResumeIntakeRepository intakes, AiAssistanceRunRepository runs, ResumeAnalysisFeedbackRepository feedback,
-                                 CurrentUserService users, OpenAiResumeClient client, OpenAiProperties properties, ResumeDocumentTextExtractor documents,
+                                 CurrentUserService users, OpenAiResumeClient client, OpenAiProperties properties, ResumeDocumentTextExtractor documents, ResumeMalwareScanner malwareScanner,
                                  ObjectMapper mapper, AuditService audit) {
         this.intakes = intakes;
         this.runs = runs;
@@ -40,6 +41,7 @@ public class ResumeAnalysisService {
         this.client = client;
         this.properties = properties;
         this.documents = documents;
+        this.malwareScanner = malwareScanner;
         this.mapper = mapper;
         this.audit = audit;
     }
@@ -57,14 +59,18 @@ public class ResumeAnalysisService {
         SystemUser user = users.requireCurrentUser();
         ResumeIntake intake = requireApprovedIntake(intakeId, user);
         ResumeDocumentTextExtractor.ExtractedResumeDocument document;
+        ResumeMalwareScanner.ScanResult scan;
         try {
-            document = documents.extract(file);
+            byte[] content = documents.readBytes(file);
+            scan = malwareScanner.scan(content);
+            document = documents.extract(content);
         } catch (ApiException exception) {
             audit.failure("REJECT_RESUME_DOCUMENT", "RESUME_INTAKE", intake.getId(), intake.getDisplayLabel(),
                     "本机临时简历文件处理被拒绝，原因代码：" + exception.getCode() + "；原文件未写入业务数据库或持久卷");
             throw exception;
         }
-        return analyzeText(intake, user, document.text(), "本机临时提取的 " + document.type() + " 简历文本（文件摘要 " + document.documentHash().substring(0, 12) + "）");
+        String scanSource = scan.scanned() ? "已通过病毒扫描；" : "病毒扫描门禁未启用；";
+        return analyzeText(intake, user, document.text(), scanSource + "本机临时提取的 " + document.type() + " 简历文本（文件摘要 " + document.documentHash().substring(0, 12) + "）");
     }
 
     private ResumeAnalysisResponse analyzeText(ResumeIntake intake, SystemUser user, String resumeText, String source) {

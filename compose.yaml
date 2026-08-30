@@ -38,6 +38,9 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-}
       OPENAI_TIMEOUT: ${OPENAI_TIMEOUT:-60s}
+      APP_RESUME_MALWARE_SCAN_ENABLED: ${APP_RESUME_MALWARE_SCAN_ENABLED:-false}
+      APP_RESUME_MALWARE_SCAN_HOST: ${APP_RESUME_MALWARE_SCAN_HOST:-clamav}
+      APP_RESUME_MALWARE_SCAN_PORT: ${APP_RESUME_MALWARE_SCAN_PORT:-3310}
     depends_on:
       db:
         condition: service_healthy
@@ -50,6 +53,21 @@ services:
     read_only: true
     tmpfs:
       - /tmp
+
+  clamav:
+    image: clamav/clamav:1.4
+    profiles: ["malware-scan"]
+    expose:
+      - "3310"
+    volumes:
+      - clamav_signatures:/var/lib/clamav
+    healthcheck:
+      test: ["CMD-SHELL", "clamdscan --ping 1 >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 3m
+    restart: unless-stopped
 
   web:
     build:
@@ -72,3 +90,4 @@ services:
 
 volumes:
   recruitment_postgres_data:
+  clamav_signatures:

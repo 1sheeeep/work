@@ -83,3 +83,10 @@ app:
     model: ${OPENAI_MODEL:}
     base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
     timeout: ${OPENAI_TIMEOUT:60s}
+  resume:
+    malware-scan:
+      enabled: ${APP_RESUME_MALWARE_SCAN_ENABLED:false}
+      host: ${APP_RESUME_MALWARE_SCAN_HOST:clamav}
+      port: ${APP_RESUME_MALWARE_SCAN_PORT:3310}
+      connect-timeout: ${APP_RESUME_MALWARE_SCAN_CONNECT_TIMEOUT:3s}
+      read-timeout: ${APP_RESUME_MALWARE_SCAN_READ_TIMEOUT:12s}

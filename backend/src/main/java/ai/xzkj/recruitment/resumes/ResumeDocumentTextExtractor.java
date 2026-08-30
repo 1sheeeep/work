@@ -25,12 +25,23 @@ public class ResumeDocumentTextExtractor {
     private static final int MAX_ZIP_ENTRIES = 200;
     private static final int MAX_TEXT_CHARS = 30_000;
 
-    public ExtractedResumeDocument extract(MultipartFile file) {
+    public byte[] readBytes(MultipartFile file) {
         if (file == null || file.isEmpty()) throw bad("RESUME_FILE_REQUIRED", "请选择 PDF 或 DOCX 简历文件");
         if (file.getSize() > MAX_BYTES) throw bad("RESUME_FILE_TOO_LARGE", "简历文件不能超过 8MB");
         try {
             byte[] bytes = file.getBytes();
             if (bytes.length == 0 || bytes.length > MAX_BYTES) throw bad("RESUME_FILE_TOO_LARGE", "简历文件不能超过 8MB");
+            return bytes;
+        } catch (ApiException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            throw bad("RESUME_FILE_READ_FAILED", "无法安全读取该简历文件，请重新选择 PDF/DOCX 文件");
+        }
+    }
+
+    public ExtractedResumeDocument extract(byte[] bytes) {
+        try {
+            if (bytes == null || bytes.length == 0 || bytes.length > MAX_BYTES) throw bad("RESUME_FILE_TOO_LARGE", "简历文件不能超过 8MB");
             if (pdf(bytes)) return new ExtractedResumeDocument("PDF", extractPdf(bytes), hash(bytes));
             if (zip(bytes)) return new ExtractedResumeDocument("DOCX", extractDocx(bytes), hash(bytes));
             throw bad("RESUME_FILE_TYPE_UNSUPPORTED", "仅支持可提取文本的 PDF 或 DOCX 简历文件");
