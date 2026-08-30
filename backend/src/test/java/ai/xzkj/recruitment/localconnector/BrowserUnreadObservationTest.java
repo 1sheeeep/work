@@ -158,5 +158,23 @@ class BrowserUnreadObservationTest {
         assertThat(observation.getReviewedContent()).isEqualTo("HR 核对后的稳定草稿");
     }
 
+    @Test void storesAndClearsAnExplicitManualJobMatch(){
+        BrowserDevice device=mock(BrowserDevice.class);when(device.getBossAccount()).thenReturn(mock(BossAccount.class));
+        Instant now=Instant.parse("2026-08-30T12:00:00Z");UUID jobId=UUID.randomUUID();
+        BrowserUnreadObservation observation=new BrowserUnreadObservation(device,DIGEST,now,now);
+
+        observation.manuallyMatchJob(jobId,"nodejs开发工程师",now);
+
+        assertThat(observation.getManualMatchJobPositionId()).isEqualTo(jobId);
+        assertThat(observation.getManualMatchTitleKey()).isEqualTo("nodejs开发工程师");
+        assertThat(observation.getManualMatchedAt()).isEqualTo(now);
+
+        observation.clearManualJobMatch();
+
+        assertThat(observation.getManualMatchJobPositionId()).isNull();
+        assertThat(observation.getManualMatchTitleKey()).isNull();
+        assertThat(observation.getManualMatchedAt()).isNull();
+    }
+
     private UnreadObservationEntry entry(int unread,Instant at){return new UnreadObservationEntry(DIGEST,null,null,null,null,unread,at,at);}
 }

@@ -10,6 +10,8 @@ import jakarta.validation.Valid;import org.springframework.http.HttpHeaders;impo
  @PostMapping("/api/local-connector/runtime/unread-observations")public UnreadObservationSyncResponse observations(@RequestHeader(HttpHeaders.AUTHORIZATION)String token,@Valid@RequestBody UnreadObservationSnapshot r){return service.observeUnread(token,r);}
  @PostMapping("/api/local-connector/runtime/selected-conversation")public UnreadObservationResponse selected(@RequestHeader(HttpHeaders.AUTHORIZATION)String token,@Valid@RequestBody SelectedConversationSnapshot r){return service.verifySelectedConversation(token,r);}
  @GetMapping("/api/local-connector/observations")public List<UnreadObservationResponse> observations(){return service.listUnreadObservations();}
+ @GetMapping("/api/local-connector/observations/unmatched-job-groups")public List<UnmatchedJobGroupResponse> unmatchedJobGroups(){return service.listUnmatchedJobGroups();}
+ @PutMapping("/api/local-connector/observations/manual-job-match")public ManualJobMatchResponse manualJobMatch(@Valid@RequestBody ManualJobMatchRequest r){return service.manualJobMatch(r);}
  @PostMapping("/api/local-connector/observations/recalculate-drafts")public DraftRecalculationResponse recalculateDrafts(){return service.recalculateDrafts();}
  @PutMapping("/api/local-connector/observations/{id}/review")public UnreadObservationResponse review(@PathVariable UUID id,@Valid@RequestBody ObservationReviewRequest r){return service.reviewObservation(id,r);}
  @GetMapping("/api/local-connector/capabilities")public List<ConnectorCapabilityResponse> capabilities(){return service.listCapabilities();}
