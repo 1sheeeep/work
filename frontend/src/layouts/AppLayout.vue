@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Briefcase, ChatDotRound, Connection, DataAnalysis, Expand, Grid, Monitor, OfficeBuilding, SwitchButton, User, UserFilled } from '@element-plus/icons-vue'
+import { Briefcase, ChatDotRound, Connection, DataAnalysis, DocumentChecked, Expand, Grid, Monitor, OfficeBuilding, SwitchButton, User, UserFilled } from '@element-plus/icons-vue'
 import { authStore } from '../stores/auth'
 
 const route = useRoute()
@@ -15,6 +15,7 @@ const navigationGroups = computed(() => [
   { label: '日常使用', items: [
     { path: '/dashboard', label: '托管首页', icon: Grid },
     { path: '/candidates', label: '待处理消息', icon: UserFilled },
+    { path: '/resume-intakes', label: '简历登记与审核', icon: DocumentChecked },
     { path: '/boss-accounts', label: '账号连接', icon: Connection },
     { path: '/auto-replies', label: '回复设置与记录', icon: ChatDotRound },
   ] },
@@ -29,7 +30,7 @@ const navigationGroups = computed(() => [
   ] }] : []),
 ])
 const roleLabel = computed(() => ({ SYSTEM_ADMIN: '系统管理员', RECRUITMENT_ADMIN: '招聘管理员', RECRUITER: '招聘专员' }[user.value?.role ?? 'SYSTEM_ADMIN']))
-const workspaceLabel = computed(() => ({ dashboard: '托管首页', organization: '组织管理', 'boss-accounts': '账号连接', 'job-positions': '职位资料', candidates: '待处理消息', 'auto-replies': '回复设置与记录', 'hr-users': 'HR 用户', 'audit-logs': '操作日志', operations: '运行保障' }[String(route.name)] ?? '离开托管助手'))
+const workspaceLabel = computed(() => ({ dashboard: '托管首页', organization: '组织管理', 'boss-accounts': '账号连接', 'job-positions': '职位资料', candidates: '待处理消息', 'resume-intakes': '简历登记与审核', 'auto-replies': '回复设置与记录', 'hr-users': 'HR 用户', 'audit-logs': '操作日志', operations: '运行保障' }[String(route.name)] ?? '离开托管助手'))
 
 function navigate(path: string) {
   mobileNavOpen.value = false

@@ -1,0 +1,5 @@
+package ai.xzkj.recruitment.resumes;
+import jakarta.validation.constraints.*;import java.time.Instant;import java.util.UUID;
+record ResumeIntakeCreateRequest(@NotBlank@Size(max=120)String reference,@NotBlank@Size(max=120)String displayLabel,Instant receivedAt){}
+record ResumeIntakeReviewRequest(@NotNull ResumeIntakeStatus decision,@Size(max=500)String note){}
+record ResumeIntakeResponse(UUID id,UUID contactId,String candidateName,String jobTitle,String accountName,ResumeIntakeSource source,String anonymousKey,String displayLabel,ResumeIntakeStatus status,Instant receivedAt,String reviewedBy,Instant reviewedAt,String reviewNote,Instant createdAt){static ResumeIntakeResponse from(ResumeIntake item){var contact=item.getContact();return new ResumeIntakeResponse(item.getId(),contact.getId(),contact.getCandidate().getDisplayName(),contact.getJobPosition().getTitle(),contact.getBossAccount().getDisplayName(),item.getSource(),item.getResumeDigest().substring(0,12),item.getDisplayLabel(),item.getStatus(),item.getReceivedAt(),item.getReviewedBy()==null?null:item.getReviewedBy().getDisplayName(),item.getReviewedAt(),item.getReviewNote(),item.getCreatedAt());}}

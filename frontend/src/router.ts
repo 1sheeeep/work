@@ -14,6 +14,7 @@ const router = createRouter({
         { path: 'boss-accounts', name: 'boss-accounts', component: () => import('./views/BossAccountsView.vue') },
         { path: 'job-positions', name: 'job-positions', component: () => import('./views/JobPositionsView.vue') },
         { path: 'candidates', name: 'candidates', component: () => import('./views/CandidatesView.vue') },
+        { path: 'resume-intakes', name: 'resume-intakes', component: () => import('./views/ResumeIntakesView.vue') },
         { path: 'auto-replies', name: 'auto-replies', component: () => import('./views/AutoRepliesView.vue') },
         { path: 'hr-users', name: 'hr-users', component: () => import('./views/HrUsersView.vue'), meta: { role: 'SYSTEM_ADMIN' } },
         { path: 'audit-logs', name: 'audit-logs', component: () => import('./views/AuditLogView.vue'), meta: { role: 'SYSTEM_ADMIN' } },
