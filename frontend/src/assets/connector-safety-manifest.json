@@ -1,0 +1,13 @@
+{
+  "version": "V45",
+  "mode": "FIXTURE_ONLY",
+  "productionEnabled": false,
+  "controlledActions": 4,
+  "faultScenarios": [
+    "目标身份漂移",
+    "风险或验证页面",
+    "执行前后状态未变化",
+    "适配器尝试浏览器输入",
+    "执行步骤超时"
+  ]
+}

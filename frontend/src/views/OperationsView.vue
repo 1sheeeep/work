@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { CircleCheck, Refresh, Warning } from '@element-plus/icons-vue'
 import { api, apiErrorMessage } from '../services/api'
 import type { OperationsSummary } from '../types'
+import connectorSafety from '../assets/connector-safety-manifest.json'
 
 const loading = ref(true)
 const errorMessage = ref('')
@@ -67,12 +68,19 @@ onMounted(load)
         <div class="section-title-row"><div><h2>上线核对</h2><p>真实证书、域名和密钥仍需在目标环境配置</p></div></div>
         <ul><li><el-icon><CircleCheck /></el-icon>HTTPS / Secure Cookie 生产编排已提供</li><li><el-icon><CircleCheck /></el-icon>Prometheus 指标与存活/就绪探针已提供</li><li><el-icon><CircleCheck /></el-icon>浏览器设备心跳、撤销和风险停机已提供</li><li :class="{danger:summary.staleBrowserDevices || summary.unverifiedPageCaptures}"><el-icon><Warning v-if="summary.staleBrowserDevices || summary.unverifiedPageCaptures"/><CircleCheck v-else/></el-icon>{{ summary.staleBrowserDevices ? `先处理 ${summary.staleBrowserDevices} 个心跳超时设备` : summary.unverifiedPageCaptures ? `先核对 ${summary.unverifiedPageCaptures} 个页面采集岗位` : '浏览器设备和页面采集资料均无待处理项' }}</li></ul>
       </section>
+
+      <section class="surface-panel safety-manifest">
+        <div class="section-title-row"><div><h2>连接器离线安全清单</h2><p>{{ connectorSafety.version }} 构建清单，仅表示本地 fixture 测试，不代表真实 BOSS 页面已经验收。</p></div><el-tag type="info">{{ connectorSafety.mode }}</el-tag></div>
+        <div class="manifest-summary"><article><span>受控动作</span><strong>{{ connectorSafety.controlledActions }}</strong></article><article><span>故障场景</span><strong>{{ connectorSafety.faultScenarios.length }}</strong></article><article><span>生产执行</span><strong class="healthy">{{ connectorSafety.productionEnabled ? '已启用' : '保持关闭' }}</strong></article></div>
+        <ul><li v-for="item in connectorSafety.faultScenarios" :key="item"><el-icon><CircleCheck /></el-icon>{{ item }}：异常时停止</li></ul>
+      </section>
     </template>
   </div>
 </template>
 
 <style scoped>
 .heading-actions{display:flex;gap:10px}.ops-metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}.ops-metrics article{padding:18px 20px;border:1px solid var(--border);border-radius:12px;background:var(--surface)}.ops-metrics span{display:block;color:var(--text-secondary);font-size:12px}.ops-metrics strong{display:flex;align-items:center;gap:6px;margin-top:8px;font-size:22px}.healthy{color:var(--success)}.danger{color:var(--danger)}.gateway-grid dt{color:var(--text-secondary);font-size:12px}.gateway-grid dd{margin:5px 0 0;font-size:20px;font-weight:700}.gateway-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;padding:0 20px 20px}.gateway-grid article{padding:16px;border:1px solid var(--border);border-radius:10px}.gateway-grid header{display:flex;justify-content:space-between;gap:12px}.gateway-grid dl{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.gateway-grid p{color:var(--danger);font-size:12px}.readiness{margin-top:20px}.readiness ul{display:grid;gap:12px;padding:0 24px 22px;list-style:none}.readiness li{display:flex;align-items:center;gap:8px}.readiness .el-icon{color:var(--success)}
+.safety-manifest{margin-top:20px}.manifest-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;padding:0 20px 16px}.manifest-summary article{padding:13px;border-radius:10px;background:var(--surface-muted)}.manifest-summary span{display:block;color:var(--text-secondary);font-size:12px}.manifest-summary strong{display:block;margin-top:5px}.safety-manifest ul{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;padding:0 24px 22px;list-style:none}.safety-manifest li{display:flex;align-items:center;gap:8px}.safety-manifest li .el-icon{color:var(--success)}
 @media(max-width:720px){.heading-actions{flex-wrap:wrap;justify-content:flex-end}.ops-metrics,.gateway-grid{grid-template-columns:1fr 1fr}.gateway-grid{padding:0 14px 14px}}
-@media(max-width:460px){.ops-metrics,.gateway-grid{grid-template-columns:1fr}}
+@media(max-width:460px){.ops-metrics,.gateway-grid,.manifest-summary,.safety-manifest ul{grid-template-columns:1fr}}
 </style>

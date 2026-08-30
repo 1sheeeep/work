@@ -125,9 +125,12 @@ OCR 只在本机 Docker 网络中调用 Tesseract，不会把图片发送到外�
 cd boss-local-connector
 npm test
 npm run drill
+npm run drill:faults
 ```
 
 `npm run drill` 会依次演练四类受控动作，并只输出动作类型、结果和证据来源。演练不会启动 Chrome、不会读取真实账号页面、不会写入业务数据库、不会创建生产批准，也不会解锁页面写能力。真实页面执行器在逐动作人工验收完成前保持不存在。
+
+`npm run drill:faults` 会注入目标漂移、风险页、状态不变、浏览器输入企图和执行超时五类故障；所有故障都必须被阻断，否则命令以失败状态退出。运行保障页显示的是该版本的离线构建清单，不等同于真实页面验收。
 
 ## 安全边界
 
