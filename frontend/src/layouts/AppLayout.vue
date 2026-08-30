@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Briefcase, ChatDotRound, Connection, Cpu, DataAnalysis, DocumentChecked, Expand, Grid, Monitor, OfficeBuilding, SwitchButton, User, UserFilled } from '@element-plus/icons-vue'
+import { ArrowDown, Briefcase, ChatDotRound, Connection, Cpu, DataAnalysis, DocumentChecked, Expand, Grid, Monitor, OfficeBuilding, Setting, SwitchButton, User, UserFilled } from '@element-plus/icons-vue'
 import { authStore } from '../stores/auth'
 
 const route = useRoute()
@@ -11,29 +11,35 @@ const mobileNavOpen = ref(false)
 const loggingOut = ref(false)
 const activePath = computed(() => route.path)
 const user = computed(() => authStore.state.user)
+const managementPaths = ['/organization', '/hr-users', '/ai-settings', '/operations', '/audit-logs']
+const managementOpen = ref(managementPaths.includes(route.path))
 const navigationGroups = computed(() => [
-  { label: '工作台', items: [{ path: '/dashboard', label: '今日总览', icon: Grid }] },
-  { label: '值守与消息', items: [
+  { label: '日常工作', items: [
+    { path: '/dashboard', label: '今日总览', icon: Grid },
     { path: '/candidates', label: '待处理消息', icon: UserFilled },
-    { path: '/auto-replies', label: '值守规则与记录', icon: ChatDotRound },
-    { path: '/boss-accounts', label: '账号与浏览器', icon: Connection },
-  ] },
-  { label: '岗位与人才', items: [
     { path: '/job-positions', label: '岗位资料', icon: Briefcase },
-    { path: '/resume-intakes', label: '简历审核与分析', icon: DocumentChecked },
+    { path: '/resume-intakes', label: '简历分析', icon: DocumentChecked },
   ] },
-  ...(user.value?.role !== 'RECRUITER' ? [{ label: '组织设置', items: [
-    { path: '/organization', label: '企业与集团', icon: OfficeBuilding },
-    ...(user.value?.role === 'SYSTEM_ADMIN' ? [{ path: '/hr-users', label: 'HR 用户', icon: User }] : []),
-  ] }] : []),
-  ...(user.value?.role === 'SYSTEM_ADMIN' ? [{ label: '运行管理', items: [
+  { label: '消息值守', items: [
+    { path: '/auto-replies', label: '值守设置', icon: ChatDotRound },
+    { path: '/boss-accounts', label: '招聘账号', icon: Connection },
+  ] },
+])
+const managementItems = computed(() => user.value?.role === 'RECRUITER' ? [] : [
+  { path: '/organization', label: '企业资料', icon: OfficeBuilding },
+  ...(user.value?.role === 'SYSTEM_ADMIN' ? [
+    { path: '/hr-users', label: 'HR 用户', icon: User },
     { path: '/ai-settings', label: 'AI 接入', icon: Cpu },
     { path: '/operations', label: '运行保障', icon: Monitor },
     { path: '/audit-logs', label: '操作日志', icon: DataAnalysis },
-  ] }] : []),
+  ] : []),
 ])
 const roleLabel = computed(() => ({ SYSTEM_ADMIN: '系统管理员', RECRUITMENT_ADMIN: '招聘管理员', RECRUITER: '招聘专员' }[user.value?.role ?? 'SYSTEM_ADMIN']))
-const workspaceLabel = computed(() => ({ dashboard: '今日总览', organization: '企业与集团', 'boss-accounts': '账号与浏览器', 'job-positions': '岗位资料', candidates: '待处理消息', 'resume-intakes': '简历审核与分析', 'auto-replies': '值守规则与记录', 'hr-users': 'HR 用户', 'audit-logs': '操作日志', operations: '运行保障', 'ai-settings': 'AI 接入' }[String(route.name)] ?? '招聘值守台'))
+const workspaceLabel = computed(() => ({ dashboard: '今日总览', organization: '企业资料', 'boss-accounts': '招聘账号', 'job-positions': '岗位资料', candidates: '待处理消息', 'resume-intakes': '简历分析', 'auto-replies': '消息值守', 'hr-users': 'HR 用户', 'audit-logs': '操作日志', operations: '运行保障', 'ai-settings': 'AI 接入' }[String(route.name)] ?? '招聘值守台'))
+
+watch(() => route.path, path => {
+  if (managementPaths.includes(path)) managementOpen.value = true
+})
 
 function navigate(path: string) {
   mobileNavOpen.value = false
@@ -74,6 +80,16 @@ async function handleLogout() {
             <el-icon :size="19"><component :is="item.icon" /></el-icon><span>{{ item.label }}</span>
           </button>
         </section>
+        <section v-if="managementItems.length" class="nav-group management-group">
+          <button type="button" class="management-toggle" :aria-expanded="managementOpen" @click="managementOpen = !managementOpen">
+            <span><el-icon :size="17"><Setting /></el-icon>管理中心</span><el-icon class="toggle-arrow" :class="{ open: managementOpen }"><ArrowDown /></el-icon>
+          </button>
+          <div v-show="managementOpen" class="management-items">
+            <button v-for="item in managementItems" :key="item.path" type="button" class="nav-item nav-item--secondary" :class="{ active: activePath === item.path }" @click="navigate(item.path)">
+              <el-icon :size="18"><component :is="item.icon" /></el-icon><span>{{ item.label }}</span>
+            </button>
+          </div>
+        </section>
       </nav>
       <div class="sidebar-foot"><i></i><div><span>安全保护已开启</span><strong>异常、掉线或页面变化时暂停</strong></div></div>
     </aside>
@@ -100,6 +116,7 @@ async function handleLogout() {
       <template #header><div class="drawer-brand"><span class="brand-mark">招</span><span><strong>招聘值守台</strong><small>内部招聘 · 安全协作</small></span></div></template>
       <nav class="drawer-nav" aria-label="移动端主导航">
         <section v-for="group in navigationGroups" :key="group.label"><span class="drawer-group-label">{{ group.label }}</span><button v-for="item in group.items" :key="item.path" type="button" :class="{ active: activePath === item.path }" @click="navigate(item.path)"><el-icon :size="20"><component :is="item.icon" /></el-icon>{{ item.label }}</button></section>
+        <section v-if="managementItems.length"><span class="drawer-group-label">管理中心</span><button v-for="item in managementItems" :key="item.path" type="button" :class="{ active: activePath === item.path }" @click="navigate(item.path)"><el-icon :size="20"><component :is="item.icon" /></el-icon>{{ item.label }}</button></section>
       </nav>
     </el-drawer>
   </div>
@@ -116,6 +133,7 @@ async function handleLogout() {
 .sidebar-mode { display:grid;grid-template-columns:8px auto;column-gap:8px;align-items:center;margin:22px 7px 0;padding:10px 11px;border:1px solid rgba(154,204,195,.17);border-radius:10px;background:rgba(255,255,255,.055);color:#d7f2ed;font-size:11px; }.sidebar-mode i,.sidebar-foot>i,.monitor-chip i{width:7px;height:7px;border-radius:50%;background:#f8b84e;box-shadow:0 0 0 4px rgba(248,184,78,.11)}.sidebar-mode small{grid-column:2;margin-top:3px;color:#8fb8b1;font-size:10px}
 .nav-list { display: grid; gap: 18px; margin-top: 26px; }.nav-group { display: grid; gap: 4px; }.nav-group:not(:first-child){padding-top:17px;border-top:1px solid rgba(255,255,255,.07)}.nav-group-label,.drawer-group-label { display:block; padding:0 12px 8px; color:#75a49e; font-size:10px; font-weight:780; letter-spacing:.12em; }
 .nav-item, .drawer-nav button { display: flex; width: 100%; min-height: 45px; align-items: center; gap: 11px; border: 0; border-radius: 10px; cursor: pointer; font-weight: 640; text-align: left; transition: background-color .18s ease, color .18s ease, transform .18s ease; }.nav-item { padding: 0 13px; background: transparent; color: #bad2ce; }.nav-item:hover { transform:translateX(2px); background: rgba(255,255,255,.075); color: #fff; }.nav-item.active { background: linear-gradient(90deg,rgba(45,212,191,.22),rgba(45,212,191,.09)); color: #fff; box-shadow: inset 3px 0 0 #5eead4,0 5px 16px rgba(0,0,0,.08); }
+.management-toggle{display:flex;width:100%;height:42px;align-items:center;justify-content:space-between;padding:0 12px;border:0;border-radius:10px;background:transparent;color:#88ada8;cursor:pointer;font-size:12px;font-weight:700}.management-toggle>span{display:flex;align-items:center;gap:10px}.management-toggle:hover{background:rgba(255,255,255,.055);color:#d8ebe8}.toggle-arrow{transition:transform .18s ease}.toggle-arrow.open{transform:rotate(180deg)}.management-items{display:grid;gap:3px;margin-top:3px;padding-left:8px}.nav-item--secondary{min-height:39px;font-size:12px}.nav-item--secondary.active{box-shadow:inset 2px 0 0 #5eead4}.management-group{padding-top:13px!important}
 .sidebar-foot { display:flex;align-items:center;gap:10px;margin-top: auto; padding: 16px 11px 3px; border-top: 1px solid rgba(255,255,255,.12); }.sidebar-foot>i{background:#34d399;box-shadow:0 0 0 5px rgba(52,211,153,.12)}.sidebar-foot span { display: block; color: #b3d2ce; font-size: 11px; }.sidebar-foot strong { display: block; margin-top: 4px; color:#729d97;font-size: 10px;font-weight:500;line-height:1.4; }
 .workspace { min-height: 100dvh; margin-left: 252px; }.topbar { position: sticky; top: 0; z-index: 15; display: flex; height: 72px; align-items: center; justify-content: space-between; padding: 0 32px 0 40px; border-bottom: 1px solid rgba(221,231,228,.9); background: rgba(250,252,251,.88); backdrop-filter: blur(16px); }.topbar-context span { display: block; color: var(--text-secondary); font-size: 11px; }.topbar-context strong { display: block; margin-top: 3px; font-size: 15px; }.topbar-right{display:flex;align-items:center;gap:12px}.monitor-chip{display:inline-flex;align-items:center;gap:7px;padding:7px 10px;border:1px solid #f0d8ac;border-radius:999px;background:#fff8eb;color:#9a6700;font-size:11px;font-weight:700}.monitor-chip i{background:#f8b84e;box-shadow:none}
 .user-area { display: flex; align-items: center; gap: 10px;padding:5px 6px 5px 8px;border:1px solid var(--border);border-radius:12px;background:rgba(255,255,255,.78); }.user-avatar { display: grid; width: 34px; height: 34px; place-items: center; border-radius:9px; background: var(--brand-100); color: var(--brand-700); }.user-copy strong, .user-copy span { display: block; }.user-copy strong { font-size: 12px; }.user-copy span { margin-top: 2px; color: var(--text-secondary); font-size: 10px; }

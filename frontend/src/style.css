@@ -46,11 +46,11 @@ button, a, [role="button"] { touch-action: manipulation; }
 .el-button, .el-input__wrapper, .el-select__wrapper { min-height: 40px; }
 .el-button { border-radius: 9px; font-weight: 650; }
 .el-dialog { --el-dialog-border-radius: 12px; }
-.page-shell { width: min(100%, 1440px); margin: 0 auto; padding: 34px 40px 64px; }
+.page-shell { width: min(100%, 1320px); margin: 0 auto; padding: 30px 32px 56px; }
 .page-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 24px; }
 .page-heading h1 { margin: 0 0 8px; color: var(--text); font-size: clamp(24px, 2.2vw, 32px); line-height: 1.2; letter-spacing: -.02em; }
 .page-heading p { margin: 0; color: var(--text-secondary); line-height: 1.6; }
-.surface-panel { border: 1px solid var(--border); border-radius: 18px; background: rgba(255,255,255,.96); box-shadow: var(--shadow-sm); }
+.surface-panel { border: 1px solid var(--border); border-radius: 16px; background: rgba(255,255,255,.96); box-shadow: var(--shadow-sm); }
 .section-title-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 22px 24px 18px; border-bottom: 1px solid #e9efed; }
 .section-title-row h2 { margin: 0; font-size: 18px; line-height: 1.4; }
 .section-title-row p { margin: 4px 0 0; color: var(--text-secondary); font-size: 13px; }
