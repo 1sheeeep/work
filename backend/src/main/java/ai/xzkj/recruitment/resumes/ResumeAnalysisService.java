@@ -9,6 +9,7 @@ import ai.xzkj.recruitment.organization.Company;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 import tools.jackson.databind.ObjectMapper;
 
 import java.nio.charset.StandardCharsets;
@@ -25,11 +26,12 @@ public class ResumeAnalysisService {
     private final CurrentUserService users;
     private final OpenAiResumeClient client;
     private final OpenAiProperties properties;
+    private final ResumeDocumentTextExtractor documents;
     private final ObjectMapper mapper;
     private final AuditService audit;
 
     public ResumeAnalysisService(ResumeIntakeRepository intakes, AiAssistanceRunRepository runs, ResumeAnalysisFeedbackRepository feedback,
-                                 CurrentUserService users, OpenAiResumeClient client, OpenAiProperties properties,
+                                 CurrentUserService users, OpenAiResumeClient client, OpenAiProperties properties, ResumeDocumentTextExtractor documents,
                                  ObjectMapper mapper, AuditService audit) {
         this.intakes = intakes;
         this.runs = runs;
@@ -37,6 +39,7 @@ public class ResumeAnalysisService {
         this.users = users;
         this.client = client;
         this.properties = properties;
+        this.documents = documents;
         this.mapper = mapper;
         this.audit = audit;
     }
@@ -45,7 +48,26 @@ public class ResumeAnalysisService {
     public ResumeAnalysisResponse analyze(UUID intakeId, ResumeAnalysisRequest request) {
         SystemUser user = users.requireCurrentUser();
         ResumeIntake intake = requireApprovedIntake(intakeId, user);
-        String resumeText = cleanResumeText(request.resumeText());
+        return analyzeText(intake, user, cleanResumeText(request.resumeText()), "手工粘贴的已审核简历文本");
+    }
+
+    @Transactional(noRollbackFor = ApiException.class)
+    public ResumeAnalysisResponse analyzeFile(UUID intakeId, MultipartFile file, boolean externalProcessingConfirmed) {
+        if (!externalProcessingConfirmed) throw new ApiException(HttpStatus.BAD_REQUEST, "EXTERNAL_PROCESSING_CONFIRMATION_REQUIRED", "请确认可将提取的简历文本发送给 OpenAI 分析");
+        SystemUser user = users.requireCurrentUser();
+        ResumeIntake intake = requireApprovedIntake(intakeId, user);
+        ResumeDocumentTextExtractor.ExtractedResumeDocument document;
+        try {
+            document = documents.extract(file);
+        } catch (ApiException exception) {
+            audit.failure("REJECT_RESUME_DOCUMENT", "RESUME_INTAKE", intake.getId(), intake.getDisplayLabel(),
+                    "本机临时简历文件处理被拒绝，原因代码：" + exception.getCode() + "；原文件未写入业务数据库或持久卷");
+            throw exception;
+        }
+        return analyzeText(intake, user, document.text(), "本机临时提取的 " + document.type() + " 简历文本（文件摘要 " + document.documentHash().substring(0, 12) + "）");
+    }
+
+    private ResumeAnalysisResponse analyzeText(ResumeIntake intake, SystemUser user, String resumeText, String source) {
         String inputHash = hash(resumeText);
         try {
             ResumeAnalysisResult result = client.analyze(intake.getContact().getJobPosition(), resumeText, actorHash(user));
@@ -53,7 +75,7 @@ public class ResumeAnalysisService {
                     intake, user, properties.getModel(), inputHash, result.summary(), mapper.writeValueAsString(result)
             ));
             audit.success("REQUEST_OPENAI_RESUME_ANALYSIS", "RESUME_INTAKE", intake.getId(), intake.getDisplayLabel(),
-                    "HR 已确认外部 OpenAI 分析；仅保存输入摘要和结构化结果，不保存简历原文");
+                    "HR 已确认外部 OpenAI 分析（" + source + "）；仅保存输入摘要和结构化结果，不保存简历原文");
             return response(run);
         } catch (ApiException exception) {
             recordFailure(intake, user, inputHash, exception.getCode());

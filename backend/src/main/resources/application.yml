@@ -17,6 +17,11 @@ spring:
           time_zone: UTC
   jackson:
     default-property-inclusion: non_null
+  servlet:
+    multipart:
+      location: ${APP_RESUME_MULTIPART_TEMP_LOCATION:/tmp/resume-upload}
+      max-file-size: 8MB
+      max-request-size: 8MB
 
 server:
   forward-headers-strategy: framework
