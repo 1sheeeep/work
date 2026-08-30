@@ -30,3 +30,14 @@ test('recognises a ready chat page without enabling message monitoring', () => {
     reason: 'BOSS 沟通页已就绪，等待实页只监测适配确认。',
   });
 });
+
+test('does not mistake the recommended-candidates page for the conversation list', () => {
+  const result = classifyPageFacts({
+    url: 'https://www.zhipin.com/web/chat/recommend',
+    bodyReady: true,
+    hasLoginNotice: false,
+    hasRiskNotice: false,
+  });
+  assert.equal(result.code, 'NOT_CHAT_PAGE');
+  assert.equal(result.runtimeState, 'PAUSED');
+});

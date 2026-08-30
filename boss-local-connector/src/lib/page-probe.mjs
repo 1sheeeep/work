@@ -1,7 +1,7 @@
 import puppeteer from 'puppeteer-core';
 
 const RISK_URL = /\/web\/(?:common\/(?:403|nonsupport)\.html|user\/safe\/verify|passport\/)/i;
-const CHAT_URL = /\/web\/chat\//i;
+const CHAT_URL = /\/web\/chat\/(?:index|user-center)(?:[/?#]|$)/i;
 
 export function classifyPageFacts(facts) {
   if (!facts?.url) return paused('PAGE_NOT_FOUND', '未找到 BOSS 页面，已暂停。');

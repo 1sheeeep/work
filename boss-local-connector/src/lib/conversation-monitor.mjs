@@ -1,6 +1,6 @@
 import puppeteer from 'puppeteer-core';
 
-const CHAT_URL = /\/web\/chat\//i;
+const CHAT_URL = /\/web\/chat\/(?:index|user-center)(?:[/?#]|$)/i;
 const DIGEST = /^[a-f0-9]{64}$/;
 const MAX_CONVERSATIONS = 200;
 const STABILITY_DELAY_MS = 800;
