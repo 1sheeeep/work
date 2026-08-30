@@ -73,13 +73,25 @@ async function collectJobsFromBestTab() {
     throw new Error(reason);
   }
   try {
-    const response = await chrome.tabs.sendMessage(tab.id, { type: 'BRIDGE_COLLECT_JOBS' });
+    const response = await sendToBossTab(tab.id, { type: 'BRIDGE_COLLECT_JOBS' });
     if (!response?.ok) throw new Error(response?.error || '职位页面脚本未连接。');
     return response.sync || { received: 0, created: 0, updated: 0, unchanged: 0 };
   } catch (error) {
     const reason = `职位页暂未采集：${safeError(error)} 请刷新 BOSS 页面后重试。`;
     await setRuntime({ jobState: reason });
     throw new Error(reason);
+  }
+}
+
+async function sendToBossTab(tabId, message) {
+  try {
+    return await chrome.tabs.sendMessage(tabId, message);
+  } catch (error) {
+    const reason = safeError(error);
+    if (!/receiving end does not exist|could not establish connection/i.test(reason)) throw error;
+    await chrome.scripting.executeScript({ target: { tabId }, files: ['src/content.js'] });
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    return chrome.tabs.sendMessage(tabId, message);
   }
 }
 
@@ -142,7 +154,7 @@ async function collectFromBestTab() {
     return;
   }
   try {
-    const response = await chrome.tabs.sendMessage(tab.id, { type: 'BRIDGE_COLLECT' });
+    const response = await sendToBossTab(tab.id, { type: 'BRIDGE_COLLECT' });
     if (!response?.ok) throw new Error(response?.error || '页面脚本未连接。');
   } catch {
     await sendHeartbeatIfPaired(settings, 'PAUSED', 'BOSS 页面脚本尚未就绪，请手动刷新该页面。');
