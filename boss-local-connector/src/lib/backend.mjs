@@ -13,6 +13,22 @@ export async function sendHeartbeat(config, account, deviceToken, state, reason)
   });
 }
 
+export async function syncUnreadObservations(config, deviceToken, entries) {
+  return request(config.backendUrl, '/api/browser-runtime/unread-observations', {
+    method: 'POST',
+    token: deviceToken,
+    body: { entries },
+  });
+}
+
+export async function verifySelectedConversation(config, deviceToken, snapshot) {
+  return request(config.backendUrl, '/api/browser-runtime/selected-conversation', {
+    method: 'POST',
+    token: deviceToken,
+    body: snapshot,
+  });
+}
+
 async function request(backendUrl, path, options) {
   let response;
   try {

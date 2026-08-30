@@ -1,9 +1,10 @@
 import { parseArgs } from 'node:util';
 import { loadConfig, connectorDataDirectory } from './lib/config.mjs';
 import { startAccountChrome } from './lib/chrome.mjs';
-import { pairConnector, sendHeartbeat } from './lib/backend.mjs';
+import { pairConnector, sendHeartbeat, syncUnreadObservations, verifySelectedConversation } from './lib/backend.mjs';
 import { loadState, saveDeviceCredentials } from './lib/state.mjs';
 import { inspectAccountPage } from './lib/page-probe.mjs';
+import { observeUnreadConversations, readSelectedConversation } from './lib/conversation-monitor.mjs';
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
@@ -78,7 +79,7 @@ async function printStatus(accounts, state) {
 
 async function run(accounts, config, state, chromePath) {
   if (accounts.length === 0) throw new Error('没有启用的账号。');
-  console.log(`正在启动 ${accounts.length} 个独立账号 Profile；当前版本只读取页面安全信号，不读取消息正文，也不会发送内容。`);
+  console.log(`正在启动 ${accounts.length} 个独立账号 Profile；当前版本只同步脱敏未读快照，不读取消息正文，也不会发送内容。`);
   await Promise.all(accounts.map(async (account) => {
     await startAccountChrome(account, chromePath);
     await heartbeatOne(config, state, account);
@@ -103,8 +104,25 @@ async function heartbeatOne(config, state, account) {
     return inspection;
   }
   try {
-    await sendHeartbeat(config, account, credentials.deviceToken, inspection.runtimeState, inspection.reason);
-    console.log(`· ${account.label}：${inspection.code} · ${inspection.reason}`);
+    let reason = inspection.reason;
+    if (inspection.code === 'CHAT_PAGE_READY') {
+      const observation = await observeUnreadConversations(account.cdpPort);
+      if (observation.ok) {
+        await syncUnreadObservations(config, credentials.deviceToken, observation.entries);
+        reason = observation.reason;
+        const selected = await readSelectedConversation(account.cdpPort);
+        if (selected.ok) {
+          await verifySelectedConversation(config, credentials.deviceToken, selected.snapshot);
+          reason += '；已只读复核 HR 当前打开的会话。';
+        } else if (selected.code !== 'NO_SELECTED_CONVERSATION') {
+          reason += `；${selected.reason}`;
+        }
+      } else {
+        reason = observation.reason;
+      }
+    }
+    await sendHeartbeat(config, account, credentials.deviceToken, inspection.runtimeState, reason);
+    console.log(`· ${account.label}：${inspection.code} · ${reason}`);
   } catch (error) {
     console.error(`! ${account.label} 心跳失败：${error.message}`);
   }
@@ -121,5 +139,5 @@ function printHelp() {
   node src/index.mjs status --config connector.config.json
   node src/index.mjs observe --config connector.config.json
 
-每个账号必须使用不同的 profileKey 和 cdpPort。连接器只启动可见 Chrome；当前只读取登录、风险和页面状态，不读取或导出 Cookie、消息正文，也不会处理验证码。`);
+每个账号必须使用不同的 profileKey 和 cdpPort。连接器只启动可见 Chrome；它只同步会话未读计数和不可逆摘要，不读取或导出 Cookie、候选人姓名、消息正文，也不会处理验证码或发送消息。`);
 }

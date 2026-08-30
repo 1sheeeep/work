@@ -41,5 +41,18 @@ class BrowserUnreadObservationTest {
         assertThat(observation.getLatestDirection()).isNull();
     }
 
+    @Test void closesAnUnreadObservationWhenTheStableListReportsItRead(){
+        BrowserDevice device=mock(BrowserDevice.class);when(device.getBossAccount()).thenReturn(mock(BossAccount.class));
+        Instant first=Instant.parse("2026-08-29T12:00:00Z");
+        BrowserUnreadObservation observation=new BrowserUnreadObservation(device,DIGEST,first,first);
+        observation.observe(entry(1,first),first);
+
+        observation.observe(entry(0,first.plusSeconds(30)),first.plusSeconds(30));
+        observation.evaluate(first.plusSeconds(30),120,true);
+
+        assertThat(observation.isUnread()).isFalse();
+        assertThat(observation.getEligibilityStatus()).isEqualTo("HR_HANDLED");
+    }
+
     private UnreadObservationEntry entry(int unread,Instant at){return new UnreadObservationEntry(DIGEST,null,null,null,null,unread,at,at);}
 }
