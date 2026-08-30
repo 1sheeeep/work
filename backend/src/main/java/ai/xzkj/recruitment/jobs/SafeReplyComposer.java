@@ -20,15 +20,16 @@ public final class SafeReplyComposer {
     public static Composition compose(JobPosition job) {
         Company company = job.getCompany();
         List<String> missing = new ArrayList<>();
-        if (!company.isKnowledgeApproved()) missing.add("公司知识未审核");
-        if (isBlank(company.getKnowledgeIndustry())) missing.add("公司行业");
-        if (isBlank(company.getKnowledgeSummary())) missing.add("公司介绍");
-        if ("VISIBLE_PAGE".equals(job.getCaptureSource()) && !job.isCaptureVerified()) missing.add("页面采集资料待核对");
-        if ("UNREAD_OBSERVATION".equals(job.getCaptureSource()) && !job.isCaptureVerified()) missing.add("未读观察岗位资料待补全核对");
-        if (!job.isKnowledgeApproved()) missing.add("岗位知识未审核");
-        if (isBlank(job.getReplySummary())) missing.add("岗位简介");
+        List<String> blockers = new ArrayList<>();
+        addIf(!company.isKnowledgeApproved(), blockers, missing, "COMPANY_KNOWLEDGE_UNAPPROVED", "公司知识未审核");
+        addIf(isBlank(company.getKnowledgeIndustry()), blockers, missing, "COMPANY_INDUSTRY_MISSING", "公司行业");
+        addIf(isBlank(company.getKnowledgeSummary()), blockers, missing, "COMPANY_SUMMARY_MISSING", "公司介绍");
+        addIf("VISIBLE_PAGE".equals(job.getCaptureSource()) && !job.isCaptureVerified(), blockers, missing, "VISIBLE_CAPTURE_UNVERIFIED", "页面采集资料待核对");
+        addIf("UNREAD_OBSERVATION".equals(job.getCaptureSource()) && !job.isCaptureVerified(), blockers, missing, "OBSERVED_JOB_UNVERIFIED", "未读观察岗位资料待补全核对");
+        addIf(!job.isKnowledgeApproved(), blockers, missing, "JOB_KNOWLEDGE_UNAPPROVED", "岗位知识未审核");
+        addIf(isBlank(job.getReplySummary()), blockers, missing, "JOB_REPLY_SUMMARY_MISSING", "岗位简介");
         if (!missing.isEmpty()) {
-            return new Composition("GENERIC", GENERIC_REPLY, List.copyOf(missing),
+            return new Composition("GENERIC", GENERIC_REPLY, List.copyOf(blockers), List.copyOf(missing),
                     "资料不完整，已使用通用回退：" + String.join("、", missing));
         }
 
@@ -37,7 +38,7 @@ public final class SafeReplyComposer {
                 + job.getLocation() + salary + "，主要工作是" + job.getReplySummary() + "。"
                 + company.getName() + "属于" + company.getKnowledgeIndustry() + "行业，"
                 + company.getKnowledgeSummary() + "。招聘同事当前暂时不在线，稍后会继续与您沟通。";
-        return new Composition("KNOWLEDGE", content, List.of(),
+        return new Composition("KNOWLEDGE", content, List.of(), List.of(),
                 "已使用审核通过的公司知识 v" + company.getKnowledgeVersion()
                         + " 与岗位知识 v" + job.getKnowledgeVersion());
     }
@@ -46,12 +47,18 @@ public final class SafeReplyComposer {
      * 只容忍展示层差异（全半角、大小写、空白和标点）；不做包含或相似度猜测。
      */
     public static Optional<JobPosition> matchActiveJob(String observedTitle, List<JobPosition> activeJobs) {
+        return matchActiveJobDetailed(observedTitle, activeJobs).job();
+    }
+
+    public static JobMatch matchActiveJobDetailed(String observedTitle, List<JobPosition> activeJobs) {
         String target = normalizeTitle(observedTitle);
-        if (target.isEmpty()) return Optional.empty();
+        if (target.isEmpty()) return new JobMatch("TITLE_MISSING", Optional.empty());
         List<JobPosition> matched = activeJobs.stream()
                 .filter(job -> normalizeTitle(job.getTitle()).equals(target))
                 .toList();
-        return matched.size() == 1 ? Optional.of(matched.get(0)) : Optional.empty();
+        if (matched.isEmpty()) return new JobMatch("NOT_FOUND", Optional.empty());
+        if (matched.size() > 1) return new JobMatch("AMBIGUOUS", Optional.empty());
+        return new JobMatch("MATCHED", Optional.of(matched.getFirst()));
     }
 
     static String normalizeTitle(String value) {
@@ -69,6 +76,16 @@ public final class SafeReplyComposer {
         return value == null || value.isBlank();
     }
 
-    public record Composition(String mode, String content, List<String> missingFields, String reason) {
+    private static void addIf(boolean condition, List<String> blockers, List<String> missing, String code, String label) {
+        if (condition) {
+            blockers.add(code);
+            missing.add(label);
+        }
+    }
+
+    public record JobMatch(String status, Optional<JobPosition> job) {
+    }
+
+    public record Composition(String mode, String content, List<String> blockerCodes, List<String> missingFields, String reason) {
     }
 }

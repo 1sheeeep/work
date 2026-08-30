@@ -24,6 +24,10 @@ class SafeReplyComposerTest {
     void refusesAmbiguousNormalizedTitles() {
         assertThat(SafeReplyComposer.matchActiveJob("Java开发", List.of(job("Java 开发"), job("Java-开发"))))
                 .isEmpty();
+        assertThat(SafeReplyComposer.matchActiveJobDetailed("Java开发", List.of(job("Java 开发"), job("Java-开发"))).status())
+                .isEqualTo("AMBIGUOUS");
+        assertThat(SafeReplyComposer.matchActiveJobDetailed("产品经理", List.of(job("Java 开发"))).status())
+                .isEqualTo("NOT_FOUND");
     }
 
     @Test
@@ -34,11 +38,13 @@ class SafeReplyComposerTest {
         Company company = job.getCompany();
         company.updateKnowledge("企业软件服务", "100-499人", "专注于企业数字化产品", true);
         job.updateKnowledge("负责稳定的后端服务开发", "20-35K·13薪", true);
+        job.changeStatus(JobPositionStatus.ACTIVE);
         SafeReplyComposer.Composition result = SafeReplyComposer.compose(job);
 
         assertThat(result.mode()).isEqualTo("KNOWLEDGE");
         assertThat(result.content()).contains("Java 开发工程师", "企业软件服务", "20-35K·13薪");
         assertThat(result.reason()).contains("公司知识 v1", "岗位知识 v1");
+        assertThat(result.blockerCodes()).isEmpty();
     }
 
     @Test
@@ -47,10 +53,12 @@ class SafeReplyComposerTest {
         Company company = job.getCompany();
         company.updateKnowledge("企业软件服务", "100-499人", "专注于企业数字化产品", true);
         job.updateKnowledge("负责稳定的后端服务开发", "20-35K·13薪", true);
+        job.changeStatus(JobPositionStatus.ACTIVE);
         job.markVisiblePageCapture(6);
 
         assertThat(SafeReplyComposer.compose(job).mode()).isEqualTo("GENERIC");
         assertThat(SafeReplyComposer.compose(job).missingFields()).contains("页面采集资料待核对");
+        assertThat(SafeReplyComposer.compose(job).blockerCodes()).contains("VISIBLE_CAPTURE_UNVERIFIED");
 
         job.verifyVisiblePageCapture();
         assertThat(SafeReplyComposer.compose(job).mode()).isEqualTo("KNOWLEDGE");

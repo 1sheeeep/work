@@ -5,6 +5,8 @@ import ai.xzkj.recruitment.boss.BossAccount;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -111,6 +113,21 @@ class BrowserUnreadObservationTest {
 
         assertThat(observation.getDevice()).isSameAs(currentDevice);
         assertThat(observation.getAccount()).isSameAs(account);
+    }
+
+    @Test void storesStructuredDraftQualificationAndKnowledgeVersions(){
+        BrowserDevice device=mock(BrowserDevice.class);when(device.getBossAccount()).thenReturn(mock(BossAccount.class));
+        Instant now=Instant.parse("2026-08-30T12:00:00Z");UUID jobId=UUID.randomUUID();
+        BrowserUnreadObservation observation=new BrowserUnreadObservation(device,DIGEST,now,now);
+
+        observation.prepareDraft("GENERIC","已收到","资料待完善","KNOWLEDGE_BLOCKED",jobId,
+                List.of("COMPANY_KNOWLEDGE_UNAPPROVED","JOB_KNOWLEDGE_UNAPPROVED"),2,3,now);
+
+        assertThat(observation.getDraftQualification()).isEqualTo("KNOWLEDGE_BLOCKED");
+        assertThat(observation.getMatchedJobPositionId()).isEqualTo(jobId);
+        assertThat(observation.getDraftBlockerCodes()).containsExactly("COMPANY_KNOWLEDGE_UNAPPROVED","JOB_KNOWLEDGE_UNAPPROVED");
+        assertThat(observation.getDraftCompanyKnowledgeVersion()).isEqualTo(2);
+        assertThat(observation.getDraftJobKnowledgeVersion()).isEqualTo(3);
     }
 
     private UnreadObservationEntry entry(int unread,Instant at){return new UnreadObservationEntry(DIGEST,null,null,null,null,unread,at,at);}
