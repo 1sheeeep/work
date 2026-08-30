@@ -5,7 +5,7 @@ import { pairConnector, sendHeartbeat, syncUnreadObservations, verifySelectedCon
 import { accountSafety, freezeAccount, inspectStateFileSecurity, loadState, recoverAccountMonitoring, saveDeviceCredentials } from './lib/state.mjs';
 import { runConnectorPreflight } from './lib/preflight.mjs';
 import { inspectAccountPage } from './lib/page-probe.mjs';
-import { observeUnreadConversations, readSelectedConversation } from './lib/conversation-monitor.mjs';
+import { observeAccountSession } from './lib/conversation-monitor.mjs';
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
@@ -113,7 +113,8 @@ async function run(accounts, config, state, chromePath) {
 
 async function heartbeatOne(config, state, account, dataDirectory) {
   const credentials = state.accounts[account.accountId];
-  const inspection = await inspectAccountPage(account.cdpPort);
+  const session = await observeAccountSession(account.cdpPort);
+  const inspection = session.inspection;
   if (!credentials?.deviceToken) {
     console.log(`! ${account.label} 未配对；请在后台生成连接令牌后执行 pair。`);
     return inspection;
@@ -129,11 +130,11 @@ async function heartbeatOne(config, state, account, dataDirectory) {
     }
     let reason = inspection.reason;
     if (inspection.code === 'CHAT_PAGE_READY') {
-      const observation = await observeUnreadConversations(account.cdpPort);
+      const observation = session.observation;
       if (observation.ok) {
         await syncUnreadObservations(config, credentials.deviceToken, observation.entries);
         reason = observation.reason;
-        const selected = await readSelectedConversation(account.cdpPort);
+        const selected = session.selected;
         if (selected.ok) {
           await verifySelectedConversation(config, credentials.deviceToken, selected.snapshot);
           reason += '；已只读复核 HR 当前打开的会话。';

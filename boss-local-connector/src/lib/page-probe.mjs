@@ -28,22 +28,26 @@ export async function inspectAccountPage(cdpPort) {
     const pages = (await browser.pages()).filter((page) => !page.isClosed());
     const page = pages.find((item) => isBossUrl(item.url())) ?? pages.find((item) => item.url() !== 'about:blank');
     if (!page) return paused('PAGE_NOT_FOUND', '未找到 BOSS 页面，已暂停。');
-    const facts = await page.evaluate(() => {
-      const text = document.body?.innerText ?? '';
-      const hasAny = (terms) => terms.some((term) => text.includes(term));
-      return {
-        url: window.location.href,
-        bodyReady: text.trim().length > 0,
-        hasLoginNotice: hasAny(['扫码登录', '账号登录', '登录BOSS直聘', '请先登录']),
-        hasRiskNotice: hasAny(['安全验证', '账号异常', '风险验证', '滑动验证', '访问受限']),
-      };
-    });
-    return classifyPageFacts(facts);
+    return inspectBossPage(page);
   } catch {
     return paused('CDP_UNAVAILABLE', '无法建立本地 CDP 只读连接，已暂停。');
   } finally {
     await browser?.disconnect().catch(() => {});
   }
+}
+
+export async function inspectBossPage(page) {
+  const facts = await page.evaluate(() => {
+    const text = document.body?.innerText ?? '';
+    const hasAny = (terms) => terms.some((term) => text.includes(term));
+    return {
+      url: window.location.href,
+      bodyReady: text.trim().length > 0,
+      hasLoginNotice: hasAny(['扫码登录', '账号登录', '登录BOSS直聘', '请先登录']),
+      hasRiskNotice: hasAny(['安全验证', '账号异常', '风险验证', '滑动验证', '访问受限']),
+    };
+  });
+  return classifyPageFacts(facts);
 }
 
 function isBossUrl(value) {

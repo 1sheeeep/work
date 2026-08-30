@@ -1,4 +1,5 @@
 import puppeteer from 'puppeteer-core';
+import { inspectBossPage } from './page-probe.mjs';
 
 const CHAT_URL = /\/web\/chat\/(?:index|user-center)(?:[/?#]|$)/i;
 const DIGEST = /^[a-f0-9]{64}$/;
@@ -41,6 +42,49 @@ export async function observeUnreadConversations(cdpPort) {
     return validateUnreadSnapshot(second);
   } catch {
     return blocked('无法建立本地 CDP 只读连接，已暂停未读监测。');
+  } finally {
+    await browser?.disconnect().catch(() => {});
+  }
+}
+
+// One heartbeat owns one CDP attachment. Page classification, the two stable
+// snapshots and the selected-conversation check all share that attachment so
+// the real browser is not repeatedly attached and detached during one cycle.
+export async function observeAccountSession(cdpPort) {
+  let browser;
+  try {
+    browser = await puppeteer.connect({ browserURL: `http://127.0.0.1:${cdpPort}`, defaultViewport: null });
+    const pages = (await browser.pages()).filter((item) => !item.isClosed());
+    const page = pages.find((item) => CHAT_URL.test(item.url()))
+      ?? pages.find((item) => isBossUrl(item.url()));
+    if (!page) {
+      return {
+        inspection: { runtimeState: 'PAUSED', code: 'PAGE_NOT_FOUND', reason: '未找到 BOSS 页面，已暂停。' },
+      };
+    }
+    const inspection = await inspectBossPage(page);
+    if (inspection.code !== 'CHAT_PAGE_READY') return { inspection };
+
+    await page.waitForSelector(SELECTORS.conversation, { visible: true, timeout: 5_000 }).catch(() => null);
+    const [firstList, firstSelected] = await Promise.all([collectSnapshot(page), collectSelectedConversation(page)]);
+    await delay(STABILITY_DELAY_MS);
+    const [secondList, secondSelected] = await Promise.all([collectSnapshot(page), collectSelectedConversation(page)]);
+
+    let observation;
+    if (!firstList.ok) observation = firstList;
+    else if (!secondList.ok) observation = secondList;
+    else if (firstList.signature !== secondList.signature) observation = blocked('会话列表仍在更新，已暂停未读监测以避免错误计时。');
+    else observation = validateUnreadSnapshot(secondList);
+
+    return {
+      inspection,
+      observation,
+      selected: validateStableSelected(firstSelected, secondSelected),
+    };
+  } catch {
+    return {
+      inspection: { runtimeState: 'PAUSED', code: 'CDP_UNAVAILABLE', reason: '无法建立本地 CDP 只读连接，已暂停。' },
+    };
   } finally {
     await browser?.disconnect().catch(() => {});
   }
@@ -115,6 +159,15 @@ export function validateSelectedConversation(snapshot) {
     return { ok: false, code: 'UNREAD_STATE_UNRECOGNISED', reason: '无法可靠识别当前会话未读状态，跳过详情复核。' };
   }
   return { ok: true, snapshot: { chatDigest, messageDigest, direction, messageAt, selectedUnread } };
+}
+
+export function validateStableSelected(first, second) {
+  if (!first?.ok) return first;
+  if (!second?.ok) return second;
+  if (first.signature !== second.signature) {
+    return { ok: false, code: 'DETAIL_CHANGING', reason: '当前会话消息仍在更新，跳过本次详情复核。' };
+  }
+  return validateSelectedConversation(second);
 }
 
 async function collectSnapshot(page) {
@@ -275,4 +328,12 @@ function blocked(reason) {
 
 function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function isBossUrl(value) {
+  try {
+    return new URL(value).hostname.endsWith('zhipin.com');
+  } catch {
+    return false;
+  }
 }

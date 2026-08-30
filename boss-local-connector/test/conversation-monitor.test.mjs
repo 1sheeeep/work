@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validateSelectedConversation, validateUnreadSnapshot } from '../src/lib/conversation-monitor.mjs';
+import { validateSelectedConversation, validateStableSelected, validateUnreadSnapshot } from '../src/lib/conversation-monitor.mjs';
 
 const digest = 'a'.repeat(64);
 
@@ -64,4 +64,18 @@ test('rejects selected conversation details with an unparseable message time', (
   });
   assert.equal(result.ok, false);
   assert.equal(result.code, 'TIME_UNRECOGNISED');
+});
+
+test('accepts selected conversation only when both snapshots are identical', () => {
+  const snapshot = {
+    ok: true,
+    chatDigest: digest,
+    messageDigest: 'b'.repeat(64),
+    direction: 'OUTBOUND',
+    messageAt: '2026-08-30T06:40:00.000Z',
+    selectedUnread: false,
+    signature: 'stable-detail',
+  };
+  assert.equal(validateStableSelected(snapshot, snapshot).ok, true);
+  assert.equal(validateStableSelected(snapshot, { ...snapshot, signature: 'changed-detail' }).code, 'DETAIL_CHANGING');
 });
