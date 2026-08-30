@@ -14,4 +14,5 @@ import jakarta.validation.Valid;import org.springframework.http.HttpHeaders;impo
  @GetMapping("/api/local-connector/capabilities")public List<ConnectorCapabilityResponse> capabilities(){return service.listCapabilities();}
  @GetMapping("/api/local-connector/action-tasks")public List<ConnectorActionTaskResponse> actions(){return service.listActionTasks();}
  @PostMapping("/api/local-connector/action-tasks")public ConnectorActionTaskResponse createAction(@Valid@RequestBody CreateActionTaskRequest r){return service.createActionTask(r);}
+ @GetMapping("/api/local-connector/validation-cases")public List<ConnectorValidationCaseResponse> validations(){return service.listValidationCases();}
 }

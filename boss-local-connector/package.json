@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node src/index.mjs start",
     "status": "node src/index.mjs status",
-    "check": "node --check src/index.mjs && node --check src/lib/config.mjs && node --check src/lib/chrome.mjs && node --check src/lib/page-probe.mjs && node --check src/lib/conversation-monitor.mjs && node --check src/lib/backend.mjs && node --check src/lib/state.mjs",
+    "check": "node --check src/index.mjs && node --check src/lib/config.mjs && node --check src/lib/chrome.mjs && node --check src/lib/page-probe.mjs && node --check src/lib/conversation-monitor.mjs && node --check src/lib/controlled-action.mjs && node --check src/lib/backend.mjs && node --check src/lib/state.mjs",
     "test": "node --test"
   },
   "dependencies": {
