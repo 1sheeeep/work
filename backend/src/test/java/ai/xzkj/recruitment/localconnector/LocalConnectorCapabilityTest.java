@@ -2,7 +2,7 @@ package ai.xzkj.recruitment.localconnector;
 
 import org.junit.jupiter.api.Test;
 import java.time.Instant;
-import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.mock;
 
 class LocalConnectorCapabilityTest {
@@ -29,4 +29,6 @@ class LocalConnectorCapabilityTest {
         assertThat(capability.getStatus()).isEqualTo("READY_FOR_MANUAL_TEST");
         assertThat(capability.getReason()).contains("尚未批准生产");
     }
+
+    @Test void productionApprovalRequiresManualReadiness(){LocalConnectorCapability capability=new LocalConnectorCapability(mock(BrowserDevice.class),"SEND_MESSAGE");assertThatThrownBy(()->capability.approveProduction(Instant.now())).hasMessage("页面能力尚未通过人工验收");capability.readyForManualTest("a".repeat(64),Instant.now());capability.approveProduction(Instant.now());assertThat(capability.getStatus()).isEqualTo("PRODUCTION_APPROVED");}
 }
