@@ -12,9 +12,18 @@ test('only accepts the local recruitment console URL', () => {
 });
 
 test('accepts a minimized unread snapshot and selected direction', () => {
-  const payload = { pageState: 'CHAT_PAGE_READY', entries: [{ chatDigest: digest, previewDigest: digest2, jobDigest: null, jobTitle: null, timeDigest: null, unreadCount: 2 }], selected: { chatDigest: digest, messageDigest: digest2, direction: 'INBOUND', messageAt: '2026-08-30T08:00:00.000Z', selectedUnread: true } };
+  const payload = { pageState: 'CHAT_PAGE_READY', entries: [{ chatDigest: digest, previewDigest: digest2, jobDigest: null, jobTitle: null, timeDigest: null, unreadCount: 2 }], selected: { chatDigest: digest, messageDigest: digest2, direction: 'INBOUND', messageAt: '2026-08-30T08:00:00.000Z', selectedUnread: true, observedAt: '2026-08-30T08:00:01.000Z' } };
   assert.equal(validateSnapshot(payload), payload);
   assert.match(snapshotSignature(payload), /^a{64}:2:/);
+});
+
+test('binds selected detail to the current list and includes it in deduplication', () => {
+  const entry = { chatDigest: digest, previewDigest: null, jobDigest: null, jobTitle: null, timeDigest: null, unreadCount: 1 };
+  const selected = { chatDigest: digest, messageDigest: digest2, direction: 'INBOUND', messageAt: '2026-08-30T08:00:00.000Z', selectedUnread: false, observedAt: '2026-08-30T08:00:01.000Z' };
+  const first = { pageState: 'CHAT_PAGE_READY', entries: [entry], selected };
+  const changed = { ...first, selected: { ...selected, direction: 'OUTBOUND' } };
+  assert.notEqual(snapshotSignature(first), snapshotSignature(changed));
+  assert.throws(() => validateSnapshot({ ...first, selected: { ...selected, chatDigest: 'c'.repeat(64) } }), /不属于/);
 });
 
 test('rejects duplicate identities and raw or malformed values', () => {

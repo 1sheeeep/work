@@ -83,5 +83,35 @@ class BrowserUnreadObservationTest {
         assertThat(observation.getEligibilityStatus()).isEqualTo("DETAIL_REQUIRED");
     }
 
+    @Test void keepsConversationPendingWhenOpeningItClearsTheBadgeButLatestMessageIsInbound(){
+        BrowserDevice device=mock(BrowserDevice.class);when(device.getBossAccount()).thenReturn(mock(BossAccount.class));
+        Instant first=Instant.parse("2026-08-29T12:00:00Z"),opened=first.plusSeconds(30);
+        BrowserUnreadObservation observation=new BrowserUnreadObservation(device,DIGEST,first,first);
+        observation.observe(entry(1,first),first);
+        observation.observe(entry(0,opened),opened);
+
+        observation.verifyDetail("b".repeat(64),"INBOUND",first,false,opened);
+        observation.evaluate(opened,120,true);
+
+        assertThat(observation.isUnread()).isTrue();
+        assertThat(observation.getUnreadCount()).isOne();
+        assertThat(observation.getResolutionStatus()).isEqualTo("UNRESOLVED");
+        assertThat(observation.getLatestDirection()).isEqualTo("INBOUND");
+        assertThat(observation.getEligibilityStatus()).isEqualTo("OBSERVING");
+    }
+
+    @Test void movesAReappearingConversationToTheCurrentBridgeDevice(){
+        BrowserDevice oldDevice=mock(BrowserDevice.class),currentDevice=mock(BrowserDevice.class);
+        BossAccount account=mock(BossAccount.class);
+        when(oldDevice.getBossAccount()).thenReturn(account);when(currentDevice.getBossAccount()).thenReturn(account);
+        Instant first=Instant.parse("2026-08-29T12:00:00Z");
+        BrowserUnreadObservation observation=new BrowserUnreadObservation(oldDevice,DIGEST,first,first);
+
+        observation.attachSource(currentDevice);
+
+        assertThat(observation.getDevice()).isSameAs(currentDevice);
+        assertThat(observation.getAccount()).isSameAs(account);
+    }
+
     private UnreadObservationEntry entry(int unread,Instant at){return new UnreadObservationEntry(DIGEST,null,null,null,null,unread,at,at);}
 }

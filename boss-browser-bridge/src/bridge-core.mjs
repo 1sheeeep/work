@@ -35,7 +35,10 @@ export function validateSnapshot(payload) {
       throw new Error('岗位标题无效。');
     }
   }
-  if (payload.selected !== null && payload.selected !== undefined) validateSelected(payload.selected);
+  if (payload.selected !== null && payload.selected !== undefined) {
+    validateSelected(payload.selected);
+    if (!seen.has(payload.selected.chatDigest)) throw new Error('选中会话不属于本次稳定列表。');
+  }
   return payload;
 }
 
@@ -43,14 +46,19 @@ export function validateSelected(selected) {
   if (!DIGEST_PATTERN.test(selected?.chatDigest || '') || !DIGEST_PATTERN.test(selected?.messageDigest || '')) throw new Error('选中会话摘要无效。');
   if (!['INBOUND', 'OUTBOUND'].includes(selected.direction)) throw new Error('最后消息方向无效。');
   if (!Number.isFinite(Date.parse(selected.messageAt))) throw new Error('最后消息时间无效。');
+  if (!Number.isFinite(Date.parse(selected.observedAt))) throw new Error('会话复核时间无效。');
   if (typeof selected.selectedUnread !== 'boolean') throw new Error('选中会话未读状态无效。');
   return selected;
 }
 
 export function snapshotSignature(payload) {
-  return payload.entries
+  const list = payload.entries
     .map((entry) => [entry.chatDigest, entry.unreadCount, entry.previewDigest || '', entry.jobDigest || '', entry.timeDigest || ''].join(':'))
     .join('|');
+  const selected = payload.selected
+    ? [payload.selected.chatDigest, payload.selected.messageDigest, payload.selected.direction, payload.selected.messageAt, payload.selected.selectedUnread].join(':')
+    : 'none';
+  return `${list}|selected:${selected}`;
 }
 
 export function publicStatus(settings, runtime) {

@@ -48,7 +48,8 @@
       const firstSelected = await collectSelectedConversation();
       await delay(250);
       const secondSelected = await collectSelectedConversation();
-      const selected = firstSelected.ok && secondSelected.ok && firstSelected.signature === secondSelected.signature ? stripSelected(secondSelected) : null;
+      const stableSelected = firstSelected.ok && secondSelected.ok && firstSelected.signature === secondSelected.signature ? secondSelected : null;
+      const selected = stableSelected && second.entries.some((entry) => entry.chatDigest === stableSelected.chatDigest) ? stripSelected(stableSelected) : null;
       await send({ type: 'BRIDGE_PAGE_SNAPSHOT', payload: { pageState: 'CHAT_PAGE_READY', entries: second.entries, selected } });
     } finally {
       collecting = false;
@@ -136,7 +137,7 @@
     const date = new Date(now); date.setFullYear(match[1] ? Number(match[1]) : now.getFullYear(), Number(match[2]) - 1, Number(match[3])); date.setHours(Number(match[4]), Number(match[5]), 0, 0); if (!match[1] && date.getTime() > now.getTime() + 86_400_000) date.setFullYear(date.getFullYear() - 1); return date.toISOString();
   }
   function blocked(code, reason) { return { ok: false, code, reason }; }
-  function stripSelected(value) { return { chatDigest: value.chatDigest, messageDigest: value.messageDigest, direction: value.direction, messageAt: value.messageAt, selectedUnread: value.selectedUnread }; }
+  function stripSelected(value) { return { chatDigest: value.chatDigest, messageDigest: value.messageDigest, direction: value.direction, messageAt: value.messageAt, selectedUnread: value.selectedUnread, observedAt: new Date().toISOString() }; }
   function delay(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
   async function send(message) { try { return await chrome.runtime.sendMessage(message); } catch { return null; } }
 })();
