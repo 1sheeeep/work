@@ -2,7 +2,7 @@
 
 本工具在 HR 电脑上为多个 BOSS 账号分别启动可见的 Chrome Profile，并通过本机 CDP 端口建立连接。它不安装浏览器插件，不导出 Cookie、密码、Token 或 Chrome Profile。
 
-当前版本只完成多账号 Profile、手动登录、一次性连接令牌和安全心跳。会话读取、受控回复、简历操作和 AI 分析将在后续版本逐项接入；未接入前所有账号都会以 `PAUSED` 心跳上报，绝不发送消息。
+当前版本完成多账号 Profile、手动登录、一次性连接令牌、安全心跳和只读页面安全探针。探针只判断 BOSS 页面、沟通页、登录失效和风险/验证提示；不读取候选人姓名或消息正文。会话读取、受控回复、简历操作和 AI 分析将在后续版本逐项接入；未接入前所有账号都会以 `PAUSED` 心跳上报，绝不发送消息。
 
 ## 初次配置
 
@@ -25,6 +25,12 @@
 
    ```bash
    node src/index.mjs start --config connector.config.json
+   ```
+
+7. 只检查当前页面状态、不启动常驻进程：
+
+   ```bash
+   node src/index.mjs observe --config connector.config.json
    ```
 
 ## 多账号隔离
