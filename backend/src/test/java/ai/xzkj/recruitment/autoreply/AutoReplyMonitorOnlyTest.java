@@ -7,6 +7,8 @@ import ai.xzkj.recruitment.auth.UserRole;
 import ai.xzkj.recruitment.boss.BossAccount;
 import ai.xzkj.recruitment.boss.BossAccountRepository;
 import ai.xzkj.recruitment.boss.BossGateway;
+import ai.xzkj.recruitment.boss.BossCapability;
+import ai.xzkj.recruitment.boss.BossConnectionStatus;
 import ai.xzkj.recruitment.common.ApiException;
 import ai.xzkj.recruitment.organization.Company;
 import ai.xzkj.recruitment.organization.GroupProfile;
@@ -19,6 +21,8 @@ import java.util.Optional;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -44,5 +48,35 @@ class AutoReplyMonitorOnlyTest {
         assertThatThrownBy(() -> service.update(account.getId(), request))
                 .isInstanceOf(ApiException.class)
                 .hasMessage("当前为只监测测试模式，禁止开启自动回复");
+    }
+
+    @Test
+    void allowsDraftOnlyMonitoringWithoutMessageSendCapability() {
+        AutoReplyPolicyRepository policies = mock(AutoReplyPolicyRepository.class);
+        BossAccountRepository accounts = mock(BossAccountRepository.class);
+        CurrentUserService users = mock(CurrentUserService.class);
+        GroupProfile group = new GroupProfile("测试集团", "测试");
+        Company company = new Company(group, "测试企业", "TEST", null, null);
+        BossAccount account = new BossAccount(company, "测试账号", "test-account");
+        account.applyCapabilityCheck(BossConnectionStatus.CONNECTED, Set.of(BossCapability.CANDIDATE_READ, BossCapability.JOB_SYNC));
+        SystemUser admin = new SystemUser("admin", "hash", "管理员", UserRole.RECRUITMENT_ADMIN);
+        admin.assignCompanyScopes(Set.of(company));
+        when(users.requireCurrentUser()).thenReturn(admin);
+        when(accounts.findWithDetailsById(account.getId())).thenReturn(Optional.of(account));
+        when(policies.findByBossAccountId(account.getId())).thenReturn(Optional.empty());
+        when(policies.save(any(AutoReplyPolicy.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        AutoReplyService service = new AutoReplyService(policies, mock(AutoReplyAttemptRepository.class), accounts,
+                mock(ConversationMessageRepository.class), users, mock(BossGateway.class), mock(AuditService.class), true);
+        AutoReplyRequest request = new AutoReplyRequest(true, AwayMode.TEMPORARY, Instant.now().plusSeconds(3600), false,
+                120, 20, 180, LocalTime.of(9, 0), LocalTime.of(21, 0), "Asia/Shanghai", 3, "您好，已收到消息。");
+
+        AutoReplyResponse response = service.update(account.getId(), request);
+
+        assertThat(response.configured()).isTrue();
+        assertThat(response.enabled()).isTrue();
+        assertThat(response.awayActive()).isTrue();
+        assertThat(response.messageSendCapable()).isFalse();
+        assertThat(response.autoSendEnabled()).isFalse();
     }
 }
