@@ -62,6 +62,13 @@ public class JobPositionController {
         return service.verifyVisiblePageCapture(id);
     }
 
+    @PostMapping("/{id}/review-and-activate")
+    @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'RECRUITMENT_ADMIN')")
+    public JobPositionResponse reviewAndActivate(@PathVariable UUID id,
+                                                  @Valid @RequestBody JobPositionReviewRequest request) {
+        return service.reviewAndActivate(id, request);
+    }
+
     @GetMapping("/{id}/reply-preview")
     public ReplyPreviewResponse previewReply(@PathVariable UUID id) {
         return service.previewReply(id);

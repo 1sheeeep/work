@@ -108,6 +108,10 @@ public class JobPositionService {
             if ("UNREAD_OBSERVATION".equals(job.getCaptureSource()) && !job.isCaptureVerified()) {
                 throw new ApiException(HttpStatus.CONFLICT, "OBSERVED_JOB_NOT_VERIFIED", "请先补全并核对未读观察导入的岗位资料");
             }
+            if (!"MANUAL".equals(job.getCaptureSource()) && !"KNOWLEDGE".equals(SafeReplyComposer.compose(job).mode())) {
+                throw new ApiException(HttpStatus.CONFLICT, "IMPORTED_JOB_REVIEW_INCOMPLETE",
+                        "采集岗位必须完成企业知识、岗位知识和页面资料审核后才能启用");
+            }
         }
         JobPositionStatus previous = job.getStatus();
         job.changeStatus(targetStatus);
@@ -146,6 +150,48 @@ public class JobPositionService {
         return JobPositionResponse.from(job);
     }
 
+    @Transactional
+    public JobPositionResponse reviewAndActivate(UUID id, JobPositionReviewRequest request) {
+        SystemUser user = requireManager();
+        JobPosition job = requireAccessibleJob(id, user);
+        if (job.getStatus() != JobPositionStatus.DRAFT || "MANUAL".equals(job.getCaptureSource())) {
+            throw new ApiException(HttpStatus.CONFLICT, "IMPORTED_JOB_REVIEW_REQUIRED",
+                    "只有页面采集或未读观察形成的岗位草稿可以使用快速审核");
+        }
+        if (request.salaryMaxK() < request.salaryMinK()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_SALARY_RANGE", "月薪上限不能低于月薪下限");
+        }
+        requireCompletedReviewProfile(request);
+        Company company = requireActiveAccessibleCompany(job.getCompany().getId(), user);
+        BossAccount account = requireEligibleBossAccount(job.getBossAccount().getId(), company, user);
+        if (!company.isKnowledgeApproved() || company.getKnowledgeIndustry() == null
+                || company.getKnowledgeIndustry().isBlank() || company.getKnowledgeSummary() == null
+                || company.getKnowledgeSummary().isBlank()) {
+            throw new ApiException(HttpStatus.CONFLICT, "COMPANY_KNOWLEDGE_NOT_READY",
+                    "请先由系统管理员填写并审核企业回复知识");
+        }
+        boolean duplicateActiveTitle = jobRepository.findAllByBossAccountIdAndStatus(account.getId(), JobPositionStatus.ACTIVE)
+                .stream().filter(other -> !other.getId().equals(job.getId()))
+                .anyMatch(other -> SafeReplyComposer.normalizePublicTitle(other.getTitle())
+                        .equals(SafeReplyComposer.normalizePublicTitle(job.getTitle())));
+        if (duplicateActiveTitle) {
+            throw new ApiException(HttpStatus.CONFLICT, "DUPLICATE_ACTIVE_JOB_TITLE",
+                    "同一 BOSS 账号下已有标题相同的启用岗位，请先核对重复资料");
+        }
+
+        job.update(company, account, job.getTitle(), cleanRequired(request.location()), request.salaryMinK(),
+                request.salaryMaxK(), request.salaryMonths(), cleanRequired(request.experienceRequirement()),
+                cleanRequired(request.educationRequirement()), cleanRequired(request.description()),
+                cleanOptional(request.screeningRequirements()));
+        job.verifyVisiblePageCapture();
+        job.updateKnowledge(cleanRequired(request.replySummary()), cleanOptional(request.salaryDisplay()), true);
+        job.changeStatus(JobPositionStatus.ACTIVE);
+        auditService.success("REVIEW_AND_ACTIVATE_IMPORTED_JOB", "JOB_POSITION", job.getId(), job.getTitle(),
+                "HR 逐项核对真实岗位资料、批准岗位知识并启用；企业知识版本 v" + company.getKnowledgeVersion()
+                        + "，岗位知识版本 v" + job.getKnowledgeVersion());
+        return JobPositionResponse.from(job);
+    }
+
     @Transactional(readOnly = true)
     public ReplyPreviewResponse previewReply(UUID id) {
         SystemUser user = currentUserService.requireCurrentUser();
@@ -169,6 +215,15 @@ public class JobPositionService {
     private void validateSalary(JobPositionUpsertRequest request) {
         if (request.salaryMaxK() < request.salaryMinK()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_SALARY_RANGE", "月薪上限不能低于月薪下限");
+        }
+    }
+
+    private void requireCompletedReviewProfile(JobPositionReviewRequest request) {
+        List<String> values = List.of(request.location(), request.experienceRequirement(),
+                request.educationRequirement(), request.description(), request.replySummary());
+        if (values.stream().anyMatch(value -> value.contains("待从 BOSS 岗位页补全"))) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "PLACEHOLDER_JOB_PROFILE",
+                    "请删除待补全占位内容，并填写真实岗位资料");
         }
     }
 

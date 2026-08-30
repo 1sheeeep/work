@@ -165,6 +165,63 @@ class JobPositionServiceTest {
         assertThat(response.missingFields()).contains("公司知识未审核", "岗位知识未审核");
     }
 
+    @Test
+    void reviewsAnObservedDraftAtomicallyAndActivatesIt() {
+        SystemUser admin = user(UserRole.RECRUITMENT_ADMIN, allowedCompany);
+        JobPosition job = job(allowedCompany, eligibleAccount, "Java 开发工程师");
+        job.markUnreadObservation("a".repeat(64), true);
+        allowedCompany.updateKnowledge("企业软件服务", "100-499人", "专注于企业数字化产品", true);
+        when(currentUserService.requireCurrentUser()).thenReturn(admin);
+        when(jobRepository.findWithDetailsById(job.getId())).thenReturn(Optional.of(job));
+        when(companyRepository.findById(allowedCompany.getId())).thenReturn(Optional.of(allowedCompany));
+        when(bossAccountRepository.findWithDetailsById(eligibleAccount.getId())).thenReturn(Optional.of(eligibleAccount));
+        when(jobRepository.findAllByBossAccountIdAndStatus(eligibleAccount.getId(), JobPositionStatus.ACTIVE)).thenReturn(List.of());
+
+        JobPositionResponse response = service.reviewAndActivate(job.getId(), reviewRequest());
+
+        assertThat(response.status()).isEqualTo(JobPositionStatus.ACTIVE);
+        assertThat(response.captureVerified()).isTrue();
+        assertThat(response.knowledgeApproved()).isTrue();
+        assertThat(response.safeReplyReady()).isTrue();
+        assertThat(response.reviewReadiness().blockers()).isEmpty();
+        verify(auditService).success("REVIEW_AND_ACTIVATE_IMPORTED_JOB", "JOB_POSITION", job.getId(),
+                "Java 开发工程师", "HR 逐项核对真实岗位资料、批准岗位知识并启用；企业知识版本 v1，岗位知识版本 v1");
+    }
+
+    @Test
+    void refusesObservedDraftActivationUntilCompanyKnowledgeIsApproved() {
+        SystemUser admin = user(UserRole.RECRUITMENT_ADMIN, allowedCompany);
+        JobPosition job = job(allowedCompany, eligibleAccount, "Java 开发工程师");
+        job.markUnreadObservation("a".repeat(64), true);
+        when(currentUserService.requireCurrentUser()).thenReturn(admin);
+        when(jobRepository.findWithDetailsById(job.getId())).thenReturn(Optional.of(job));
+        when(companyRepository.findById(allowedCompany.getId())).thenReturn(Optional.of(allowedCompany));
+        when(bossAccountRepository.findWithDetailsById(eligibleAccount.getId())).thenReturn(Optional.of(eligibleAccount));
+
+        assertThatThrownBy(() -> service.reviewAndActivate(job.getId(), reviewRequest()))
+                .isInstanceOf(ApiException.class)
+                .hasMessage("请先由系统管理员填写并审核企业回复知识");
+        assertThat(job.getStatus()).isEqualTo(JobPositionStatus.DRAFT);
+        assertThat(job.isCaptureVerified()).isFalse();
+    }
+
+    @Test
+    void blocksLegacyActivationPathForAnIncompleteImportedDraft() {
+        SystemUser admin = user(UserRole.RECRUITMENT_ADMIN, allowedCompany);
+        JobPosition job = job(allowedCompany, eligibleAccount, "Java 开发工程师");
+        job.markUnreadObservation("a".repeat(64), true);
+        job.verifyVisiblePageCapture();
+        when(currentUserService.requireCurrentUser()).thenReturn(admin);
+        when(jobRepository.findWithDetailsById(job.getId())).thenReturn(Optional.of(job));
+        when(companyRepository.findById(allowedCompany.getId())).thenReturn(Optional.of(allowedCompany));
+        when(bossAccountRepository.findWithDetailsById(eligibleAccount.getId())).thenReturn(Optional.of(eligibleAccount));
+
+        assertThatThrownBy(() -> service.changeStatus(job.getId(), JobPositionStatus.ACTIVE))
+                .isInstanceOf(ApiException.class)
+                .hasMessage("采集岗位必须完成企业知识、岗位知识和页面资料审核后才能启用");
+        assertThat(job.getStatus()).isEqualTo(JobPositionStatus.DRAFT);
+    }
+
     private BossAccount account(Company company, String name) {
         BossAccount account = new BossAccount(company, name, name + "-id");
         account.applyCapabilityCheck(BossConnectionStatus.CONNECTED, Set.of(BossCapability.JOB_SYNC));
@@ -179,6 +236,12 @@ class JobPositionServiceTest {
     private JobPositionUpsertRequest request(Company company, BossAccount account) {
         return new JobPositionUpsertRequest(company.getId(), account.getId(), " Java 开发工程师 ", " 上海 ",
                 20, 35, 13, " 3-5 年 ", " 本科 ", " 负责后端系统开发 ", " Java 基础扎实 ");
+    }
+
+    private JobPositionReviewRequest reviewRequest() {
+        return new JobPositionReviewRequest("上海·徐汇", 20, 35, 13, "3-5 年", "本科及以上",
+                "负责企业招聘产品的后端服务开发", "Java 基础扎实", "负责稳定的后端服务开发",
+                "20-35K·13薪，具体以面试沟通为准", true, true, true);
     }
 
     private SystemUser user(UserRole role, Company company) {
