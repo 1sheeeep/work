@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { publicStatus, snapshotSignature, validateBackendUrl, validateSnapshot } from '../src/bridge-core.mjs';
+import { jobSnapshotSignature, publicStatus, snapshotSignature, validateBackendUrl, validateJobSnapshot, validateSnapshot } from '../src/bridge-core.mjs';
 
 const digest = 'a'.repeat(64);
 const digest2 = 'b'.repeat(64);
@@ -42,4 +42,13 @@ test('public status never exposes the local device token and keeps legacy counte
   assert.equal(status.trackedUnread, 5);
   assert.equal(status.detailState, '尚未复核当前会话详情。');
   assert.equal('deviceToken' in status, false);
+});
+
+test('accepts minimized job snapshots and rejects duplicate or raw source identities', () => {
+  const entry = { sourceDigest: digest, title: 'Java 开发工程师', location: '上海·徐汇', salaryDisplay: '20-30K·13薪', salaryMinK: 20, salaryMaxK: 30, salaryMonths: 13, experienceRequirement: '3-5年', educationRequirement: '本科', description: null, completeness: 5 };
+  const payload = { pageState: 'JOB_MANAGEMENT_READY', entries: [entry], observedAt: '2026-08-30T08:00:00.000Z' };
+  assert.equal(validateJobSnapshot(payload), payload);
+  assert.match(jobSnapshotSignature(payload), /^a{64}:Java 开发工程师:/);
+  assert.throws(() => validateJobSnapshot({ ...payload, entries: [entry, entry] }), /重复/);
+  assert.throws(() => validateJobSnapshot({ ...payload, entries: [{ ...entry, sourceDigest: 'raw-platform-id' }] }), /摘要无效/);
 });

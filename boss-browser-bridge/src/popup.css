@@ -118,6 +118,11 @@ form {
   font-size: 12px;
   font-weight: 650;
 }
+.job-sync { display: grid; gap: 6px; margin-top: 14px; padding: 12px; border-radius: 10px; background: #f0f7f5; }
+.job-sync strong { font-size: 12px; }
+.job-sync span { color: #53615e; font-size: 11px; line-height: 1.45; }
+.job-sync small { color: #8a9693; font-size: 10px; }
+.job-sync button { justify-self: start; }
 .actions {
   display: flex;
   gap: 8px;

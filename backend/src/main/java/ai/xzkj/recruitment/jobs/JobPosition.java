@@ -125,6 +125,63 @@ public class JobPosition {
         this.captureVerifiedAt = null;
     }
 
+    public boolean applyVisiblePageObservation(String sourceKey, String observedTitle, String observedLocation,
+                                               Integer observedSalaryMinK, Integer observedSalaryMaxK,
+                                               Integer observedSalaryMonths, String observedExperience,
+                                               String observedEducation, String observedDescription,
+                                               String observedSalaryDisplay, int completeness, Instant observedAt) {
+        this.lastObservedAt = observedAt;
+        this.observationCount++;
+        if (this.observedSourceKey == null) this.observedSourceKey = sourceKey;
+        if (this.status != JobPositionStatus.DRAFT || this.captureVerified || "MANUAL".equals(this.captureSource)) {
+            return false;
+        }
+        boolean changed = false;
+        changed |= assignTitle(observedTitle);
+        changed |= assignText("location", observedLocation);
+        changed |= assignText("experience", observedExperience);
+        changed |= assignText("education", observedEducation);
+        changed |= assignText("description", observedDescription);
+        if (observedSalaryMinK != null && observedSalaryMaxK != null && observedSalaryMaxK >= observedSalaryMinK) {
+            if (salaryMinK != observedSalaryMinK || salaryMaxK != observedSalaryMaxK) changed = true;
+            salaryMinK = observedSalaryMinK;
+            salaryMaxK = observedSalaryMaxK;
+        }
+        if (observedSalaryMonths != null && observedSalaryMonths >= 12 && observedSalaryMonths <= 16) {
+            if (salaryMonths != observedSalaryMonths.shortValue()) changed = true;
+            salaryMonths = observedSalaryMonths.shortValue();
+        }
+        String cleanSalary = cleanObserved(observedSalaryDisplay);
+        if (cleanSalary != null && !cleanSalary.equals(salaryDisplay)) { salaryDisplay = cleanSalary; changed = true; }
+        if (!"VISIBLE_PAGE".equals(captureSource) || captureCompleteness == null || captureCompleteness != (short) completeness) changed = true;
+        captureSource = "VISIBLE_PAGE";
+        captureCompleteness = (short) completeness;
+        capturedAt = observedAt;
+        captureVerified = false;
+        captureVerifiedAt = null;
+        return changed;
+    }
+
+    private boolean assignTitle(String value) {
+        String clean = cleanObserved(value);
+        if (clean == null || clean.equals(title)) return false;
+        title = clean;
+        return true;
+    }
+
+    private boolean assignText(String field, String value) {
+        String clean = cleanObserved(value);
+        if (clean == null) return false;
+        return switch (field) {
+            case "location" -> { boolean changed = !clean.equals(location); location = clean; yield changed; }
+            case "experience" -> { boolean changed = !clean.equals(experienceRequirement); experienceRequirement = clean; yield changed; }
+            case "education" -> { boolean changed = !clean.equals(educationRequirement); educationRequirement = clean; yield changed; }
+            default -> { boolean changed = !clean.equals(description); description = clean; yield changed; }
+        };
+    }
+
+    private String cleanObserved(String value) { return value == null || value.isBlank() ? null : value.trim(); }
+
     public void markUnreadObservation(String sourceKey, boolean importedDraft) {
         if (importedDraft) {
             this.captureSource = "UNREAD_OBSERVATION";
@@ -170,6 +227,7 @@ public class JobPosition {
     public Instant getCaptureVerifiedAt() { return captureVerifiedAt; }
     public Instant getLastObservedAt() { return lastObservedAt; }
     public int getObservationCount() { return observationCount; }
+    public String getObservedSourceKey() { return observedSourceKey; }
     public JobPositionStatus getStatus() { return status; }
     public long getVersion() { return version; }
     public Instant getCreatedAt() { return createdAt; }

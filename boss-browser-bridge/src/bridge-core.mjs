@@ -1,6 +1,7 @@
 export const DEFAULT_BACKEND_URL = 'http://localhost:8088';
 export const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 export const MAX_CONVERSATIONS = 200;
+export const MAX_JOBS = 200;
 
 export function validateBackendUrl(value) {
   let url;
@@ -56,6 +57,29 @@ export function validateSelected(selected) {
   return selected;
 }
 
+export function validateJobSnapshot(payload) {
+  if (!payload || payload.pageState !== 'JOB_MANAGEMENT_READY') throw new Error('当前不是可采集的职位管理页。');
+  if (!Array.isArray(payload.entries) || payload.entries.length === 0 || payload.entries.length > MAX_JOBS) throw new Error('职位列表数量无效。');
+  if (!Number.isFinite(Date.parse(payload.observedAt))) throw new Error('职位快照时间无效。');
+  const seen = new Set();
+  for (const entry of payload.entries) {
+    if (!DIGEST_PATTERN.test(entry?.sourceDigest || '') || seen.has(entry.sourceDigest)) throw new Error('职位来源摘要无效或重复。');
+    seen.add(entry.sourceDigest);
+    if (typeof entry.title !== 'string' || entry.title.trim().length < 2 || entry.title.length > 120) throw new Error('职位标题无效。');
+    for (const [key, max] of [['location', 120], ['salaryDisplay', 120], ['experienceRequirement', 80], ['educationRequirement', 80], ['description', 10000]]) {
+      if (entry[key] !== null && entry[key] !== undefined && (typeof entry[key] !== 'string' || entry[key].length > max)) throw new Error('职位字段无效。');
+    }
+    for (const key of ['salaryMinK', 'salaryMaxK']) if (entry[key] !== null && entry[key] !== undefined && (!Number.isInteger(entry[key]) || entry[key] < 1 || entry[key] > 1000)) throw new Error('职位薪资无效。');
+    if (entry.salaryMonths !== null && entry.salaryMonths !== undefined && (!Number.isInteger(entry.salaryMonths) || entry.salaryMonths < 12 || entry.salaryMonths > 16)) throw new Error('职位薪数无效。');
+    if (!Number.isInteger(entry.completeness) || entry.completeness < 1 || entry.completeness > 6) throw new Error('职位完整度无效。');
+  }
+  return payload;
+}
+
+export function jobSnapshotSignature(payload) {
+  return payload.entries.map((entry) => [entry.sourceDigest, entry.title, entry.location || '', entry.salaryDisplay || '', entry.experienceRequirement || '', entry.educationRequirement || '', entry.description || ''].join(':')).join('|');
+}
+
 export function snapshotSignature(payload) {
   const list = payload.entries
     .map((entry) => [entry.chatDigest, entry.unreadCount, entry.previewDigest || '', entry.jobDigest || '', entry.timeDigest || ''].join(':'))
@@ -80,5 +104,8 @@ export function publicStatus(settings, runtime) {
     currentUnread: runtime?.currentUnread ?? runtime?.unread ?? 0,
     trackedUnread: runtime?.trackedUnread ?? runtime?.unread ?? 0,
     detailState: runtime?.detailState || '尚未复核当前会话详情。',
+    jobState: runtime?.jobState || '尚未同步职位管理页。',
+    jobTotal: runtime?.jobTotal || 0,
+    lastJobSyncAt: runtime?.lastJobSyncAt || null,
   };
 }

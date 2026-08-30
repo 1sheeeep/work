@@ -8,6 +8,7 @@ import jakarta.validation.Valid;import org.springframework.http.HttpHeaders;impo
  @PostMapping("/api/local-connector/runtime/pair")public DeviceCredentialsResponse pair(@Valid@RequestBody PairDeviceRequest r){return service.pair(r);}
  @PostMapping("/api/local-connector/runtime/heartbeat")public DeviceResponse heartbeat(@RequestHeader(HttpHeaders.AUTHORIZATION)String token,@Valid@RequestBody HeartbeatRequest r){return service.heartbeat(token,r);}
  @PostMapping("/api/local-connector/runtime/unread-observations")public UnreadObservationSyncResponse observations(@RequestHeader(HttpHeaders.AUTHORIZATION)String token,@Valid@RequestBody UnreadObservationSnapshot r){return service.observeUnread(token,r);}
+ @PostMapping("/api/local-connector/runtime/job-observations")public VisibleJobSyncResponse jobs(@RequestHeader(HttpHeaders.AUTHORIZATION)String token,@Valid@RequestBody VisibleJobSnapshot r){return service.observeVisibleJobs(token,r);}
  @PostMapping("/api/local-connector/runtime/selected-conversation")public UnreadObservationResponse selected(@RequestHeader(HttpHeaders.AUTHORIZATION)String token,@Valid@RequestBody SelectedConversationSnapshot r){return service.verifySelectedConversation(token,r);}
  @GetMapping("/api/local-connector/observations")public List<UnreadObservationResponse> observations(){return service.listUnreadObservations();}
  @GetMapping("/api/local-connector/observations/unmatched-job-groups")public List<UnmatchedJobGroupResponse> unmatchedJobGroups(){return service.listUnmatchedJobGroups();}

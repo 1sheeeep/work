@@ -1,10 +1,11 @@
-import { DEFAULT_BACKEND_URL, publicStatus, snapshotSignature, validateBackendUrl, validateSnapshot } from './bridge-core.mjs';
+import { DEFAULT_BACKEND_URL, jobSnapshotSignature, publicStatus, snapshotSignature, validateBackendUrl, validateJobSnapshot, validateSnapshot } from './bridge-core.mjs';
 
 const SETTINGS_KEY = 'bridgeSettingsV1';
 const RUNTIME_KEY = 'bridgeRuntimeV1';
 const ALARM_NAME = 'bridge-observe';
 const MIN_SYNC_INTERVAL_MS = 10_000;
 let syncInFlight = null;
+let jobSyncInFlight = null;
 
 chrome.runtime.onInstalled.addListener(() => initialise());
 chrome.runtime.onStartup.addListener(() => initialise());
@@ -40,15 +41,45 @@ async function handleMessage(message, sender) {
     case 'BRIDGE_COLLECT_NOW':
       await collectFromBestTab();
       return { ok: true, status: await getPublicStatus() };
+    case 'BRIDGE_COLLECT_JOBS_NOW':
+      await collectJobsFromBestTab();
+      return { ok: true, status: await getPublicStatus() };
     case 'BRIDGE_PAGE_SNAPSHOT':
       if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的快照。');
       return submitSnapshot(message.payload);
+    case 'BRIDGE_JOB_SNAPSHOT':
+      if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的职位快照。');
+      return submitJobSnapshot(message.payload);
+    case 'BRIDGE_JOB_BLOCKED':
+      if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的职位状态。');
+      return reportJobBlocked(message.payload);
     case 'BRIDGE_PAGE_BLOCKED':
       if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的状态。');
       return reportBlocked(message.payload);
     default:
       throw new Error('未知的桥接请求。');
   }
+}
+
+async function collectJobsFromBestTab() {
+  const settings = await getSettings();
+  if (!settings.deviceToken || settings.enabled === false) return;
+  const tabs = await chrome.tabs.query({ url: ['https://*.zhipin.com/*'] });
+  const tab = tabs.find((item) => item.active && !(item.url || '').includes('/web/chat/')) || tabs.find((item) => looksLikeJobPage(item.url));
+  if (!tab?.id) {
+    await setRuntime({ jobState: '请先在当前招聘账号中手动打开“职位管理”页面；扩展不会自动跳转。' });
+    return;
+  }
+  try {
+    const response = await chrome.tabs.sendMessage(tab.id, { type: 'BRIDGE_COLLECT_JOBS' });
+    if (!response?.ok) throw new Error(response?.error || '职位页面脚本未连接。');
+  } catch (error) {
+    await setRuntime({ jobState: `职位页暂未采集：${safeError(error)} 请刷新 BOSS 页面后重试。` });
+  }
+}
+
+function looksLikeJobPage(value) {
+  try { const path = new URL(value || '').pathname; return /(?:job|position)/i.test(path) && !path.toLowerCase().includes('/web/chat/'); } catch { return false; }
 }
 
 async function pair(payload) {
@@ -130,6 +161,29 @@ async function submitSnapshot(payload) {
   return syncInFlight;
 }
 
+async function submitJobSnapshot(payload) {
+  const settings = await getSettings();
+  if (!settings.deviceToken) return { ok: false, error: '请先用后台一次性接入码完成配对。' };
+  if (settings.enabled === false) return { ok: false, error: '只读桥接已暂停。' };
+  validateJobSnapshot(payload);
+  if (jobSyncInFlight) return jobSyncInFlight;
+  jobSyncInFlight = doSubmitJobSnapshot(settings, payload).finally(() => { jobSyncInFlight = null; });
+  return jobSyncInFlight;
+}
+
+async function doSubmitJobSnapshot(settings, payload) {
+  const runtime = await getRuntime();
+  const signature = jobSnapshotSignature(payload);
+  const now = Date.now();
+  if (runtime.lastJobSignature === signature && now - Number(runtime.lastJobSubmittedAt || 0) < MIN_SYNC_INTERVAL_MS) return { ok: true, skipped: true };
+  const sync = await request(settings.backendUrl, '/api/local-connector/runtime/job-observations', {
+    method: 'POST', token: settings.deviceToken, body: { entries: payload.entries, observedAt: payload.observedAt },
+  });
+  const jobState = `职位页同步完成：识别 ${sync.received} 个，新增 ${sync.created} 个，更新 ${sync.updated} 个，重复或无需变更 ${sync.unchanged} 个。`;
+  await setRuntime({ jobState, jobTotal: sync.received, lastJobSyncAt: new Date().toISOString(), lastJobSignature: signature, lastJobSubmittedAt: now });
+  return { ok: true, sync };
+}
+
 async function doSubmitSnapshot(settings, payload) {
   const runtime = await getRuntime();
   const signature = snapshotSignature(payload);
@@ -165,6 +219,13 @@ async function reportBlocked(payload) {
   const reason = String(payload?.reason || '当前页面不可观测。').slice(0, 220);
   await sendHeartbeatIfPaired(settings, 'PAUSED', `${code}：${reason}`);
   await setRuntime({ state: 'PAUSED', reason });
+  return { ok: true };
+}
+
+async function reportJobBlocked(payload) {
+  const code = String(payload?.code || 'JOB_PAGE_NOT_READY').slice(0, 80);
+  const reason = String(payload?.reason || '当前职位页面不可采集。').slice(0, 220);
+  await setRuntime({ jobState: `${code}：${reason}` });
   return { ok: true };
 }
 
