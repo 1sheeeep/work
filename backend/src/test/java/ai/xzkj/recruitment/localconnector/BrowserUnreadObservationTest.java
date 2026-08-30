@@ -50,5 +50,20 @@ class BrowserUnreadObservationTest {
         assertThat(observation.getEligibilityStatus()).isEqualTo("HR_HANDLED");
     }
 
+    @Test void archivesUnreadStateWhenItsConnectorDeviceHasBeenReplaced(){
+        BrowserDevice device=mock(BrowserDevice.class);when(device.getBossAccount()).thenReturn(mock(BossAccount.class));
+        Instant first=Instant.parse("2026-08-29T12:00:00Z"),replaced=first.plusSeconds(60);
+        BrowserUnreadObservation observation=new BrowserUnreadObservation(device,DIGEST,first,first);
+        observation.observe(entry(2,first),first);
+
+        observation.archiveReplacedSource(replaced);
+
+        assertThat(observation.isUnread()).isFalse();
+        assertThat(observation.getUnreadCount()).isZero();
+        assertThat(observation.getEligibilityStatus()).isEqualTo("HR_HANDLED");
+        assertThat(observation.getResolutionStatus()).isEqualTo("SOURCE_REPLACED");
+        assertThat(observation.getResolvedAt()).isEqualTo(replaced);
+    }
+
     private UnreadObservationEntry entry(int unread,Instant at){return new UnreadObservationEntry(DIGEST,null,null,null,null,unread,at,at);}
 }

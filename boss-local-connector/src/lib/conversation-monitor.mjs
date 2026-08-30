@@ -28,6 +28,8 @@ export async function observeUnreadConversations(cdpPort) {
     const page = (await browser.pages()).find((item) => !item.isClosed() && CHAT_URL.test(item.url()));
     if (!page) return blocked('未找到已打开的 BOSS 沟通页面，已暂停未读监测。');
 
+    await page.waitForSelector(SELECTORS.conversation, { visible: true, timeout: 5_000 }).catch(() => null);
+
     const first = await collectSnapshot(page);
     if (!first.ok) return first;
     await delay(STABILITY_DELAY_MS);
@@ -211,12 +213,22 @@ async function collectSelectedConversation(page) {
       const raw = String(value || '').trim();
       const direct = Date.parse(raw);
       if (Number.isFinite(direct)) return new Date(direct).toISOString();
-      const clock = raw.match(/^(\d{1,2}):(\d{2})$/);
-      if (!clock) return '';
-      const date = new Date();
-      date.setSeconds(0, 0);
-      date.setHours(Number(clock[1]), Number(clock[2]), 0, 0);
-      if (date.getTime() > Date.now() + 60_000) date.setDate(date.getDate() - 1);
+      const now = new Date();
+      let match = raw.match(/^(?:(昨天)\s*)?(\d{1,2}):(\d{2})$/);
+      if (match) {
+        const date = new Date(now);
+        date.setSeconds(0, 0);
+        date.setHours(Number(match[2]), Number(match[3]), 0, 0);
+        if (match[1]) date.setDate(date.getDate() - 1);
+        else if (date.getTime() > now.getTime() + 60_000) date.setDate(date.getDate() - 1);
+        return date.toISOString();
+      }
+      match = raw.match(/^(?:(\d{4})[-/.年])?(\d{1,2})[-/.月](\d{1,2})日?\s+(\d{1,2}):(\d{2})$/);
+      if (!match) return '';
+      const date = new Date(now);
+      date.setFullYear(match[1] ? Number(match[1]) : now.getFullYear(), Number(match[2]) - 1, Number(match[3]));
+      date.setHours(Number(match[4]), Number(match[5]), 0, 0);
+      if (!match[1] && date.getTime() > now.getTime() + 86_400_000) date.setFullYear(date.getFullYear() - 1);
       return date.toISOString();
     };
 
@@ -235,7 +247,10 @@ async function collectSelectedConversation(page) {
     if (!content) return { ok: false, code: 'MESSAGE_EMPTY', reason: '当前会话最后消息为空，跳过详情复核。' };
     const rawMessageId = stableIdentity(last);
     const messageKey = rawMessageId || `derived:${direction}:${content}`;
-    const timeText = String(last.querySelector(selectors.messageTime)?.textContent || '').trim();
+    const timeline = [...active.querySelectorAll(`${selectors.messageTime}, ${selectors.message}`)];
+    const lastIndex = timeline.indexOf(last);
+    const precedingTime = timeline.slice(0, Math.max(0, lastIndex)).reverse().find((item) => item.matches(selectors.messageTime));
+    const timeText = String(last.querySelector(selectors.messageTime)?.textContent || precedingTime?.textContent || '').trim();
     const messageAt = parseTime(timeText);
     if (!messageAt) return { ok: false, code: 'TIME_UNRECOGNISED', reason: '当前会话最后消息时间无法解析，跳过详情复核。' };
 
