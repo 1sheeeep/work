@@ -93,7 +93,7 @@ async function loadData() {
 
 function openCreate() {
   editingJob.value = null
-  const formalAccount = bossAccounts.value.find((account) => account.gatewayType === 'BROWSER_COMPANION' && account.status === 'ACTIVE' && account.capabilities.includes('JOB_SYNC'))
+  const formalAccount = bossAccounts.value.find((account) => account.gatewayType === 'LOCAL_CDP_CONNECTOR' && account.status === 'ACTIVE' && account.capabilities.includes('JOB_SYNC'))
   Object.assign(form, { companyId: formalAccount?.company.id ?? activeCompanies.value[0]?.id ?? '', bossAccountId: '', title: '', location: '', salaryMinK: 20, salaryMaxK: 30, salaryMonths: 13, experienceRequirement: '', educationRequirement: '', description: '', screeningRequirements: '' })
   form.bossAccountId = eligibleAccounts.value[0]?.id ?? ''
   formError.value = ''

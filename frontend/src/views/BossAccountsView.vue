@@ -22,7 +22,7 @@ const dialogOpen = ref(false)
 const saving = ref(false)
 const editingAccount = ref<BossAccount | null>(null)
 const formRef = ref<FormInstance>()
-const form = reactive<AccountFormValue>({ companyId: '', displayName: '', externalIdentifier: '',gatewayType:'BROWSER_COMPANION', mockProfile: 'FULL' })
+const form = reactive<AccountFormValue>({ companyId: '', displayName: '', externalIdentifier: '',gatewayType:'LOCAL_CDP_CONNECTOR', mockProfile: 'FULL' })
 const formError = ref('')
 const fieldErrors = reactive<Record<string, string>>({})
 const checkingId = ref('')
@@ -35,7 +35,7 @@ const pairingExpiresAt = ref('')
 
 const canManage = computed(() => ['SYSTEM_ADMIN', 'RECRUITMENT_ADMIN'].includes(authStore.state.user?.role ?? ''))
 const activeCompanies = computed(() => companies.value.filter((company) => company.status === 'ACTIVE'))
-const connectableAccounts = computed(() => accounts.value.filter((account) => account.gatewayType === 'BROWSER_COMPANION'))
+const connectableAccounts = computed(() => accounts.value.filter((account) => account.gatewayType === 'LOCAL_CDP_CONNECTOR'))
 const dialogTitle = computed(() => editingAccount.value ? '编辑 BOSS 账号' : '新增 BOSS 账号')
 const rules: FormRules<AccountFormValue> = {
   companyId: [{ required: true, message: '请选择归属企业', trigger: 'change' }],
@@ -104,7 +104,7 @@ function actionLabel(account: BossAccount) {
 }
 
 function openConnection(account: BossAccount) {
-  if (account.gatewayType !== 'BROWSER_COMPANION') { ElMessage.warning('Mock 测试账号不能连接真实 BOSS 浏览器'); return }
+  if (account.gatewayType !== 'LOCAL_CDP_CONNECTOR') { ElMessage.warning('Mock 测试账号不能连接真实 BOSS 浏览器'); return }
   selectedAccount.value = account
   pairingToken.value = ''
   pairingExpiresAt.value = ''
@@ -133,7 +133,7 @@ async function copyToken() {
 
 function openCreate() {
   editingAccount.value = null
-  Object.assign(form, { companyId: activeCompanies.value[0]?.id ?? '', displayName: '', externalIdentifier: '',gatewayType:'BROWSER_COMPANION', mockProfile: 'FULL' })
+  Object.assign(form, { companyId: activeCompanies.value[0]?.id ?? '', displayName: '', externalIdentifier: '',gatewayType:'LOCAL_CDP_CONNECTOR', mockProfile: 'FULL' })
   formError.value = ''
   clearFieldErrors()
   dialogOpen.value = true
@@ -232,7 +232,7 @@ onMounted(loadData)
       </section>
     </template>
 
-    <el-dialog v-model="dialogOpen" :title="dialogTitle" width="600px" destroy-on-close><el-alert v-if="formError" :title="formError" type="error" :closable="false" show-icon class="dialog-alert" /><el-form ref="formRef" :model="form" :rules="rules" label-position="top" @submit.prevent="saveAccount"><div class="form-grid"><el-form-item label="归属企业" prop="companyId" :error="fieldErrors.companyId"><el-select v-model="form.companyId" filterable placeholder="请选择有效企业"><el-option v-for="company in activeCompanies" :key="company.id" :label="`${company.name}（${company.code}）`" :value="company.id" /></el-select></el-form-item><el-form-item label="连接方式" prop="gatewayType"><el-select v-model="form.gatewayType"><el-option label="浏览器招聘账号（推荐）" value="BROWSER_COMPANION"/><el-option label="Mock 测试账号" value="MOCK"/></el-select></el-form-item><el-form-item v-if="form.gatewayType==='MOCK'" label="Mock 场景" prop="mockProfile" :error="fieldErrors.mockProfile"><el-select v-model="form.mockProfile"><el-option label="完整能力" value="FULL" /><el-option label="只读能力" value="READ_ONLY" /><el-option label="不可用" value="UNAVAILABLE" /></el-select></el-form-item><el-form-item label="账号名称" prop="displayName" :error="fieldErrors.displayName"><el-input v-model="form.displayName" maxlength="100" placeholder="例如：上海社招账号" /></el-form-item><el-form-item label="账号内部标识" prop="externalIdentifier" :error="fieldErrors.externalIdentifier"><el-input v-model="form.externalIdentifier" maxlength="120" placeholder="自定义标识，不填手机号、Cookie 或 Token" /></el-form-item></div><el-alert v-if="form.gatewayType==='MOCK'" :title="`Mock 场景用于验证状态和能力流程：${profileLabels[form.mockProfile]}`" type="info" :closable="false" /><el-alert v-else title="正式账号通过独立 Chrome Profile 和一次性配对码连接；系统不会保存 BOSS 密码、Cookie 或 Token。" type="success" :closable="false" /></el-form><template #footer><el-button @click="dialogOpen = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveAccount">{{ editingAccount ? '保存修改' : '确认创建' }}</el-button></template></el-dialog>
+    <el-dialog v-model="dialogOpen" :title="dialogTitle" width="600px" destroy-on-close><el-alert v-if="formError" :title="formError" type="error" :closable="false" show-icon class="dialog-alert" /><el-form ref="formRef" :model="form" :rules="rules" label-position="top" @submit.prevent="saveAccount"><div class="form-grid"><el-form-item label="归属企业" prop="companyId" :error="fieldErrors.companyId"><el-select v-model="form.companyId" filterable placeholder="请选择有效企业"><el-option v-for="company in activeCompanies" :key="company.id" :label="`${company.name}（${company.code}）`" :value="company.id" /></el-select></el-form-item><el-form-item label="连接方式" prop="gatewayType"><el-select v-model="form.gatewayType"><el-option label="本地 Chrome 连接器（推荐）" value="LOCAL_CDP_CONNECTOR"/><el-option label="Mock 测试账号" value="MOCK"/></el-select></el-form-item><el-form-item v-if="form.gatewayType==='MOCK'" label="Mock 场景" prop="mockProfile" :error="fieldErrors.mockProfile"><el-select v-model="form.mockProfile"><el-option label="完整能力" value="FULL" /><el-option label="只读能力" value="READ_ONLY" /><el-option label="不可用" value="UNAVAILABLE" /></el-select></el-form-item><el-form-item label="账号名称" prop="displayName" :error="fieldErrors.displayName"><el-input v-model="form.displayName" maxlength="100" placeholder="例如：上海社招账号" /></el-form-item><el-form-item label="账号内部标识" prop="externalIdentifier" :error="fieldErrors.externalIdentifier"><el-input v-model="form.externalIdentifier" maxlength="120" placeholder="自定义标识，不填手机号、Cookie 或 Token" /></el-form-item></div><el-alert v-if="form.gatewayType==='MOCK'" :title="`Mock 场景用于验证状态和能力流程：${profileLabels[form.mockProfile]}`" type="info" :closable="false" /><el-alert v-else title="正式账号由本地 CDP 连接器启动独立 Chrome Profile；系统不会保存 BOSS 密码、Cookie 或 Token。" type="success" :closable="false" /></el-form><template #footer><el-button @click="dialogOpen = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveAccount">{{ editingAccount ? '保存修改' : '确认创建' }}</el-button></template></el-dialog>
   </div>
 </template>
 

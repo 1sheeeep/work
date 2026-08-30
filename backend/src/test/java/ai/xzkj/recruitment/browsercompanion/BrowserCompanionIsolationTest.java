@@ -28,7 +28,7 @@ class BrowserCompanionIsolationTest {
         BrowserPairingCodeRepository pairings=mock(BrowserPairingCodeRepository.class);
         BrowserCompanionService service=new BrowserCompanionService(mock(BrowserDeviceRepository.class),pairings,mock(BrowserConversationBindingRepository.class),mock(BrowserSendClaimRepository.class),mock(BrowserUnreadObservationRepository.class),mock(AutoReplyPolicyRepository.class),accounts,mock(JobPositionRepository.class),mock(CandidateJobContactRepository.class),mock(ConversationMessageRepository.class),users,mock(AuditService.class),true,false);
 
-        assertThatThrownBy(()->service.createPairing(accountId)).isInstanceOfSatisfying(ApiException.class,e->org.assertj.core.api.Assertions.assertThat(e.getCode()).isEqualTo("BROWSER_ACCOUNT_REQUIRED"));
+        assertThatThrownBy(()->service.createPairing(accountId)).isInstanceOfSatisfying(ApiException.class,e->org.assertj.core.api.Assertions.assertThat(e.getCode()).isEqualTo("LOCAL_CONNECTOR_ACCOUNT_REQUIRED"));
         verifyNoInteractions(pairings);
     }
 }

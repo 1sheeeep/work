@@ -1,0 +1,21 @@
+{
+  "backendUrl": "http://localhost:8088",
+  "machineName": "HR-Mac-01",
+  "heartbeatIntervalSeconds": 30,
+  "accounts": [
+    {
+      "accountId": "replace-with-boss-account-uuid",
+      "label": "上海社招账号",
+      "profileKey": "shanghai-social",
+      "cdpPort": 54101,
+      "enabled": true
+    },
+    {
+      "accountId": "replace-with-another-boss-account-uuid",
+      "label": "技术招聘账号",
+      "profileKey": "engineering",
+      "cdpPort": 54102,
+      "enabled": false
+    }
+  ]
+}

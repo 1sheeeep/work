@@ -37,7 +37,7 @@ describe('BossAccountsView', () => {
       .mockResolvedValueOnce({ data: [{
         id: 'account-1', displayName: '上海社招账号', externalIdentifier: 'boss-shanghai', status: 'ACTIVE',
         connectionStatus: 'UNVERIFIED', capabilities: [], company: { id: 'company-1', name: '测试企业', code: 'TEST' },
-        gatewayType: 'BROWSER_COMPANION',
+        gatewayType: 'LOCAL_CDP_CONNECTOR',
       }] })
       .mockResolvedValueOnce({ data: [] })
       .mockResolvedValueOnce({ data: [] })

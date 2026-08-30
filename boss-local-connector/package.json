@@ -1,0 +1,19 @@
+{
+  "name": "recruitment-boss-local-connector",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Internal multi-account BOSS local Chrome CDP connector",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.mjs start",
+    "status": "node src/index.mjs status",
+    "check": "node --check src/index.mjs && node --check src/lib/config.mjs && node --check src/lib/chrome.mjs && node --check src/lib/backend.mjs && node --check src/lib/state.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "puppeteer-core": "^25.9.0"
+  }
+}

@@ -66,7 +66,7 @@ public class BossAccountService {
         BossAccount account = accountRepository.save(new BossAccount(
                 company, cleanRequired(request.displayName()), externalIdentifier, request.gatewayType(),request.mockProfile()));
         auditService.success("CREATE_BOSS_ACCOUNT", "BOSS_ACCOUNT", account.getId(), account.getDisplayName(),
-                "新增 "+(request.gatewayType()==BossGatewayType.MOCK?"Mock":"浏览器伴随")+" BOSS 账号，归属企业 " + company.getCode());
+                "新增 "+(request.gatewayType()==BossGatewayType.MOCK?"Mock":"本地 CDP 连接器")+" BOSS 账号，归属企业 " + company.getCode());
         return BossAccountResponse.from(account);
     }
 
@@ -103,7 +103,7 @@ public class BossAccountService {
     public BossAccountResponse checkCapabilities(UUID id) {
         SystemUser user = requireManager();
         BossAccount account = requireAccessibleAccount(id, user);
-        if(account.getGatewayType()==BossGatewayType.BROWSER_COMPANION)throw new ApiException(HttpStatus.BAD_REQUEST,"BROWSER_DEVICE_CHECK_REQUIRED","浏览器账号能力由配对设备和页面心跳自动确认");
+        if(account.getGatewayType()==BossGatewayType.LOCAL_CDP_CONNECTOR)throw new ApiException(HttpStatus.BAD_REQUEST,"LOCAL_CONNECTOR_CHECK_REQUIRED","本地连接器账号能力由连接器心跳和页面状态自动确认");
         if (account.getStatus() != BossAccountStatus.ACTIVE) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "BOSS_ACCOUNT_INACTIVE", "请先启用 BOSS 账号再检查能力");
         }

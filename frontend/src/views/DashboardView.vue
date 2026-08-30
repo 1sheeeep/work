@@ -15,14 +15,14 @@ const followUps=computed(()=>candidates.value.filter(x=>x.needsHrFollowUp))
 const sentToday=computed(()=>policies.value.reduce((n,x)=>n+x.sentToday,0))
 const connectionIssues=computed(()=>policies.value.filter(x=>{const d=devices.value.find(d=>d.accountId===x.accountId&&d.status==='ACTIVE');return x.accountStatus!=='ACTIVE'||!x.messageSendCapable||!d||d.runtimeState!=='RUNNING'}))
 const recentAttempts=computed(()=>attempts.value.slice(0,5))
-const formalAccounts=computed(()=>accounts.value.filter(x=>x.gatewayType==='BROWSER_COMPANION'&&x.status==='ACTIVE'))
+const formalAccounts=computed(()=>accounts.value.filter(x=>x.gatewayType==='LOCAL_CDP_CONNECTOR'&&x.status==='ACTIVE'))
 const linkedFormalAccounts=computed(()=>formalAccounts.value.filter(x=>devices.value.some(d=>d.accountId===x.id&&d.status==='ACTIVE')))
 const formalCompanyIds=computed(()=>new Set(formalAccounts.value.map(x=>x.company.id)))
 const activeFormalJobs=computed(()=>jobs.value.filter(x=>x.status==='ACTIVE'&&formalAccounts.value.some(a=>a.id===x.bossAccount.id)))
 const readyFormalJobs=computed(()=>activeFormalJobs.value.filter(x=>x.safeReplyReady))
 const replyCompanies=computed(()=>companies.value.filter(x=>formalCompanyIds.value.has(x.id)))
 const readinessSteps=computed(()=>[
- {key:'account',title:'连接真实账号',done:linkedFormalAccounts.value.length>0,detail:linkedFormalAccounts.value.length?`${linkedFormalAccounts.value.length} 个账号已配对浏览器`:'等待 BOSS 招聘账号到位',action:'账号连接',path:'/boss-accounts'},
+ {key:'account',title:'连接真实账号',done:linkedFormalAccounts.value.length>0,detail:linkedFormalAccounts.value.length?`${linkedFormalAccounts.value.length} 个账号已连接本机 Chrome`:'等待 BOSS 招聘账号到位',action:'账号连接',path:'/boss-accounts'},
  {key:'job',title:'采集真实岗位',done:activeFormalJobs.value.length>0,detail:activeFormalJobs.value.length?`${activeFormalJobs.value.length} 个启用岗位已关联`:'账号到位后从岗位详情页一键采集',action:'职位资料',path:'/job-positions'},
  {key:'company',title:'审核企业知识',done:replyCompanies.value.length>0&&replyCompanies.value.every(x=>x.knowledgeApproved),detail:replyCompanies.value.length?`${replyCompanies.value.filter(x=>x.knowledgeApproved).length}/${replyCompanies.value.length} 家企业资料已审核`:'先连接账号，再确定需要维护的企业资料',action:'集团与企业',path:'/organization'},
  {key:'reply',title:'安全草稿就绪',done:activeFormalJobs.value.length>0&&readyFormalJobs.value.length===activeFormalJobs.value.length,detail:activeFormalJobs.value.length?`${readyFormalJobs.value.length}/${activeFormalJobs.value.length} 个岗位可生成知识草稿`:'岗位与企业资料齐全后自动解锁',action:'回复设置',path:'/auto-replies'},
