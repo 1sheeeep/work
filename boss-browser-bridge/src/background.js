@@ -13,6 +13,9 @@ chrome.runtime.onStartup.addListener(() => initialise());
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM_NAME) void collectFromBestTab();
 });
+chrome.commands.onCommand.addListener((command) => {
+  if (command === 'check-reply-readiness') void checkReplyReadiness().catch((error) => setRuntime({ readinessState: `回复入口检查失败：${safeError(error)}` }));
+});
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   void handleMessage(message, sender).then(sendResponse).catch((error) => sendResponse({ ok: false, error: safeError(error) }));

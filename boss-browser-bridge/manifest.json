@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "招聘值守台·BOSS 只读桥接",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "在已登录的 BOSS 招聘页面中只读识别未读状态，并向本机招聘值守台上报最小化摘要。",
   "permissions": ["alarms", "storage", "tabs", "scripting"],
   "host_permissions": [
@@ -24,5 +24,11 @@
   "action": {
     "default_title": "BOSS 只读桥接",
     "default_popup": "src/popup.html"
+  },
+  "commands": {
+    "check-reply-readiness": {
+      "suggested_key": { "default": "Alt+Shift+R", "mac": "Alt+Shift+R" },
+      "description": "只读检查当前 BOSS 会话的回复入口"
+    }
   }
 }

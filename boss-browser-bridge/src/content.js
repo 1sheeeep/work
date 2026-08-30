@@ -107,12 +107,13 @@
         if (!selected.ok) return { ok: false, error: selected.reason };
         const active = [...document.querySelectorAll(SELECTORS.activeConversation)].find(visible);
         const replyRoot = active?.closest('[class*="conversation"], [class*="chat"]') || active?.parentElement?.parentElement || active;
-        const editor = replyRoot && [...replyRoot.querySelectorAll('textarea, [contenteditable="true"], [role="textbox"]')]
-          .find((node) => visible(node) && !node.disabled && node.getAttribute('aria-disabled') !== 'true');
+        const editor = (replyRoot?.querySelector('#boss-chat-editor-input') || document.querySelector('#boss-chat-editor-input'))
+          || (replyRoot && [...replyRoot.querySelectorAll('textarea, [contenteditable="true"], [role="textbox"]')]
+          .find((node) => visible(node) && !node.disabled && node.getAttribute('aria-disabled') !== 'true'));
         const sendButton = replyRoot && [...replyRoot.querySelectorAll('button, [role="button"]')]
           .find((node) => visible(node) && !node.disabled && node.getAttribute('aria-disabled') !== 'true' && /^发送(?:消息)?$/.test(compact(node.textContent)));
-        if (!editor || !sendButton) return { ok: false, error: '当前会话未同时找到可见回复输入框和发送按钮，已停止验收。' };
-        const controlShape = [editor.tagName, editor.getAttribute('role') || '', editor.getAttribute('contenteditable') || '', sendButton.tagName, compact(sendButton.textContent)].join('|');
+        if (!editor || !visible(editor) || editor.disabled || editor.getAttribute('aria-disabled') === 'true') return { ok: false, error: '当前会话未找到可见的 BOSS 回复编辑器（#boss-chat-editor-input），已停止验收。' };
+        const controlShape = [editor.id || 'fallback-editor', editor.tagName, editor.getAttribute('role') || '', editor.getAttribute('contenteditable') || '', sendButton ? `${sendButton.tagName}:发送` : 'ENTER_TO_SEND'].join('|');
         samples.push({ chatDigest: selected.chatDigest, controlDigest: await digest(controlShape) });
         if (cycle < 2) await delay(400);
       }
