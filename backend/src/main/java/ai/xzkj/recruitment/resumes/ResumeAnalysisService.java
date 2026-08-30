@@ -14,6 +14,7 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
@@ -26,6 +27,7 @@ public class ResumeAnalysisService {
     private final CurrentUserService users;
     private final OpenAiResumeClient client;
     private final OpenAiProperties properties;
+    private final ResumeAnalysisRetentionProperties retention;
     private final ResumeDocumentTextExtractor documents;
     private final ResumeMalwareScanner malwareScanner;
     private final ResumeImageOcrClient imageOcr;
@@ -33,7 +35,7 @@ public class ResumeAnalysisService {
     private final AuditService audit;
 
     public ResumeAnalysisService(ResumeIntakeRepository intakes, AiAssistanceRunRepository runs, ResumeAnalysisFeedbackRepository feedback,
-                                 CurrentUserService users, OpenAiResumeClient client, OpenAiProperties properties, ResumeDocumentTextExtractor documents, ResumeMalwareScanner malwareScanner, ResumeImageOcrClient imageOcr,
+                                 CurrentUserService users, OpenAiResumeClient client, OpenAiProperties properties, ResumeAnalysisRetentionProperties retention, ResumeDocumentTextExtractor documents, ResumeMalwareScanner malwareScanner, ResumeImageOcrClient imageOcr,
                                  ObjectMapper mapper, AuditService audit) {
         this.intakes = intakes;
         this.runs = runs;
@@ -41,6 +43,7 @@ public class ResumeAnalysisService {
         this.users = users;
         this.client = client;
         this.properties = properties;
+        this.retention = retention;
         this.documents = documents;
         this.malwareScanner = malwareScanner;
         this.imageOcr = imageOcr;
@@ -95,7 +98,7 @@ public class ResumeAnalysisService {
         try {
             ResumeAnalysisResult result = client.analyze(intake.getContact().getJobPosition(), resumeText, actorHash(user));
             AiAssistanceRun run = runs.save(AiAssistanceRun.succeeded(
-                    intake, user, properties.getModel(), inputHash, result.summary(), mapper.writeValueAsString(result)
+                    intake, user, properties.getModel(), inputHash, result.summary(), mapper.writeValueAsString(result), retention.expiresFrom(Instant.now())
             ));
             audit.success("REQUEST_OPENAI_RESUME_ANALYSIS", "RESUME_INTAKE", intake.getId(), intake.getDisplayLabel(),
                     "HR 已确认外部 OpenAI 分析（" + source + "）；仅保存输入摘要和结构化结果，不保存简历原文");
@@ -125,6 +128,9 @@ public class ResumeAnalysisService {
         requireAccess(run.getResumeIntake(), user);
         if (!"SUCCEEDED".equals(run.getStatus())) {
             throw new ApiException(HttpStatus.CONFLICT, "RESUME_ANALYSIS_NOT_REVIEWABLE", "仅成功完成的 AI 分析可以记录 HR 反馈");
+        }
+        if (run.isResultPurged()) {
+            throw new ApiException(HttpStatus.CONFLICT, "RESUME_ANALYSIS_RESULT_PURGED", "该次 AI 分析已按数据保留策略清除，不能再追加复核");
         }
         ResumeAnalysisFeedback saved = feedback.save(new ResumeAnalysisFeedback(run, request.feedbackType(), cleanFeedback(request.note()), user));
         audit.success("REVIEW_OPENAI_RESUME_ANALYSIS", "AI_ASSISTANCE_RUN", run.getId(), run.getResumeIntake().getDisplayLabel(),

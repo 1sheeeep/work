@@ -9,4 +9,6 @@ import java.util.UUID;
 public interface ResumeAnalysisFeedbackRepository extends JpaRepository<ResumeAnalysisFeedback, UUID> {
     @EntityGraph(attributePaths = {"createdBy"})
     List<ResumeAnalysisFeedback> findByAnalysisRunIdOrderByCreatedAtDesc(UUID analysisRunId);
+
+    long deleteByAnalysisRunId(UUID analysisRunId);
 }

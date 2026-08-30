@@ -42,7 +42,9 @@ record ResumeAnalysisResponse(
         String errorMessage,
         List<ResumeAnalysisFeedbackResponse> feedback,
         String createdBy,
-        Instant createdAt
+        Instant createdAt,
+        Instant resultExpiresAt,
+        Instant resultPurgedAt
 ) {
     static ResumeAnalysisResponse from(AiAssistanceRun run, ObjectMapper mapper, List<ResumeAnalysisFeedback> feedback) {
         ResumeAnalysisResult result = run.getStructuredResult() == null ? null
@@ -52,7 +54,7 @@ record ResumeAnalysisResponse(
                 run.getId(), intake.getId(), intake.getContact().getCandidate().getDisplayName(),
                 intake.getContact().getJobPosition().getTitle(), run.getProvider(), run.getModelVersion(),
                 run.getStatus(), result, run.getErrorMessage(), feedback.stream().map(ResumeAnalysisFeedbackResponse::from).toList(),
-                run.getCreatedBy().getDisplayName(), run.getCreatedAt()
+                run.getCreatedBy().getDisplayName(), run.getCreatedAt(), run.getResultExpiresAt(), run.getResultPurgedAt()
         );
     }
 }

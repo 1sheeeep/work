@@ -25,18 +25,21 @@ public class AiAssistanceRun {
     @Column(columnDefinition = "TEXT") private String rationale;
     @Column(name = "structured_result", columnDefinition = "TEXT") private String structuredResult;
     @Column(name = "error_message", length = 1000) private String errorMessage;
+    @Column(name = "result_expires_at") private Instant resultExpiresAt;
+    @Column(name = "result_purged_at") private Instant resultPurgedAt;
     @ManyToOne(fetch = FetchType.LAZY, optional = false) @JoinColumn(name = "created_by") private SystemUser createdBy;
     @Column(name = "created_at", nullable = false) private Instant createdAt;
 
     protected AiAssistanceRun() {}
 
     static AiAssistanceRun succeeded(ResumeIntake intake, SystemUser user, String model, String inputHash,
-                                     String rationale, String structuredResult) {
+                                     String rationale, String structuredResult, Instant resultExpiresAt) {
         AiAssistanceRun run = base(intake, user, model, inputHash);
         run.status = "SUCCEEDED";
         run.outcome = "REVIEW";
         run.rationale = rationale;
         run.structuredResult = structuredResult;
+        run.resultExpiresAt = resultExpiresAt;
         return run;
     }
 
@@ -74,6 +77,17 @@ public class AiAssistanceRun {
     public String getRationale() { return rationale; }
     public String getStructuredResult() { return structuredResult; }
     public String getErrorMessage() { return errorMessage; }
+    public Instant getResultExpiresAt() { return resultExpiresAt; }
+    public Instant getResultPurgedAt() { return resultPurgedAt; }
+    public boolean isResultPurged() { return resultPurgedAt != null; }
     public SystemUser getCreatedBy() { return createdBy; }
     public Instant getCreatedAt() { return createdAt; }
+
+    boolean purgeResult(Instant now) {
+        if (resultPurgedAt != null || resultExpiresAt == null || resultExpiresAt.isAfter(now)) return false;
+        rationale = null;
+        structuredResult = null;
+        resultPurgedAt = now;
+        return true;
+    }
 }
