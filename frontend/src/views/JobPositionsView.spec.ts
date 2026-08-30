@@ -33,7 +33,7 @@ describe('JobPositionsView', () => {
     wrapper.unmount()
   })
 
-  it('shows imported jobs in a five-step human review queue', async () => {
+  it('does not show historical unread-imported jobs that are absent from BOSS', async () => {
     vi.mocked(api.get)
       .mockResolvedValueOnce({ data: [{
         id: 'job-1', title: '跨境电商运营助理', location: '待从 BOSS 岗位页补全', salaryMinK: 1, salaryMaxK: 1,
@@ -49,9 +49,9 @@ describe('JobPositionsView', () => {
     const wrapper = mount(JobPositionsView)
     await flushPromises()
 
-    expect(wrapper.text()).toContain('真实岗位待办')
-    expect(wrapper.text()).toContain('在未读列表出现 8 次')
-    expect(wrapper.text()).toContain('先审核企业资料')
+    expect(wrapper.text()).not.toContain('跨境电商运营助理')
+    expect(wrapper.text()).not.toContain('在未读列表出现 8 次')
+    expect(wrapper.text()).toContain('请在 BOSS 职位管理页使用只读桥接同步真实职位')
     wrapper.unmount()
   })
 

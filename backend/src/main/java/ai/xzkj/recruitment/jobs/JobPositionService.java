@@ -49,6 +49,7 @@ public class JobPositionService {
         }
         String normalized = keyword == null ? "" : keyword.trim().toLowerCase(Locale.ROOT);
         return jobRepository.findAllByOrderByCreatedAtDesc().stream()
+                .filter(job -> "VISIBLE_PAGE".equals(job.getCaptureSource()))
                 .filter(job -> allowedIds == null || allowedIds.contains(job.getCompany().getId()))
                 .filter(job -> companyId == null || companyId.equals(job.getCompany().getId()))
                 .filter(job -> bossAccountId == null || bossAccountId.equals(job.getBossAccount().getId()))

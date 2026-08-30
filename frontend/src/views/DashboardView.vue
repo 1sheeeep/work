@@ -52,7 +52,7 @@ async function load() {
     api.get<BossAccount[]>('/boss-accounts'), api.get<CandidateContact[]>('/candidate-contacts'), api.get<AutoReplyPolicy[]>('/auto-replies/policies'), api.get<BrowserDevice[]>('/local-connector/devices'), api.get<AutoReplyAttempt[]>('/auto-replies/attempts'), api.get<Company[]>('/organization/companies'), api.get<JobPosition[]>('/job-positions'),
   ])
   const targets = [accounts, candidates, policies, devices, attempts, companies, jobs]
-  results.forEach((result, index) => { if (result.status === 'fulfilled' && result.value?.data) targets[index]!.value = result.value.data as never })
+  results.forEach((result, index) => { if (result.status === 'fulfilled' && result.value?.data) targets[index]!.value = (index === 6 ? (result.value.data as JobPosition[]).filter(job => job.captureSource === 'VISIBLE_PAGE') : result.value.data) as never })
   updatedAt.value = new Date()
   loading.value = false
 }

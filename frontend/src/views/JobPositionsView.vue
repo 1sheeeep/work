@@ -136,7 +136,9 @@ async function loadData() {
       api.get<Company[]>("/organization/companies"),
       api.get<BossAccount[]>("/boss-accounts"),
     ]);
-    jobs.value = jobResponse.data;
+    jobs.value = jobResponse.data.filter(
+      (job) => job.captureSource === "VISIBLE_PAGE",
+    );
     companies.value = companyResponse.data;
     bossAccounts.value = accountResponse.data;
   } catch (error) {

@@ -109,10 +109,14 @@ class JobPositionServiceTest {
     @Test
     void listOnlyReturnsJobsInsideCompanyScope() {
         BossAccount hiddenAccount = account(hiddenCompany, "隐藏账号");
+        JobPosition hiddenJob = job(hiddenCompany, hiddenAccount, "隐藏职位");
+        JobPosition visibleJob = job(allowedCompany, eligibleAccount, "可见职位");
+        hiddenJob.markVisiblePageCapture(5);
+        visibleJob.markVisiblePageCapture(5);
         when(currentUserService.requireCurrentUser()).thenReturn(user(UserRole.RECRUITER, allowedCompany));
         when(jobRepository.findAllByOrderByCreatedAtDesc()).thenReturn(List.of(
-                job(hiddenCompany, hiddenAccount, "隐藏职位"),
-                job(allowedCompany, eligibleAccount, "可见职位")));
+                hiddenJob,
+                visibleJob));
 
         List<JobPositionResponse> response = service.list(null, null, null, null);
 
