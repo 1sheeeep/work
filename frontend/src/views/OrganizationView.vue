@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { EditPen, OfficeBuilding, Plus, Refresh, Search } from '@element-plus/icons-vue'
@@ -10,6 +11,7 @@ import type { Company, CompanyFormValue, CompanyStatus, GroupProfile } from '../
 interface GroupFormValue { name: string; shortName: string; timezone: string; description: string }
 
 const loading = ref(true)
+const router = useRouter()
 const loadError = ref('')
 const group = ref<GroupProfile | null>(null)
 const companies = ref<Company[]>([])
@@ -53,6 +55,8 @@ const companyRules: FormRules<CompanyFormValue> = {
 
 const dialogTitle = computed(() => editingCompany.value ? '编辑企业' : '新增企业')
 const canManage = computed(() => authStore.state.user?.role === 'SYSTEM_ADMIN')
+const activeCompanies = computed(() => companies.value.filter(company => company.status === 'ACTIVE'))
+const pendingKnowledgeCompanies = computed(() => activeCompanies.value.filter(company => !company.knowledgeApproved))
 
 function assignFieldErrors(target: Record<string, string>, source: Record<string, string>) {
   Object.keys(target).forEach((key) => delete target[key])
@@ -229,7 +233,7 @@ async function saveCompanyKnowledge() {
   try {
     await ensureCsrf()
     await api.put(`/organization/companies/${knowledgeCompany.value.id}/knowledge`, knowledgeForm)
-    ElMessage.success(knowledgeForm.approved ? '公司知识已审核，可用于安全回复' : '公司知识草稿已保存')
+    ElMessage.success(knowledgeForm.approved ? '企业公开资料已审核，下一步可核对真实岗位' : '企业公开资料草稿已保存')
     knowledgeDialogOpen.value = false
     await refreshCompanyViews()
   } catch (error) { ElMessage.error(apiErrorMessage(error, '公司知识保存失败')) }
@@ -258,6 +262,11 @@ onMounted(loadAll)
       <el-button :icon="Refresh" @click="loadAll">重新加载</el-button>
     </div>
     <template v-else>
+      <section class="surface-panel stage-panel">
+        <div><span>当前阶段</span><h2>{{ pendingKnowledgeCompanies.length ? '先审核企业公开资料' : '企业资料已就绪，继续核对岗位' }}</h2><p>{{ pendingKnowledgeCompanies.length ? '只填写公司确认过、可以直接告诉候选人的真实信息；未审核内容不会进入安全草稿。' : '企业公开资料已通过审核，现在可以逐个核对从 BOSS 同步的真实岗位。' }}</p></div>
+        <el-button v-if="pendingKnowledgeCompanies.length && canManage" type="primary" @click="openCompanyKnowledge(pendingKnowledgeCompanies[0] as Company)">填写并审核</el-button>
+        <el-button v-else type="primary" @click="router.push('/job-positions')">前往岗位资料</el-button>
+      </section>
       <section class="surface-panel group-panel" aria-labelledby="group-heading">
         <div class="section-title-row">
           <div><h2 id="group-heading">集团资料</h2><p>集团是当前系统的最高管理层级</p></div>
@@ -316,9 +325,9 @@ onMounted(loadAll)
           <el-table v-loading="companiesLoading" :data="companies" class="company-table">
             <el-table-column label="企业" min-width="210"><template #default="{ row }"><div class="company-name"><strong>{{ row.name }}</strong><span>{{ row.code }}</span></div></template></el-table-column>
             <el-table-column prop="location" label="所在地" min-width="140"><template #default="{ row }">{{ row.location || '未填写' }}</template></el-table-column>
-            <el-table-column label="回复知识" width="120"><template #default="{ row }"><el-tag :type="row.knowledgeApproved ? 'success' : 'warning'">{{ row.knowledgeApproved ? `已审核 v${row.knowledgeVersion}` : '待审核' }}</el-tag></template></el-table-column><el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'" effect="light">{{ row.status === 'ACTIVE' ? '正常' : '已停用' }}</el-tag></template></el-table-column>
+            <el-table-column label="企业公开资料" width="135"><template #default="{ row }"><el-tag :type="row.knowledgeApproved ? 'success' : 'warning'">{{ row.knowledgeApproved ? `已审核 v${row.knowledgeVersion}` : '待审核' }}</el-tag></template></el-table-column><el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'" effect="light">{{ row.status === 'ACTIVE' ? '正常' : '已停用' }}</el-tag></template></el-table-column>
             <el-table-column label="更新时间" min-width="180"><template #default="{ row }">{{ formatDate(row.updatedAt) }}</template></el-table-column>
-            <el-table-column v-if="canManage" label="操作" width="230" fixed="right"><template #default="{ row }"><el-button link type="primary" @click="openCompanyKnowledge(row as Company)">回复知识</el-button><el-button link type="primary" @click="openEditCompany(row as Company)">编辑</el-button><el-button link :type="row.status === 'ACTIVE' ? 'danger' : 'success'" @click="toggleCompanyStatus(row as Company)">{{ row.status === 'ACTIVE' ? '停用' : '启用' }}</el-button></template></el-table-column>
+            <el-table-column v-if="canManage" label="操作" width="250" fixed="right"><template #default="{ row }"><el-button link type="primary" @click="openCompanyKnowledge(row as Company)">公开资料</el-button><el-button link type="primary" @click="openEditCompany(row as Company)">编辑</el-button><el-button link :type="row.status === 'ACTIVE' ? 'danger' : 'success'" @click="toggleCompanyStatus(row as Company)">{{ row.status === 'ACTIVE' ? '停用' : '启用' }}</el-button></template></el-table-column>
           </el-table>
           <div class="company-cards">
             <article v-for="company in companies" :key="company.id" class="company-card">
@@ -343,11 +352,15 @@ onMounted(loadAll)
       </el-form>
       <template #footer><el-button @click="companyDialogOpen = false">取消</el-button><el-button type="primary" :loading="companySaving" @click="saveCompany">{{ editingCompany ? '保存修改' : '确认新增' }}</el-button></template>
     </el-dialog>
-    <el-dialog v-model="knowledgeDialogOpen" :title="`${knowledgeCompany?.name ?? ''} · 公司回复知识`" width="620px"><el-alert title="仅审核通过的信息才会进入回复预览；不完整时系统统一回退到通用接待语。" type="info" :closable="false" show-icon class="dialog-alert"/><el-form label-position="top"><div class="form-grid"><el-form-item label="所属行业"><el-input v-model="knowledgeForm.industry" maxlength="120" placeholder="例如：企业软件服务" /></el-form-item><el-form-item label="公司规模（可选）"><el-input v-model="knowledgeForm.scale" maxlength="120" placeholder="例如：100-499人" /></el-form-item></div><el-form-item label="候选人可见的公司介绍"><el-input v-model="knowledgeForm.summary" type="textarea" :rows="5" maxlength="1000" show-word-limit placeholder="填写准确、可公开、不夸大的公司情况" /></el-form-item><el-checkbox v-model="knowledgeForm.approved">我已核对内容，同意用于回复预览</el-checkbox></el-form><template #footer><el-button @click="knowledgeDialogOpen = false">取消</el-button><el-button type="primary" :loading="knowledgeSaving" @click="saveCompanyKnowledge">保存</el-button></template></el-dialog>
+    <el-dialog v-model="knowledgeDialogOpen" :title="`${knowledgeCompany?.name ?? ''} · 企业公开资料`" width="620px"><el-alert title="只填写公司确认过、可直接告诉候选人的事实。审核前不会进入任何安全草稿。" type="info" :closable="false" show-icon class="dialog-alert"/><el-form label-position="top"><div class="form-grid"><el-form-item label="所属行业"><el-input v-model="knowledgeForm.industry" maxlength="120" placeholder="请填写公司确认的所属行业" /></el-form-item><el-form-item label="公司规模（可选）"><el-input v-model="knowledgeForm.scale" maxlength="120" placeholder="请填写公司确认的规模" /></el-form-item></div><el-form-item label="公司介绍"><el-input v-model="knowledgeForm.summary" type="textarea" :rows="5" maxlength="1000" show-word-limit placeholder="填写准确、可公开、不夸大、不包含录用承诺的公司情况" /></el-form-item><el-checkbox v-model="knowledgeForm.approved">我已核对以上内容，同意用于候选人安全草稿</el-checkbox></el-form><template #footer><el-button @click="knowledgeDialogOpen = false">取消</el-button><el-button type="primary" :loading="knowledgeSaving" @click="saveCompanyKnowledge">保存</el-button></template></el-dialog>
   </div>
 </template>
 
 <style scoped>
+.stage-panel { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 20px; padding: 22px 24px; border-left: 4px solid var(--brand-600); background: linear-gradient(100deg,#f0faf7,#fff); }
+.stage-panel span { color: var(--brand-700); font-size: 11px; font-weight: 800; letter-spacing: .08em; }
+.stage-panel h2 { margin: 6px 0; font-size: 20px; }
+.stage-panel p { margin: 0; color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
 .group-panel { overflow: hidden; }
 .group-summary { display: grid; grid-template-columns: minmax(240px,.8fr) 1.2fr; gap: 32px; padding: 26px 24px; }
 .group-identity { display: flex; align-items: center; gap: 16px; }

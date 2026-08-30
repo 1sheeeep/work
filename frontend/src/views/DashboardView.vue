@@ -32,12 +32,13 @@ const formalAccounts = computed(() => accounts.value.filter(x => x.gatewayType =
 const linkedFormalAccounts = computed(() => formalAccounts.value.filter(x => devices.value.some(d => d.accountId === x.id && d.status === 'ACTIVE')))
 const formalCompanyIds = computed(() => new Set(formalAccounts.value.map(x => x.company.id)))
 const activeFormalJobs = computed(() => jobs.value.filter(x => x.status === 'ACTIVE' && formalAccounts.value.some(a => a.id === x.bossAccount.id)))
+const draftFormalJobs = computed(() => jobs.value.filter(x => x.status === 'DRAFT' && formalAccounts.value.some(a => a.id === x.bossAccount.id)))
 const readyFormalJobs = computed(() => activeFormalJobs.value.filter(x => x.safeReplyReady))
 const replyCompanies = computed(() => companies.value.filter(x => formalCompanyIds.value.has(x.id)))
 const readinessSteps = computed(() => [
   { key: 'account', title: '连接账号与浏览器', done: linkedFormalAccounts.value.length > 0, detail: linkedFormalAccounts.value.length ? `${linkedFormalAccounts.value.length} 个账号已连接本机 Chrome` : '真实 BOSS 账号到位后，从这里开始连接。', action: '账号与浏览器', path: '/boss-accounts', icon: Connection },
-  { key: 'job', title: '确认岗位资料', done: activeFormalJobs.value.length > 0, detail: activeFormalJobs.value.length ? `${activeFormalJobs.value.length} 个启用岗位已关联` : '等待真实岗位页面后，一键采集并由 HR 核对。', action: '岗位资料', path: '/job-positions', icon: DocumentChecked },
-  { key: 'company', title: '审核回复知识', done: replyCompanies.value.length > 0 && replyCompanies.value.every(x => x.knowledgeApproved), detail: replyCompanies.value.length ? `${replyCompanies.value.filter(x => x.knowledgeApproved).length}/${replyCompanies.value.length} 家企业资料已审核` : '不需要编造资料，拿到真实信息后再填写。', action: '企业与集团', path: '/organization', icon: ChatDotRound },
+  { key: 'company', title: '审核企业公开资料', done: replyCompanies.value.length > 0 && replyCompanies.value.every(x => x.knowledgeApproved), detail: replyCompanies.value.length ? `${replyCompanies.value.filter(x => x.knowledgeApproved).length}/${replyCompanies.value.length} 家企业资料已审核；只填写真实、可对候选人公开的信息。` : '先确认企业主体，再填写可公开的行业和公司介绍。', action: '企业与集团', path: '/organization', icon: ChatDotRound },
+  { key: 'job', title: '逐个核对真实岗位', done: activeFormalJobs.value.length > 0 && draftFormalJobs.value.length === 0, detail: draftFormalJobs.value.length ? `${draftFormalJobs.value.length} 个 BOSS 同步岗位等待人工核对` : activeFormalJobs.value.length ? `${activeFormalJobs.value.length} 个岗位已核对启用` : '等待真实岗位页面同步。', action: '岗位资料', path: '/job-positions', icon: DocumentChecked },
   { key: 'reply', title: '开启安全草稿', done: activeFormalJobs.value.length > 0 && readyFormalJobs.value.length === activeFormalJobs.value.length, detail: activeFormalJobs.value.length ? `${readyFormalJobs.value.length}/${activeFormalJobs.value.length} 个岗位可生成草稿` : '资料完整后自动解锁；当前不会发送消息。', action: '值守规则', path: '/auto-replies', icon: ChatDotRound },
 ])
 const nextReadinessStep = computed(() => readinessSteps.value.find(x => !x.done) || null)
@@ -109,7 +110,7 @@ onMounted(load)
 
       <section class="workbench-grid">
         <article class="surface-panel priority-panel">
-          <header class="section-title-row"><div><span class="section-kicker">START HERE</span><h2>现在优先完成</h2><p>没有真实账号时，不需要虚构数据。先明确后续接入顺序即可。</p></div><el-button text @click="open(nextReadinessStep?.path || '/boss-accounts')">查看详情</el-button></header>
+          <header class="section-title-row"><div><span class="section-kicker">START HERE</span><h2>现在优先完成</h2><p>按安全门禁顺序完成当前阻断项；每一步通过后自动进入下一步。</p></div><el-button text @click="open(nextReadinessStep?.path || '/boss-accounts')">查看详情</el-button></header>
           <div v-if="nextReadinessStep" class="next-step">
             <span class="next-step__number">{{ readinessSteps.findIndex(x => x.key === nextReadinessStep?.key) + 1 }}</span>
             <div><small>当前下一步</small><strong>{{ nextReadinessStep.title }}</strong><p>{{ nextReadinessStep.detail }}</p></div>
