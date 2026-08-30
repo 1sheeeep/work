@@ -24,6 +24,8 @@ test('binds selected detail to the current list and includes it in deduplication
   const changed = { ...first, selected: { ...selected, direction: 'OUTBOUND' } };
   assert.notEqual(snapshotSignature(first), snapshotSignature(changed));
   assert.throws(() => validateSnapshot({ ...first, selected: { ...selected, chatDigest: 'c'.repeat(64) } }), /不属于/);
+  assert.equal(validateSnapshot({ ...first, detailStatus: { code: 'VERIFIED', reason: '当前会话详情已稳定识别。' } }).detailStatus.code, 'VERIFIED');
+  assert.throws(() => validateSnapshot({ ...first, detailStatus: { code: 'bad code', reason: '候选人原文' } }), /状态无效/);
 });
 
 test('rejects duplicate identities and raw or malformed values', () => {
@@ -38,5 +40,6 @@ test('public status never exposes the local device token and keeps legacy counte
   assert.equal(status.accountName, '主账号');
   assert.equal(status.currentUnread, 5);
   assert.equal(status.trackedUnread, 5);
+  assert.equal(status.detailState, '尚未复核当前会话详情。');
   assert.equal('deviceToken' in status, false);
 });

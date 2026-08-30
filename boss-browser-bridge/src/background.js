@@ -140,22 +140,22 @@ async function doSubmitSnapshot(settings, payload) {
   const sync = await request(settings.backendUrl, '/api/local-connector/runtime/unread-observations', {
     method: 'POST', token: settings.deviceToken, body: { entries: payload.entries },
   });
-  let detailReason = '';
+  let detailState = payload.detailStatus?.reason || '尚未复核当前会话详情。';
   if (payload.selected) {
     try {
       await request(settings.backendUrl, '/api/local-connector/runtime/selected-conversation', {
         method: 'POST', token: settings.deviceToken, body: payload.selected,
       });
-      detailReason = '；已复核当前会话最后消息方向。';
+      detailState = '当前会话详情已稳定复核并安全入库。';
     } catch (error) {
-      detailReason = `；详情暂未入库：${safeError(error)}`;
+      detailState = `详情暂未入库：${safeError(error)}`;
     }
   }
   const currentUnread = payload.entries.filter((entry) => entry.unreadCount > 0).length;
   const trackedUnread = Number.isInteger(sync?.activeUnread) ? sync.activeUnread : currentUnread;
-  const reason = `本次页面稳定识别 ${payload.entries.length} 个会话、${currentUnread} 个未读；后端持续观察 ${trackedUnread} 条（仅上传摘要）${detailReason}`;
+  const reason = `本次页面稳定识别 ${payload.entries.length} 个会话、${currentUnread} 个未读；后端持续观察 ${trackedUnread} 条（仅上传摘要）；${detailState}`;
   await sendHeartbeatIfPaired(settings, 'RUNNING', reason);
-  await setRuntime({ state: 'RUNNING', reason, lastSyncAt: new Date().toISOString(), total: payload.entries.length, currentUnread, trackedUnread, lastSignature: signature, lastSubmittedAt: now });
+  await setRuntime({ state: 'RUNNING', reason, detailState, lastSyncAt: new Date().toISOString(), total: payload.entries.length, currentUnread, trackedUnread, lastSignature: signature, lastSubmittedAt: now });
   return { ok: true };
 }
 

@@ -50,7 +50,16 @@
       const secondSelected = await collectSelectedConversation();
       const stableSelected = firstSelected.ok && secondSelected.ok && firstSelected.signature === secondSelected.signature ? secondSelected : null;
       const selected = stableSelected && second.entries.some((entry) => entry.chatDigest === stableSelected.chatDigest) ? stripSelected(stableSelected) : null;
-      await send({ type: 'BRIDGE_PAGE_SNAPSHOT', payload: { pageState: 'CHAT_PAGE_READY', entries: second.entries, selected } });
+      const detailStatus = selected
+        ? { code: 'VERIFIED', reason: '当前会话详情已稳定识别。' }
+        : stableSelected
+          ? { code: 'SELECTED_NOT_IN_LIST', reason: '当前会话不属于本次稳定列表，等待再次确认。' }
+          : !firstSelected.ok
+            ? { code: firstSelected.code, reason: firstSelected.reason }
+            : !secondSelected.ok
+              ? { code: secondSelected.code, reason: secondSelected.reason }
+              : { code: 'DETAIL_CHANGED', reason: '当前会话详情仍在变化，等待稳定。' };
+      await send({ type: 'BRIDGE_PAGE_SNAPSHOT', payload: { pageState: 'CHAT_PAGE_READY', entries: second.entries, selected, detailStatus } });
     } finally {
       collecting = false;
     }
@@ -101,14 +110,14 @@
     if (!last) return blocked('LAST_MESSAGE_NOT_FOUND', '当前会话没有可识别的最后消息。');
     const direction = directionOf(last);
     const content = String(last.textContent || '').trim();
-    if (!content) return blocked('MESSAGE_EMPTY', '当前会话最后消息为空。');
     const timeline = [...active.querySelectorAll(`${SELECTORS.messageTime}, ${SELECTORS.message}`)];
     const lastIndex = timeline.indexOf(last);
     const precedingTime = timeline.slice(0, Math.max(0, lastIndex)).reverse().find((item) => item.matches(SELECTORS.messageTime));
     const messageAt = parseTime(String(last.querySelector(SELECTORS.messageTime)?.textContent || precedingTime?.textContent || '').trim());
     if (!messageAt) return blocked('TIME_UNRECOGNISED', '当前会话最后消息时间无法解析。');
     const chatDigest = await digest(identity);
-    const messageDigest = await digest(stableIdentity(last) || `derived:${direction}:${content}`);
+    const mediaShape = [...last.querySelectorAll('img, video, audio, svg')].map((node) => node.tagName.toLowerCase()).join(',') || 'non-text';
+    const messageDigest = await digest(stableIdentity(last) || `derived:${direction}:${messageAt}:${content || mediaShape}`);
     const selectedUnread = Boolean(selected.querySelector(SELECTORS.unread));
     return { ok: true, chatDigest, messageDigest, direction, messageAt, selectedUnread, signature: `${chatDigest}:${messageDigest}:${direction}:${messageAt}:${selectedUnread}` };
   }

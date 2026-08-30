@@ -39,6 +39,11 @@ export function validateSnapshot(payload) {
     validateSelected(payload.selected);
     if (!seen.has(payload.selected.chatDigest)) throw new Error('选中会话不属于本次稳定列表。');
   }
+  if (payload.detailStatus !== null && payload.detailStatus !== undefined) {
+    if (!/^[A-Z0-9_]{2,40}$/.test(payload.detailStatus?.code || '') || typeof payload.detailStatus?.reason !== 'string' || payload.detailStatus.reason.length > 120) {
+      throw new Error('会话详情状态无效。');
+    }
+  }
   return payload;
 }
 
@@ -74,5 +79,6 @@ export function publicStatus(settings, runtime) {
     total: runtime?.total || 0,
     currentUnread: runtime?.currentUnread ?? runtime?.unread ?? 0,
     trackedUnread: runtime?.trackedUnread ?? runtime?.unread ?? 0,
+    detailState: runtime?.detailState || '尚未复核当前会话详情。',
   };
 }
