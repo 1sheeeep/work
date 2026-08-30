@@ -1,0 +1,10 @@
+{
+  "name": "recruitment-boss-readonly-bridge",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "check": "node --check src/background.js && node --check src/content.js && node --check src/popup.js && node --check src/bridge-core.mjs",
+    "test": "node --test"
+  }
+}

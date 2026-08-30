@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "招聘值守台·BOSS 只读桥接",
+  "version": "0.1.0",
+  "description": "在已登录的 BOSS 招聘页面中只读识别未读状态，并向本机招聘值守台上报最小化摘要。",
+  "permissions": ["alarms", "storage", "tabs"],
+  "host_permissions": [
+    "https://*.zhipin.com/*",
+    "http://localhost:8088/*",
+    "http://127.0.0.1:8088/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*.zhipin.com/*"],
+      "js": ["src/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "BOSS 只读桥接",
+    "default_popup": "src/popup.html"
+  }
+}

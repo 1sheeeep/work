@@ -45,7 +45,7 @@ function clearFieldErrors() { Object.keys(fieldErrors).forEach(key => delete fie
 function activeDevice(accountId: string) { return devices.value.find(device => device.accountId === accountId && device.status === 'ACTIVE') }
 function connectionState(account: BossAccount) {
   const device = activeDevice(account.id)
-  if (!device) return { label: '未接入', type: 'info' as const, detail: '账号尚未在本机浏览器中运行；等真实账号到位后再处理。' }
+  if (!device) return { label: '未接入', type: 'info' as const, detail: '账号尚未与该 Chrome Profile 中的只读桥接器配对。' }
   if (device.runtimeState === 'RUNNING') return { label: '已连接', type: 'success' as const, detail: '当前仍遵循只读监测，不会自动发送消息。' }
   if (device.runtimeState === 'PAUSED' && /^只监测：/.test(device.stopReason || '')) return { label: '只读观察', type: 'warning' as const, detail: '页面已接入，但当前仅同步状态。' }
   return { label: '未运行', type: 'info' as const, detail: '之前的本机连接已停止；不影响账号资料，也不会产生任何平台操作。' }
@@ -145,13 +145,13 @@ onMounted(loadData)
 <template>
   <div class="page-shell accounts-page">
     <el-dialog v-model="connectionOpen" :title="`${selectedAccount?.displayName ?? ''} · 本机接入说明`" width="600px" destroy-on-close>
-      <el-alert type="info" :closable="false" show-icon title="当前是准备阶段。没有真实 BOSS 招聘账号时，不需要在这里完成任何接入操作。" />
+      <el-alert type="info" :closable="false" show-icon title="当前仅接入只读桥接器：不会点击、跳转、填写或发送 BOSS 消息。" />
       <section v-if="selectedAccount" class="connection-summary">
         <span>当前状态</span><strong>{{ connectionState(selectedAccount).label }}</strong><p>{{ connectionState(selectedAccount).detail }}</p>
       </section>
       <el-collapse v-model="advancedPairingOpen" class="advanced-connection">
-        <el-collapse-item name="pairing"><template #title><strong>真实账号到位后，再打开本机接入设置</strong></template>
-          <ol><li>在独立 Chrome Profile 中由 HR 手动登录 BOSS。</li><li>生成一次性接入码，仅用于把这台电脑的本地连接器与该账号绑定。</li><li>返回此页确认“只读观察”状态；页面未验证前不会发送消息。</li></ol>
+        <el-collapse-item name="pairing"><template #title><strong>在对应 Chrome Profile 中完成一次只读桥接</strong></template>
+          <ol><li>为该 BOSS 账号使用独立 Chrome Profile，由 HR 手动登录。</li><li>在 <code>chrome://extensions</code> 加载项目中的 <code>boss-browser-bridge</code> 目录。</li><li>在下方生成一次性接入码，粘贴到扩展弹窗完成配对。</li><li>手动打开 BOSS 沟通页并刷新一次，再返回此页确认“只读观察”状态。</li></ol>
           <div v-if="pairingToken" class="token-box"><code>{{ pairingToken }}</code><el-button type="primary" @click="copyToken">复制临时接入码</el-button><small>请在 {{ formatDate(pairingExpiresAt) }} 前完成；它不能用于登录 BOSS。</small></div>
           <el-button v-else type="primary" :loading="pairingLoading" @click="generatePairing">生成临时接入码</el-button>
         </el-collapse-item>
@@ -159,13 +159,13 @@ onMounted(loadData)
       <template #footer><el-button :icon="Refresh" @click="loadData">刷新状态</el-button><el-button type="primary" @click="connectionOpen = false">关闭</el-button></template>
     </el-dialog>
 
-    <header class="page-heading"><div><span class="eyebrow">ACCOUNT PREPARATION</span><h1>账号与浏览器</h1><p>这里保存内部账号标识与本机状态。真实账号到位前，只需保留资料，不需要配对、登录或测试发送。</p></div><el-button v-if="canManage" type="primary" :icon="Plus" @click="openCreate">新增 BOSS 账号</el-button></header>
+    <header class="page-heading"><div><span class="eyebrow">ACCOUNT CONNECTION</span><h1>账号与浏览器</h1><p>一个 BOSS 账号对应一个 Chrome Profile 和一份只读桥接器配对，登录与验证始终由 HR 在 BOSS 页面手动完成。</p></div><el-button v-if="canManage" type="primary" :icon="Plus" @click="openCreate">新增 BOSS 账号</el-button></header>
     <el-alert class="scope-alert" type="warning" :closable="false" show-icon title="当前为只读准备模式：不会保存密码、Cookie，也不会自动操作或发送 BOSS 消息。" />
     <div v-if="loading" class="surface-panel skeleton-stack"><el-skeleton :rows="7" animated /></div>
     <div v-else-if="loadError" class="surface-panel error-state" role="alert"><span class="error-state__icon"><el-icon><Refresh /></el-icon></span><strong>账号资料暂时无法加载</strong><span>{{ loadError }}</span><el-button :icon="Refresh" @click="loadData">重新加载</el-button></div>
     <template v-else>
       <section class="preparation-panel">
-        <div class="preparation-copy"><span class="section-kicker">CURRENT STAGE</span><h2>先准备，等账号到位后再接入</h2><p>你现在不用处理连接码、浏览器 Profile 或聊天页面。拿到真实 BOSS 招聘账号后，再按一条简单链路完成本机接入与只读验证。</p><div class="future-flow"><span>保存账号资料</span><i></i><span>HR 手动登录</span><i></i><span>只读验证页面</span></div></div>
+        <div class="preparation-copy"><span class="section-kicker">CURRENT STAGE</span><h2>先完成只读观测闭环</h2><p>当前只验证“真实未读 → 脱敏摘要 → 岗位去重 → 安全草稿”，不包含任何 BOSS 页面写操作。</p><div class="future-flow"><span>独立 Profile 登录</span><i></i><span>只读桥接配对</span><i></i><span>核对未读与岗位</span></div></div>
         <div class="preparation-stats"><article><span>已保存账号</span><strong>{{ connectableAccounts.length }}</strong></article><article><span>活跃浏览器设备</span><strong>{{ activeDevices.length }}</strong></article><article><span>自动发送</span><strong>关闭</strong></article></div>
       </section>
 

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="popup.css"><title>BOSS 只读桥接</title></head>
+<body>
+  <main>
+    <header><span class="mark">值</span><div><strong>BOSS 只读桥接</strong><small>招聘值守台·本机设备</small></div><span id="stateBadge" class="badge">检查中</span></header>
+    <section id="summary" class="summary" hidden>
+      <div><span>绑定账号</span><strong id="accountName">-</strong></div>
+      <div class="metrics"><article><strong id="totalCount">0</strong><span>会话</span></article><article><strong id="unreadCount">0</strong><span>未读</span></article></div>
+      <p id="reason"></p><small id="lastSync"></small>
+      <label class="toggle"><input id="enabled" type="checkbox"><span>开启只读观测</span></label>
+      <div class="actions"><button id="collect" class="primary">立即检测</button><button id="forget" class="quiet">解除本机绑定</button></div>
+    </section>
+    <form id="pairForm" hidden>
+      <p>请先在招聘值守台的“账号与浏览器”中生成 10 分钟有效的一次性接入码。</p>
+      <label>设备名称<input id="deviceName" maxlength="80" value="HR 电脑" required></label>
+      <label>一次性接入码<textarea id="pairingToken" maxlength="200" rows="3" required placeholder="粘贴接入码"></textarea></label>
+      <button class="primary" type="submit">完成配对</button>
+    </form>
+    <div id="message" class="message" hidden></div>
+    <footer>不读取 Cookie、密码或候选人姓名；不会点击、跳转或发送消息。</footer>
+  </main>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

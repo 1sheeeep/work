@@ -32,7 +32,7 @@ describe('BossAccountsView', () => {
     wrapper.unmount()
   })
 
-  it('keeps local pairing behind the account preparation view', async () => {
+  it('guides an HR through the minimal read-only bridge pairing flow', async () => {
     vi.mocked(api.get)
       .mockResolvedValueOnce({ data: [{
         id: 'account-1', displayName: '上海社招账号', externalIdentifier: 'boss-shanghai', status: 'ACTIVE',
@@ -48,8 +48,9 @@ describe('BossAccountsView', () => {
     await flushPromises()
 
     expect(document.body.textContent).toContain('本机接入说明')
-    expect(document.body.textContent).toContain('当前是准备阶段')
-    expect(document.body.textContent).toContain('真实账号到位后，再打开本机接入设置')
+    expect(document.body.textContent).toContain('当前仅接入只读桥接器')
+    expect(document.body.textContent).toContain('在对应 Chrome Profile 中完成一次只读桥接')
+    expect(document.body.textContent).toContain('boss-browser-bridge')
     expect(document.body.textContent).not.toContain('复制连接码并配对')
     wrapper.unmount()
   })

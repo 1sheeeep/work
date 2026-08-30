@@ -9,19 +9,19 @@
 ```text
 招聘管理后台（Java / Vue / PostgreSQL）
              ↓
-本地 BOSS CDP 连接器（每账号独立 Chrome Profile）
+最小 BOSS 只读桥接器（每账号独立 Chrome Profile）
              ↓
        HR 手动登录的 BOSS 网页
 ```
 
-项目不再以浏览器插件作为运行主链路。每个 BOSS 账号由本地连接器启动独立、可见的 Chrome Profile；系统不保存 BOSS 密码、Cookie、Token 或浏览器 Profile。
+真实页面已证实 CDP 附着与 BOSS 页面重定向同时出现，因此生产观测改用项目内置的极小 Manifest V3 桥接器。它不是通用自动化插件：没有 Cookie、网络拦截、下载或 debugger 权限，当前也没有任何页面写操作。系统不保存 BOSS 密码、Cookie、Token 或浏览器 Profile。
 
 ## 当前完成情况
 
 - 多账号的企业、账号、岗位、HR 权限、托管策略、审计和运行保障。
 - `LOCAL_CDP_CONNECTOR` 正式账号类型，现有正式账号会由 Flyway V30 自动迁移。
-- [`boss-local-connector`](boss-local-connector/) 支持每账号独立 Profile/端口、手动登录、一次性连接令牌和安全心跳。
-- 后台默认只监测；连接器只同步已打开沟通页的未读计数、岗位标题和不可逆摘要。HR 手动打开会话时，它可只读复核最后消息方向与时间，用于生成安全草稿；不读取候选人姓名或消息正文，也不执行点击、填写或发送。
+- [`boss-browser-bridge`](boss-browser-bridge/) 支持每账号独立 Profile、一次性连接令牌、安全心跳、稳定双快照和页面内脱敏。[`boss-local-connector`](boss-local-connector/) 暂仅保留离线动作演练和历史诊断工具。
+- 后台默认只监测；桥接器只同步已打开沟通页的未读计数、岗位标题和不可逆摘要。HR 手动打开会话时，它可只读复核最后消息方向与时间，用于生成安全草稿；候选人姓名和消息正文不离开页面脚本，也不执行点击、填写或发送。
 - 连接器只把 `/web/chat/index`（以及兼容的历史沟通路径）视为可监测会话页；推荐牛人、岗位列表或其他 `/web/chat/**` 页面均保持暂停。重新配对后，旧设备遗留的未读记录会在新设备首个稳定快照时归档，不计入当前待处理数量。
 - 简历分析已接入 OpenAI 的受控调用：仅在 HR 审核简历来源、每次分析再次确认后，才发送本次粘贴的必要文本；简历原文不会写入本地数据库，只保留摘要、结构化结果和审计记录。AI 不会自动淘汰、录用或对 BOSS 发送消息。
 - 已支持经 HR 确认的 PDF/DOCX 单次解析和可选 PNG/JPG 扫描件 OCR：文件先在本机临时处理区校验，再返回 HR 可修改的文本预览；只有 HR 单独确认后才会发送给 OpenAI。原文件不写入业务数据库或持久卷。
@@ -105,25 +105,26 @@ COMPOSE_PROFILES=malware-scan,ocr docker compose up -d --build
 
 OCR 只在本机 Docker 网络中调用 Tesseract，不会把图片发送到外部服务。流程固定为“扫描 → OCR 临时提取 → HR 核对/修改文本 → 按次确认 OpenAI”；HR 可以放弃，不会触发外部分析。
 
-## 多账号连接器
+## 多账号只读桥接
 
-连接器的首次配置和命令见 [`boss-local-connector/README.md`](boss-local-connector/README.md)。
+真实页面桥接的首次安装和配对见 [`boss-browser-bridge/README.md`](boss-browser-bridge/README.md)。离线动作演练仍见 [`boss-local-connector/README.md`](boss-local-connector/README.md)。
 
 每个账号必须使用不同的：
 
 - Chrome Profile；
-- CDP 本地端口；
+- 扩展配对凭据；
 - 后台账号 ID；
 - 本地连接器凭据。
 
-正式验收前可运行：
+每个 Profile 单独加载同一份 `boss-browser-bridge` 目录，并使用对应账号的一次性接入码。桥接器本地验证：
 
 ```bash
-cd boss-local-connector
-node src/index.mjs preflight --config connector.config.json
+cd boss-browser-bridge
+npm run check
+npm test
 ```
 
-综合自检不会连接页面执行器或开放生产发送；全部通过仅代表工程环境可以进入真实账号只读验收。
+通过只代表扩展结构、输入校验和脱敏契约正常；不代表真实 BOSS DOM 已验收，也不会开放生产发送。
 
 账号掉线、登录失效、验证码、风险提示或页面不确定时，只暂停该账号，不影响其他账号。
 
