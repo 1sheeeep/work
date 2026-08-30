@@ -8,7 +8,7 @@ async function load(){
  const pending=await chrome.storage.session.get(['pendingJobCapture','pendingJobTabId'])
  await chrome.storage.session.remove(['pendingJobCapture','pendingJobTabId'])
  if(pending.pendingJobCapture?.ok){fillCapture(pending.pendingJobCapture);return}
- const tabs=await chrome.tabs.query({url:['https://*.zhipin.com/*']});const tab=tabs.find(item=>item.id===pending.pendingJobTabId)||tabs.sort((a,b)=>(b.lastAccessed||0)-(a.lastAccessed||0))[0]
+ const tabs=await chrome.tabs.query({url:['https://*.zhipin.com/*','http://localhost:8091/*']});const tab=tabs.find(item=>item.id===pending.pendingJobTabId)||tabs.sort((a,b)=>(b.lastAccessed||0)-(a.lastAccessed||0))[0]
  if(!tab?.id)return setStatus('没有找到已打开的 BOSS 页面。请先打开一个岗位详情页。','error')
  try{const result=await chrome.tabs.sendMessage(tab.id,{type:'CAPTURE_CURRENT_JOB'});if(!result?.ok)return setStatus(result?.reason||'当前页面无法采集，请确认已打开岗位详情。','error');fillCapture(result)}catch{setStatus('页面脚本尚未连接。请刷新 BOSS 岗位页后重试。','error')}
 }

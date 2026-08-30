@@ -7,8 +7,9 @@ document.querySelector('#options').onclick=()=>chrome.runtime.openOptionsPage()
 document.querySelector('#capture').onclick=async()=>{
  const [tab]=await chrome.tabs.query({active:true,currentWindow:true})
  let capture=null
- try{if(tab?.id&&/^https:\/\/([^.]+\.)?zhipin\.com\//.test(tab.url||''))capture=await chrome.tabs.sendMessage(tab.id,{type:'CAPTURE_CURRENT_JOB'})}catch{}
+ try{if(tab?.id&&isCapturableJobPage(tab.url||''))capture=await chrome.tabs.sendMessage(tab.id,{type:'CAPTURE_CURRENT_JOB'})}catch{}
  await chrome.storage.session.set({pendingJobCapture:capture,pendingJobTabId:tab?.id||null})
  await chrome.tabs.create({url:chrome.runtime.getURL('job-capture.html')})
 }
 function escape(value){const d=document.createElement('div');d.textContent=value;return d.innerHTML}
+function isCapturableJobPage(url){try{const parsed=new URL(url);return parsed.hostname==='zhipin.com'||parsed.hostname.endsWith('.zhipin.com')||(parsed.hostname==='localhost'&&parsed.port==='8091')}catch{return false}}
