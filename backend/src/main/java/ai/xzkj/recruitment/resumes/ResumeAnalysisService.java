@@ -21,17 +21,19 @@ import java.util.UUID;
 public class ResumeAnalysisService {
     private final ResumeIntakeRepository intakes;
     private final AiAssistanceRunRepository runs;
+    private final ResumeAnalysisFeedbackRepository feedback;
     private final CurrentUserService users;
     private final OpenAiResumeClient client;
     private final OpenAiProperties properties;
     private final ObjectMapper mapper;
     private final AuditService audit;
 
-    public ResumeAnalysisService(ResumeIntakeRepository intakes, AiAssistanceRunRepository runs,
+    public ResumeAnalysisService(ResumeIntakeRepository intakes, AiAssistanceRunRepository runs, ResumeAnalysisFeedbackRepository feedback,
                                  CurrentUserService users, OpenAiResumeClient client, OpenAiProperties properties,
                                  ObjectMapper mapper, AuditService audit) {
         this.intakes = intakes;
         this.runs = runs;
+        this.feedback = feedback;
         this.users = users;
         this.client = client;
         this.properties = properties;
@@ -52,7 +54,7 @@ public class ResumeAnalysisService {
             ));
             audit.success("REQUEST_OPENAI_RESUME_ANALYSIS", "RESUME_INTAKE", intake.getId(), intake.getDisplayLabel(),
                     "HR 已确认外部 OpenAI 分析；仅保存输入摘要和结构化结果，不保存简历原文");
-            return ResumeAnalysisResponse.from(run, mapper);
+            return response(run);
         } catch (ApiException exception) {
             recordFailure(intake, user, inputHash, exception.getCode());
             throw exception;
@@ -67,7 +69,22 @@ public class ResumeAnalysisService {
         SystemUser user = users.requireCurrentUser();
         ResumeIntake intake = requireIntake(intakeId, user);
         return runs.findByResumeIntakeIdOrderByCreatedAtDesc(intake.getId()).stream()
-                .map(run -> ResumeAnalysisResponse.from(run, mapper)).toList();
+                .map(this::response).toList();
+    }
+
+    @Transactional
+    public ResumeAnalysisResponse feedback(UUID runId, ResumeAnalysisFeedbackRequest request) {
+        SystemUser user = users.requireCurrentUser();
+        AiAssistanceRun run = runs.findWithDetailsById(runId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "RESUME_ANALYSIS_NOT_FOUND", "简历分析记录不存在"));
+        requireAccess(run.getResumeIntake(), user);
+        if (!"SUCCEEDED".equals(run.getStatus())) {
+            throw new ApiException(HttpStatus.CONFLICT, "RESUME_ANALYSIS_NOT_REVIEWABLE", "仅成功完成的 AI 分析可以记录 HR 反馈");
+        }
+        ResumeAnalysisFeedback saved = feedback.save(new ResumeAnalysisFeedback(run, request.feedbackType(), cleanFeedback(request.note()), user));
+        audit.success("REVIEW_OPENAI_RESUME_ANALYSIS", "AI_ASSISTANCE_RUN", run.getId(), run.getResumeIntake().getDisplayLabel(),
+                "HR 记录 AI 简历分析反馈：" + saved.getFeedbackType().name());
+        return response(run);
     }
 
     private void recordFailure(ResumeIntake intake, SystemUser user, String inputHash, String code) {
@@ -87,10 +104,25 @@ public class ResumeAnalysisService {
     private ResumeIntake requireIntake(UUID id, SystemUser user) {
         ResumeIntake intake = intakes.findWithDetailsById(id)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "RESUME_INTAKE_NOT_FOUND", "简历登记不存在"));
+        requireAccess(intake, user);
+        return intake;
+    }
+
+    private void requireAccess(ResumeIntake intake, SystemUser user) {
         boolean allowed = user.getRole() == UserRole.SYSTEM_ADMIN || user.getCompanyScopes().stream()
                 .map(Company::getId).anyMatch(intake.getContact().getCandidate().getCompany().getId()::equals);
         if (!allowed) throw new ApiException(HttpStatus.FORBIDDEN, "COMPANY_SCOPE_FORBIDDEN", "当前账号无权访问该企业数据");
-        return intake;
+    }
+
+    private ResumeAnalysisResponse response(AiAssistanceRun run) {
+        return ResumeAnalysisResponse.from(run, mapper, feedback.findByAnalysisRunIdOrderByCreatedAtDesc(run.getId()));
+    }
+
+    private String cleanFeedback(String note) {
+        String clean = note == null ? "" : note.trim();
+        if (clean.isBlank()) throw new ApiException(HttpStatus.BAD_REQUEST, "RESUME_ANALYSIS_FEEDBACK_REQUIRED", "请填写 HR 复核说明");
+        if (clean.length() > 1000) throw new ApiException(HttpStatus.BAD_REQUEST, "RESUME_ANALYSIS_FEEDBACK_TOO_LONG", "HR 复核说明不能超过 1000 个字符");
+        return clean;
     }
 
     private String cleanResumeText(String value) {

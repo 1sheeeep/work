@@ -3,6 +3,7 @@ package ai.xzkj.recruitment.resumes;
 import ai.xzkj.recruitment.common.ApiException;
 import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import org.springframework.http.HttpStatus;
 import tools.jackson.databind.ObjectMapper;
@@ -16,6 +17,11 @@ record ResumeAnalysisRequest(
         @AssertTrue(message = "请确认已获授权将该简历内容发送给 OpenAI 分析") boolean externalProcessingConfirmed
 ) {}
 
+record ResumeAnalysisFeedbackRequest(
+        @NotNull ResumeAnalysisFeedbackType feedbackType,
+        @NotBlank @Size(max = 1000) String note
+) {}
+
 record ResumeAnalysisResponse(
         UUID id,
         UUID resumeIntakeId,
@@ -26,18 +32,33 @@ record ResumeAnalysisResponse(
         String status,
         ResumeAnalysisResult result,
         String errorMessage,
+        List<ResumeAnalysisFeedbackResponse> feedback,
         String createdBy,
         Instant createdAt
 ) {
-    static ResumeAnalysisResponse from(AiAssistanceRun run, ObjectMapper mapper) {
+    static ResumeAnalysisResponse from(AiAssistanceRun run, ObjectMapper mapper, List<ResumeAnalysisFeedback> feedback) {
         ResumeAnalysisResult result = run.getStructuredResult() == null ? null
                 : ResumeAnalysisResult.parseStored(run.getStructuredResult(), mapper);
         ResumeIntake intake = run.getResumeIntake();
         return new ResumeAnalysisResponse(
                 run.getId(), intake.getId(), intake.getContact().getCandidate().getDisplayName(),
                 intake.getContact().getJobPosition().getTitle(), run.getProvider(), run.getModelVersion(),
-                run.getStatus(), result, run.getErrorMessage(), run.getCreatedBy().getDisplayName(), run.getCreatedAt()
+                run.getStatus(), result, run.getErrorMessage(), feedback.stream().map(ResumeAnalysisFeedbackResponse::from).toList(),
+                run.getCreatedBy().getDisplayName(), run.getCreatedAt()
         );
+    }
+}
+
+record ResumeAnalysisFeedbackResponse(
+        UUID id,
+        ResumeAnalysisFeedbackType feedbackType,
+        String note,
+        String createdBy,
+        Instant createdAt
+) {
+    static ResumeAnalysisFeedbackResponse from(ResumeAnalysisFeedback feedback) {
+        return new ResumeAnalysisFeedbackResponse(feedback.getId(), feedback.getFeedbackType(), feedback.getNote(),
+                feedback.getCreatedBy().getDisplayName(), feedback.getCreatedAt());
     }
 }
 
