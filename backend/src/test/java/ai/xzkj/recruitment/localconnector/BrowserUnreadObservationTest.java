@@ -130,5 +130,33 @@ class BrowserUnreadObservationTest {
         assertThat(observation.getDraftJobKnowledgeVersion()).isEqualTo(3);
     }
 
+    @Test void invalidatesApprovalWhenKnowledgeBackedDraftChanges(){
+        BrowserDevice device=mock(BrowserDevice.class);when(device.getBossAccount()).thenReturn(mock(BossAccount.class));
+        Instant now=Instant.parse("2026-08-30T12:00:00Z");UUID jobId=UUID.randomUUID();
+        BrowserUnreadObservation observation=new BrowserUnreadObservation(device,DIGEST,now,now);
+        observation.prepareDraft("KNOWLEDGE","第一版草稿","已使用审核资料","KNOWLEDGE_READY",jobId,List.of(),1,1,now);
+        observation.review("APPROVED","第一版草稿",null,mock(SystemUser.class),now);
+
+        observation.prepareDraft("KNOWLEDGE","第二版草稿","已使用审核资料","KNOWLEDGE_READY",jobId,List.of(),2,1,now.plusSeconds(60));
+
+        assertThat(observation.getReviewStatus()).isEqualTo("PENDING");
+        assertThat(observation.getReviewedContent()).isNull();
+        assertThat(observation.getReviewNote()).contains("原草稿批准已自动失效");
+        assertThat(observation.getDraftCompanyKnowledgeVersion()).isEqualTo(2);
+    }
+
+    @Test void keepsApprovalWhenRecalculationProducesTheSameDraftSnapshot(){
+        BrowserDevice device=mock(BrowserDevice.class);when(device.getBossAccount()).thenReturn(mock(BossAccount.class));
+        Instant now=Instant.parse("2026-08-30T12:00:00Z");UUID jobId=UUID.randomUUID();
+        BrowserUnreadObservation observation=new BrowserUnreadObservation(device,DIGEST,now,now);
+        observation.prepareDraft("KNOWLEDGE","稳定草稿","已使用审核资料","KNOWLEDGE_READY",jobId,List.of(),1,1,now);
+        observation.review("APPROVED","HR 核对后的稳定草稿",null,mock(SystemUser.class),now);
+
+        observation.prepareDraft("KNOWLEDGE","稳定草稿","已使用审核资料","KNOWLEDGE_READY",jobId,List.of(),1,1,now.plusSeconds(60));
+
+        assertThat(observation.getReviewStatus()).isEqualTo("APPROVED");
+        assertThat(observation.getReviewedContent()).isEqualTo("HR 核对后的稳定草稿");
+    }
+
     private UnreadObservationEntry entry(int unread,Instant at){return new UnreadObservationEntry(DIGEST,null,null,null,null,unread,at,at);}
 }
