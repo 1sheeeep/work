@@ -126,14 +126,18 @@
     if (!items.length) return blocked('JOB_LIST_NOT_FOUND', '当前页面未找到具备稳定标识的可见职位卡片，已停止采集。');
     if (items.length > 200) return blocked('JOB_LIST_TOO_LARGE', '当前职位数量超过单次安全上限。');
     const entries = [];
+    const seenSources = new Set();
     for (const item of items) {
-      const identity = stableJobIdentity(item);
-      if (!identity) return blocked('JOB_ID_MISSING', '职位卡片没有稳定 DOM ID，已禁止按位置猜测。');
       const allText = compact(item.textContent).slice(0, 3000);
       const title = firstText(item, JOB_SELECTORS.title, 120);
       if (!title || title.length < 2) return blocked('JOB_TITLE_MISSING', '职位卡片没有可识别标题，已停止采集。');
       const meta = [...item.querySelectorAll('.job-main-info-wrapper .info-labels span')].map((node) => compact(node.textContent)).filter(Boolean);
       const metaText = meta.join(' ');
+      const identity = stableJobIdentity(item) || (item.matches('.job-jobInfo-warp') && meta.length >= 2 ? `derived:${title}|${meta.join('|')}` : '');
+      if (!identity) return blocked('JOB_ID_MISSING', '职位卡片既没有稳定 DOM ID，也没有足够公开字段生成稳定摘要。');
+      const sourceDigest = await digest(identity);
+      if (seenSources.has(sourceDigest)) continue;
+      seenSources.add(sourceDigest);
       const salaryDisplay = firstText(item, JOB_SELECTORS.salary, 120) || matchText(metaText || allText, /(?:\d{1,3}(?:\.\d+)?\s*[-–~至]\s*\d{1,3}(?:\.\d+)?\s*[Kk](?:\s*[·x×]\s*\d{2}\s*薪)?|\d{1,3}\s*[Kk]以上)/);
       const salary = parseSalary(salaryDisplay);
       const location = firstText(item, JOB_SELECTORS.location, 120) || matchText(metaText || allText, /(?:北京|上海|天津|重庆|广州|深圳|杭州|南京|苏州|成都|武汉|西安|长沙|郑州|厦门|合肥|青岛|济南|无锡|宁波|东莞|佛山)(?:[·\-][\u4e00-\u9fa5]{1,10})?/);
@@ -141,18 +145,23 @@
       const educationRequirement = firstText(item, JOB_SELECTORS.education, 80) || matchText(metaText || allText, /(?:学历不限|初中及以下|中专\/中技|高中|大专|本科|硕士|博士)(?:及以上)?/);
       const description = firstText(item, JOB_SELECTORS.description, 10000);
       const values = [title, location, salaryDisplay, experienceRequirement, educationRequirement, description];
-      entries.push({ sourceDigest: await digest(identity), title, location: location || null, salaryDisplay: salaryDisplay || null, salaryMinK: salary.min, salaryMaxK: salary.max, salaryMonths: salary.months, experienceRequirement: experienceRequirement || null, educationRequirement: educationRequirement || null, description: description || null, completeness: values.filter(Boolean).length });
+      entries.push({ sourceDigest, title, location: location || null, salaryDisplay: salaryDisplay || null, salaryMinK: salary.min, salaryMaxK: salary.max, salaryMonths: salary.months, experienceRequirement: experienceRequirement || null, educationRequirement: educationRequirement || null, description: description || null, completeness: values.filter(Boolean).length });
     }
+    if (!entries.length) return blocked('JOB_LIST_EMPTY_AFTER_DEDUP', '职位行去重后没有可同步数据。');
     const signature = entries.map((entry) => `${entry.sourceDigest}:${entry.title}:${entry.location || ''}:${entry.salaryDisplay || ''}:${entry.experienceRequirement || ''}:${entry.educationRequirement || ''}:${entry.description || ''}`).join('|');
     return { ok: true, entries, signature };
   }
 
   function findJobCards() {
     for (const selector of JOB_SELECTORS.cards) {
-      const items = [...document.querySelectorAll(selector)].filter(visible).filter((item) => stableJobIdentity(item));
+      const exactKnownRow = selector.startsWith('.job-jobInfo-warp');
+      const items = [...document.querySelectorAll(selector)].filter(visible).filter((item) => exactKnownRow || stableJobIdentity(item));
       if (items.length) {
         const unique = new Map();
-        for (const item of items) unique.set(stableJobIdentity(item), unique.get(stableJobIdentity(item)) || item);
+        for (const [index, item] of items.entries()) {
+          const key = stableJobIdentity(item) || `known-row:${index}`;
+          unique.set(key, unique.get(key) || item);
+        }
         return [...unique.values()].slice(0, 201);
       }
     }
