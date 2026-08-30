@@ -15,4 +15,7 @@ import jakarta.validation.Valid;import org.springframework.http.HttpHeaders;impo
  @GetMapping("/api/local-connector/action-tasks")public List<ConnectorActionTaskResponse> actions(){return service.listActionTasks();}
  @PostMapping("/api/local-connector/action-tasks")public ConnectorActionTaskResponse createAction(@Valid@RequestBody CreateActionTaskRequest r){return service.createActionTask(r);}
  @GetMapping("/api/local-connector/validation-cases")public List<ConnectorValidationCaseResponse> validations(){return service.listValidationCases();}
+ @PostMapping("/api/local-connector/runtime/validation-readiness")public ConnectorValidationCaseResponse readiness(@RequestHeader(HttpHeaders.AUTHORIZATION)String token,@Valid@RequestBody ValidationReadinessRequest r){return service.reportValidationReadiness(token,r);}
+ @PostMapping("/api/local-connector/validation-cases/{id}/start")@PreAuthorize("hasAnyRole('SYSTEM_ADMIN','RECRUITMENT_ADMIN')")public ConnectorValidationCaseResponse startValidation(@PathVariable UUID id){return service.startValidation(id);}
+ @PostMapping("/api/local-connector/validation-cases/{id}/result")@PreAuthorize("hasAnyRole('SYSTEM_ADMIN','RECRUITMENT_ADMIN')")public ConnectorValidationCaseResponse validationResult(@PathVariable UUID id,@Valid@RequestBody ValidationResultRequest r){return service.completeValidation(id,r);}
 }

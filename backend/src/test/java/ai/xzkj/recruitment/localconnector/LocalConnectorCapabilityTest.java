@@ -20,4 +20,13 @@ class LocalConnectorCapabilityTest {
         assertThat(capability.getStatus()).isEqualTo("UNVERIFIED");
         assertThat(capability.getVerifiedAt()).isNull();
     }
+
+    @Test void manualPassNeverApprovesProductionAutomatically(){
+        LocalConnectorCapability capability=new LocalConnectorCapability(mock(BrowserDevice.class),"SEND_MESSAGE");
+        Instant now=Instant.parse("2026-08-30T10:00:00Z");
+        capability.readyForManualTest("a".repeat(64),now);
+        capability.recordManualResult(true,"b".repeat(64),now.plusSeconds(30));
+        assertThat(capability.getStatus()).isEqualTo("READY_FOR_MANUAL_TEST");
+        assertThat(capability.getReason()).contains("尚未批准生产");
+    }
 }

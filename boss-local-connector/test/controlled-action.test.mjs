@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildActionPreview } from '../src/lib/controlled-action.mjs';
+import { buildActionPreview, buildValidationReadiness } from '../src/lib/controlled-action.mjs';
 
 const base = { actionType: 'SEND_MESSAGE', chatDigest: 'a'.repeat(64), capabilityStatus: 'READY_FOR_MANUAL_TEST', pageState: 'CHAT_PAGE_READY', selectedConversationVerified: true, hasRiskOrVerification: false };
 
@@ -21,4 +21,18 @@ test('returns preview only after every precondition passes', () => {
   assert.equal(result.allowed, true);
   assert.equal(result.mode, 'PREVIEW_ONLY');
   assert.equal('execute' in result, false);
+});
+
+test('readiness requires three stable control observations', () => {
+  const result = buildValidationReadiness({ ...base, controlDigest: 'b'.repeat(64), stableCycles: 2 });
+  assert.equal(result.allowed, false);
+  assert.equal(result.code, 'CONTROL_NOT_STABLE');
+});
+
+test('readiness report contains no execution function or page content', () => {
+  const result = buildValidationReadiness({ ...base, controlDigest: 'b'.repeat(64), stableCycles: 3 });
+  assert.equal(result.allowed, true);
+  assert.equal(result.mode, 'READINESS_REPORT_ONLY');
+  assert.equal('execute' in result, false);
+  assert.equal('message' in result, false);
 });

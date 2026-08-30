@@ -29,6 +29,14 @@ export async function verifySelectedConversation(config, deviceToken, snapshot) 
   });
 }
 
+export async function reportValidationReadiness(config, deviceToken, readiness) {
+  return request(config.backendUrl, '/api/local-connector/runtime/validation-readiness', {
+    method: 'POST',
+    token: deviceToken,
+    body: readiness,
+  });
+}
+
 async function request(backendUrl, path, options) {
   let response;
   try {

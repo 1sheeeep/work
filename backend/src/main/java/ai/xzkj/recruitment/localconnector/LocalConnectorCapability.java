@@ -19,6 +19,8 @@ class LocalConnectorCapability {
     protected LocalConnectorCapability() {}
     LocalConnectorCapability(BrowserDevice device,String capability){this.id=UUID.randomUUID();this.device=device;this.capability=capability;this.status="UNVERIFIED";this.reason="尚未使用真实 BOSS 页面验证";this.createdAt=Instant.now();this.updatedAt=this.createdAt;}
     void verifyReadOnly(String digest,String reason,Instant now){if(isWriteCapability())return;this.status="READ_ONLY_VERIFIED";this.evidenceDigest=digest;this.reason=reason;this.verifiedAt=now;this.updatedAt=now;}
+    void readyForManualTest(String digest,Instant now){if(!isWriteCapability())return;status="READY_FOR_MANUAL_TEST";evidenceDigest=digest;reason="真实页面操作入口已稳定识别，等待 HR 单次人工验收";verifiedAt=now;updatedAt=now;}
+    void recordManualResult(boolean passed,String digest,Instant now){if(!isWriteCapability())return;status=passed?"READY_FOR_MANUAL_TEST":"BLOCKED";evidenceDigest=digest;reason=passed?"真实页面单次人工验收通过，尚未批准生产":"真实页面单次人工验收失败，能力已锁定";verifiedAt=now;updatedAt=now;}
     private boolean isWriteCapability(){return capability.equals("SEND_MESSAGE")||capability.equals("REQUEST_RESUME")||capability.equals("EXCHANGE_WECHAT")||capability.equals("EXCHANGE_PHONE");}
     UUID getId(){return id;} BrowserDevice getDevice(){return device;} String getCapability(){return capability;} String getStatus(){return status;} String getReason(){return reason;} Instant getVerifiedAt(){return verifiedAt;} Instant getUpdatedAt(){return updatedAt;}
 }

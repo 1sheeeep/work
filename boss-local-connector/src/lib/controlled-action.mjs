@@ -1,6 +1,25 @@
 const WRITE_ACTIONS = new Set(['SEND_MESSAGE', 'REQUEST_RESUME', 'EXCHANGE_WECHAT', 'EXCHANGE_PHONE']);
 const DIGEST = /^[a-f0-9]{64}$/;
 
+export function buildValidationReadiness(input) {
+  if (!input || !WRITE_ACTIONS.has(input.actionType)) return blocked('ACTION_UNSUPPORTED', '不支持的页面动作。');
+  if (!DIGEST.test(input.chatDigest ?? '') || !DIGEST.test(input.controlDigest ?? '')) return blocked('EVIDENCE_UNSTABLE', '会话或可见操作入口缺少稳定摘要。');
+  if (input.pageState !== 'CHAT_PAGE_READY' || !input.selectedConversationVerified) return blocked('PAGE_NOT_READY', '当前页面或选中会话尚未稳定。');
+  if (input.hasRiskOrVerification) return blocked('RISK_OR_VERIFICATION', '页面出现验证或风险提示。');
+  if (!Number.isInteger(input.stableCycles) || input.stableCycles < 3) return blocked('CONTROL_NOT_STABLE', '操作入口尚未连续稳定识别三次。');
+  return Object.freeze({
+    allowed: true,
+    mode: 'READINESS_REPORT_ONLY',
+    actionType: input.actionType,
+    chatDigest: input.chatDigest,
+    controlDigest: input.controlDigest,
+    pageState: input.pageState,
+    selectedConversationVerified: true,
+    hasRiskOrVerification: false,
+    stableCycles: Math.min(input.stableCycles, 20),
+  });
+}
+
 export function buildActionPreview(input) {
   if (!input || !WRITE_ACTIONS.has(input.actionType)) return blocked('ACTION_UNSUPPORTED', '不支持的页面动作。');
   if (!DIGEST.test(input.chatDigest ?? '')) return blocked('TARGET_UNSTABLE', '当前会话缺少稳定摘要，禁止定位操作目标。');
