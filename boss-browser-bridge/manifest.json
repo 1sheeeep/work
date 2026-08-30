@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "招聘值守台·BOSS 只读桥接",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "在已登录的 BOSS 招聘页面中只读识别未读状态，并向本机招聘值守台上报最小化摘要。",
   "permissions": ["alarms", "storage", "tabs", "scripting"],
   "host_permissions": [

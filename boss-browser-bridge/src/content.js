@@ -129,20 +129,21 @@
     const seenSources = new Set();
     for (const item of items) {
       const allText = compact(item.textContent).slice(0, 3000);
-      const title = firstText(item, JOB_SELECTORS.title, 120);
+      const title = firstText(item, JOB_SELECTORS.title, 120) || deriveJobTitle(item);
       if (!title || title.length < 2) return blocked('JOB_TITLE_MISSING', '职位卡片没有可识别标题，已停止采集。');
       const meta = [...item.querySelectorAll('.job-main-info-wrapper .info-labels span')].map((node) => compact(node.textContent)).filter(Boolean);
       const metaText = meta.join(' ');
-      const identity = stableJobIdentity(item) || (item.matches('.job-jobInfo-warp') && meta.length >= 2 ? `derived:${title}|${meta.join('|')}` : '');
-      if (!identity) return blocked('JOB_ID_MISSING', '职位卡片既没有稳定 DOM ID，也没有足够公开字段生成稳定摘要。');
-      const sourceDigest = await digest(identity);
-      if (seenSources.has(sourceDigest)) continue;
-      seenSources.add(sourceDigest);
       const salaryDisplay = firstText(item, JOB_SELECTORS.salary, 120) || matchText(metaText || allText, /(?:\d{1,3}(?:\.\d+)?\s*[-–~至]\s*\d{1,3}(?:\.\d+)?\s*[Kk](?:\s*[·x×]\s*\d{2}\s*薪)?|\d{1,3}\s*[Kk]以上)/);
       const salary = parseSalary(salaryDisplay);
       const location = firstText(item, JOB_SELECTORS.location, 120) || matchText(metaText || allText, /(?:北京|上海|天津|重庆|广州|深圳|杭州|南京|苏州|成都|武汉|西安|长沙|郑州|厦门|合肥|青岛|济南|无锡|宁波|东莞|佛山)(?:[·\-][\u4e00-\u9fa5]{1,10})?/);
       const experienceRequirement = firstText(item, JOB_SELECTORS.experience, 80) || matchText(metaText || allText, /(?:经验不限|应届生|在校生|\d{1,2}(?:-\d{1,2})?年(?:以上)?)/);
       const educationRequirement = firstText(item, JOB_SELECTORS.education, 80) || matchText(metaText || allText, /(?:学历不限|初中及以下|中专\/中技|高中|大专|本科|硕士|博士)(?:及以上)?/);
+      const publicIdentity = [location, salaryDisplay, experienceRequirement, educationRequirement].filter(Boolean);
+      const identity = stableJobIdentity(item) || (publicIdentity.length >= 2 ? `derived:${title}|${publicIdentity.join('|')}` : '');
+      if (!identity) return blocked('JOB_ID_MISSING', '职位卡片既没有稳定 DOM ID，也没有足够公开字段生成稳定摘要。');
+      const sourceDigest = await digest(identity);
+      if (seenSources.has(sourceDigest)) continue;
+      seenSources.add(sourceDigest);
       const description = firstText(item, JOB_SELECTORS.description, 10000);
       const values = [title, location, salaryDisplay, experienceRequirement, educationRequirement, description];
       entries.push({ sourceDigest, title, location: location || null, salaryDisplay: salaryDisplay || null, salaryMinK: salary.min, salaryMaxK: salary.max, salaryMonths: salary.months, experienceRequirement: experienceRequirement || null, educationRequirement: educationRequirement || null, description: description || null, completeness: values.filter(Boolean).length });
@@ -165,7 +166,52 @@
         return [...unique.values()].slice(0, 201);
       }
     }
-    return [];
+    return findSemanticJobRows().slice(0, 201);
+  }
+
+  function findSemanticJobRows() {
+    const edits = [...document.querySelectorAll('a, button, span, div')]
+      .filter((node) => visible(node) && compact(node.textContent) === '编辑');
+    const rows = new Set();
+    for (const edit of edits) {
+      let node = edit.parentElement;
+      for (let depth = 0; node && depth < 9; depth++, node = node.parentElement) {
+        const rect = node.getBoundingClientRect();
+        const text = compact(node.innerText || node.textContent);
+        if (rect.width >= 500 && rect.height >= 55 && rect.height <= 260 && hasExactVisibleText(node, '关闭') && looksLikeJobPublicText(text)) {
+          rows.add(node);
+          break;
+        }
+      }
+    }
+    return [...rows].filter(visible);
+  }
+
+  function hasExactVisibleText(root, expected) {
+    return [...root.querySelectorAll('a, button, span, div')].some((node) => visible(node) && compact(node.textContent) === expected);
+  }
+
+  function looksLikeJobPublicText(text) {
+    const patterns = [
+      /\d{1,3}(?:\.\d+)?\s*[-–~至]\s*\d{1,3}(?:\.\d+)?\s*[Kk]/,
+      /(?:经验不限|应届生|在校生|\d{1,2}(?:-\d{1,2})?年(?:以上)?)/,
+      /(?:学历不限|初中及以下|中专\/中技|高中|大专|本科|硕士|博士)(?:及以上)?/,
+      /(?:北京|上海|天津|重庆|广州|深圳|杭州|南京|苏州|成都|武汉|西安|长沙|郑州|厦门|合肥|青岛|济南|无锡|宁波|东莞|佛山)/,
+      /(?:全职|兼职|实习)/,
+    ];
+    return patterns.filter((pattern) => pattern.test(text)).length >= 2;
+  }
+
+  function deriveJobTitle(root) {
+    const lines = String(root.innerText || '').split(/\n+/).map(compact).filter(Boolean);
+    return (lines.find((line) => line.length >= 2 && line.length <= 120
+      && !['编辑', '关闭', '开放中', '待开放', '已关闭', '全职', '兼职', '实习'].includes(line)
+      && !/^(?:\d+|看过我|沟通过|感兴趣|\d{4}[-/.年]\d{1,2}[-/.月]\d{1,2}日?到期)$/.test(line)
+      && !looksLikePureJobMeta(line)) || '').slice(0, 120);
+  }
+
+  function looksLikePureJobMeta(line) {
+    return /^(?:(?:北京|上海|天津|重庆|广州|深圳|杭州|南京|苏州|成都|武汉|西安|长沙|郑州|厦门|合肥|青岛|济南|无锡|宁波|东莞|佛山)|(?:经验不限|应届生|在校生|\d{1,2}(?:-\d{1,2})?年(?:以上)?)|(?:学历不限|初中及以下|中专\/中技|高中|大专|本科|硕士|博士)(?:及以上)?|\d{1,3}(?:\.\d+)?\s*[-–~至]\s*\d{1,3}(?:\.\d+)?\s*[Kk])$/.test(line);
   }
 
   function stableJobIdentity(item) {
