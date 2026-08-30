@@ -22,7 +22,7 @@
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (!['BRIDGE_COLLECT', 'BRIDGE_COLLECT_JOBS'].includes(message?.type)) return false;
-    const task = message.type === 'BRIDGE_COLLECT_JOBS' ? collectJobsAndPublish() : collectAndPublish(true);
+    const task = message.type === 'BRIDGE_COLLECT_JOBS' ? collectJobsAndPublish(Boolean(message.allowEmbeddedJobList)) : collectAndPublish(true);
     task.then((result) => sendResponse(result || { ok: true })).catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   });
@@ -75,11 +75,11 @@
     }
   }
 
-  async function collectJobsAndPublish() {
+  async function collectJobsAndPublish(allowEmbeddedJobList) {
     if (collecting) return { ok: false, error: '页面正在生成另一份稳定快照，请稍后重试。' };
     collecting = true;
     try {
-      const page = classifyJobPage();
+      const page = classifyJobPage(allowEmbeddedJobList);
       if (!page.ok) { await send({ type: 'BRIDGE_JOB_BLOCKED', payload: page }); return { ok: false, error: page.reason }; }
       const first = await collectJobSnapshot();
       if (!first.ok) { await send({ type: 'BRIDGE_JOB_BLOCKED', payload: first }); return { ok: false, error: first.reason }; }
@@ -101,13 +101,14 @@
     return { ok: true };
   }
 
-  function classifyJobPage() {
+  function classifyJobPage(allowEmbeddedJobList) {
     const safety = classifySafety();
     if (!safety.ok) return safety;
     const text = document.body?.innerText || '';
     const routeLooksRelevant = /(?:job|position)/i.test(location.pathname) && !CHAT_URL.test(location.pathname);
     const headingLooksRelevant = ['职位管理', '我的职位', '职位列表'].some((term) => text.includes(term));
-    if (!routeLooksRelevant && !headingLooksRelevant) return blocked('NOT_JOB_MANAGEMENT_PAGE', '当前不是 BOSS 职位管理页；扩展不会自动跳转。');
+    const embeddedList = allowEmbeddedJobList && document.querySelector('.job-jobInfo-warp');
+    if (!routeLooksRelevant && !headingLooksRelevant && !embeddedList) return blocked('NOT_JOB_MANAGEMENT_PAGE', '当前不是 BOSS 职位管理页；扩展不会自动跳转。');
     if (!text.trim()) return blocked('PAGE_LOADING', 'BOSS 职位管理页仍在加载。');
     return { ok: true };
   }

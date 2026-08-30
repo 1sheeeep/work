@@ -73,7 +73,7 @@ async function collectJobsFromBestTab() {
     throw new Error(reason);
   }
   try {
-    const response = await sendToBossTab(tab.id, { type: 'BRIDGE_COLLECT_JOBS' });
+    const response = await collectJobsFromAllFrames(tab.id);
     if (!response?.ok) throw new Error(response?.error || '职位页面脚本未连接。');
     return response.sync || { received: 0, created: 0, updated: 0, unchanged: 0 };
   } catch (error) {
@@ -81,6 +81,21 @@ async function collectJobsFromBestTab() {
     await setRuntime({ jobState: reason });
     throw new Error(reason);
   }
+}
+
+async function collectJobsFromAllFrames(tabId) {
+  const injected = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: ['src/content.js'] });
+  const frameIds = [...new Set(injected.map((item) => item.frameId))].sort((a, b) => a - b);
+  if (!frameIds.length) throw new Error('当前 BOSS 页面没有可访问的文档 frame。');
+  const failures = [];
+  for (const frameId of frameIds) {
+    try {
+      const response = await chrome.tabs.sendMessage(tabId, { type: 'BRIDGE_COLLECT_JOBS', allowEmbeddedJobList: frameId !== 0 }, { frameId });
+      if (response?.ok) return response;
+      failures.push(response?.error || `frame ${frameId} 未返回职位数据`);
+    } catch (error) { failures.push(safeError(error)); }
+  }
+  throw new Error([...new Set(failures)].slice(0, 3).join('；') || '所有页面 frame 均未找到职位列表。');
 }
 
 async function sendToBossTab(tabId, message) {
