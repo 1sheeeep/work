@@ -19,6 +19,7 @@ const router = createRouter({
         { path: 'hr-users', name: 'hr-users', component: () => import('./views/HrUsersView.vue'), meta: { role: 'SYSTEM_ADMIN' } },
         { path: 'audit-logs', name: 'audit-logs', component: () => import('./views/AuditLogView.vue'), meta: { role: 'SYSTEM_ADMIN' } },
         { path: 'operations', name: 'operations', component: () => import('./views/OperationsView.vue'), meta: { role: 'SYSTEM_ADMIN' } },
+        { path: 'ai-settings', name: 'ai-settings', component: () => import('./views/AiSettingsView.vue'), meta: { role: 'SYSTEM_ADMIN' } },
       ],
     },
     { path: '/:pathMatch(.*)*', redirect: '/dashboard' },

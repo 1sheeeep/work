@@ -14,6 +14,8 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.time.Instant;
+import java.util.UUID;
 
 @Component
 public class OpenAiResumeClient {
@@ -34,16 +36,17 @@ public class OpenAiResumeClient {
         }
         try {
             ObjectNode payload = createPayload(job, resumeText, safetyIdentifier);
+            String clientRequestId = UUID.randomUUID().toString();
             HttpRequest request = HttpRequest.newBuilder(responseUri())
                     .timeout(properties.getTimeout())
                     .header("Authorization", "Bearer " + properties.getApiKey())
                     .header("Content-Type", "application/json")
+                    .header("X-Client-Request-Id", clientRequestId)
                     .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(payload)))
                     .build();
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new ApiException(HttpStatus.BAD_GATEWAY, "OPENAI_REQUEST_FAILED",
-                        "OpenAI 简历分析请求未完成，请检查部署配置、模型权限或稍后重试");
+                throw responseError(response.statusCode());
             }
             JsonNode body = mapper.readTree(response.body());
             if (!"completed".equals(body.path("status").asText())) {
@@ -59,6 +62,44 @@ public class OpenAiResumeClient {
         } catch (Exception exception) {
             throw new ApiException(HttpStatus.BAD_GATEWAY, "OPENAI_REQUEST_FAILED",
                     "OpenAI 简历分析请求失败，请检查网络和部署配置后重试");
+        }
+    }
+
+    public ConnectionCheck testConnection() {
+        if (!properties.isConfigured()) {
+            throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "OPENAI_NOT_CONFIGURED",
+                    "OpenAI 尚未完成配置，请先检查启用开关、API Key、模型和官方服务地址");
+        }
+        String clientRequestId = UUID.randomUUID().toString();
+        long started = System.nanoTime();
+        try {
+            HttpRequest request = HttpRequest.newBuilder(responseUri())
+                    .timeout(properties.getTimeout())
+                    .header("Authorization", "Bearer " + properties.getApiKey())
+                    .header("Content-Type", "application/json")
+                    .header("X-Client-Request-Id", clientRequestId)
+                    .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(connectionTestPayload())))
+                    .build();
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) throw responseError(response.statusCode());
+            JsonNode body = mapper.readTree(response.body());
+            if (!"completed".equals(body.path("status").asText())) {
+                throw new ApiException(HttpStatus.BAD_GATEWAY, "OPENAI_RESPONSE_INCOMPLETE", "OpenAI 连通测试未正常完成");
+            }
+            JsonNode testResult = mapper.readTree(outputText(body));
+            if (!testResult.path("ok").asBoolean(false)) {
+                throw new ApiException(HttpStatus.BAD_GATEWAY, "OPENAI_TEST_RESPONSE_INVALID", "OpenAI 连通测试返回内容无效");
+            }
+            String requestId = response.headers().firstValue("x-request-id").orElse(clientRequestId);
+            return new ConnectionCheck(properties.getModel(), requestId,
+                    Duration.ofNanos(System.nanoTime() - started).toMillis(), Instant.now());
+        } catch (ApiException exception) {
+            throw exception;
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "OPENAI_REQUEST_INTERRUPTED", "OpenAI 连通测试被中断");
+        } catch (Exception exception) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "OPENAI_REQUEST_FAILED", "OpenAI 连通测试失败，请检查网络和服务端配置");
         }
     }
 
@@ -84,11 +125,47 @@ public class OpenAiResumeClient {
         String base = properties.getBaseUrl().replaceAll("/+$", "");
         try {
             URI uri = URI.create(base + "/responses");
-            if (!"https".equalsIgnoreCase(uri.getScheme())) throw new IllegalArgumentException("HTTPS required");
+            String host = uri.getHost();
+            if (!"https".equalsIgnoreCase(uri.getScheme()) || host == null
+                    || !("api.openai.com".equalsIgnoreCase(host) || host.toLowerCase().endsWith(".api.openai.com"))) {
+                throw new IllegalArgumentException("Official OpenAI HTTPS endpoint required");
+            }
             return uri;
         } catch (Exception exception) {
             throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "OPENAI_BASE_URL_INVALID", "OpenAI 服务地址配置无效");
         }
+    }
+
+    private ObjectNode connectionTestPayload() {
+        ObjectNode payload = mapper.createObjectNode();
+        payload.put("model", properties.getModel());
+        payload.put("store", false);
+        payload.put("max_output_tokens", 32);
+        payload.put("instructions", "Return only the requested JSON object. Do not add any other text.");
+        payload.put("input", "Server-side OpenAI configuration test. No candidate or resume data is included.");
+        ObjectNode format = payload.putObject("text").putObject("format");
+        format.put("type", "json_schema");
+        format.put("name", "connection_test");
+        format.put("strict", true);
+        ObjectNode schema = format.putObject("schema");
+        schema.put("type", "object");
+        schema.put("additionalProperties", false);
+        schema.putArray("required").add("ok");
+        schema.putObject("properties").putObject("ok").put("type", "boolean").put("const", true);
+        return payload;
+    }
+
+    private ApiException responseError(int statusCode) {
+        if (statusCode == 401 || statusCode == 403) {
+            return new ApiException(HttpStatus.BAD_GATEWAY, "OPENAI_AUTH_FAILED", "OpenAI 认证失败，请检查服务端 API Key 和项目权限");
+        }
+        if (statusCode == 400 || statusCode == 404) {
+            return new ApiException(HttpStatus.BAD_GATEWAY, "OPENAI_MODEL_INVALID", "OpenAI 模型或请求配置不可用，请检查 OPENAI_MODEL");
+        }
+        if (statusCode == 429) {
+            return new ApiException(HttpStatus.BAD_GATEWAY, "OPENAI_LIMIT_REACHED", "OpenAI 请求受到额度或速率限制，请检查项目用量与限额");
+        }
+        return new ApiException(HttpStatus.BAD_GATEWAY, "OPENAI_REQUEST_FAILED", "OpenAI 请求未完成，请稍后重试");
     }
 
     private String userInput(JobPosition job, String resumeText) {
@@ -164,4 +241,6 @@ public class OpenAiResumeClient {
         }
         return combined.toString();
     }
+
+    public record ConnectionCheck(String model, String requestId, long elapsedMilliseconds, Instant checkedAt) {}
 }

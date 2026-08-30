@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Briefcase, ChatDotRound, Connection, DataAnalysis, DocumentChecked, Expand, Grid, Monitor, OfficeBuilding, SwitchButton, User, UserFilled } from '@element-plus/icons-vue'
+import { Briefcase, ChatDotRound, Connection, Cpu, DataAnalysis, DocumentChecked, Expand, Grid, Monitor, OfficeBuilding, SwitchButton, User, UserFilled } from '@element-plus/icons-vue'
 import { authStore } from '../stores/auth'
 
 const route = useRoute()
@@ -27,12 +27,13 @@ const navigationGroups = computed(() => [
     ...(user.value?.role === 'SYSTEM_ADMIN' ? [{ path: '/hr-users', label: 'HR 用户', icon: User }] : []),
   ] }] : []),
   ...(user.value?.role === 'SYSTEM_ADMIN' ? [{ label: '运行管理', items: [
+    { path: '/ai-settings', label: 'AI 接入', icon: Cpu },
     { path: '/operations', label: '运行保障', icon: Monitor },
     { path: '/audit-logs', label: '操作日志', icon: DataAnalysis },
   ] }] : []),
 ])
 const roleLabel = computed(() => ({ SYSTEM_ADMIN: '系统管理员', RECRUITMENT_ADMIN: '招聘管理员', RECRUITER: '招聘专员' }[user.value?.role ?? 'SYSTEM_ADMIN']))
-const workspaceLabel = computed(() => ({ dashboard: '今日总览', organization: '企业与集团', 'boss-accounts': '账号与浏览器', 'job-positions': '岗位资料', candidates: '待处理消息', 'resume-intakes': '简历审核与分析', 'auto-replies': '值守规则与记录', 'hr-users': 'HR 用户', 'audit-logs': '操作日志', operations: '运行保障' }[String(route.name)] ?? '招聘值守台'))
+const workspaceLabel = computed(() => ({ dashboard: '今日总览', organization: '企业与集团', 'boss-accounts': '账号与浏览器', 'job-positions': '岗位资料', candidates: '待处理消息', 'resume-intakes': '简历审核与分析', 'auto-replies': '值守规则与记录', 'hr-users': 'HR 用户', 'audit-logs': '操作日志', operations: '运行保障', 'ai-settings': 'AI 接入' }[String(route.name)] ?? '招聘值守台'))
 
 function navigate(path: string) {
   mobileNavOpen.value = false

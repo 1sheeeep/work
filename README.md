@@ -44,15 +44,34 @@ docker compose ps
 
 ### 启用 OpenAI 简历分析
 
-默认关闭。部署环境中设置以下变量后重启后端即可启用；API Key 只存在于后端进程环境，不能写入前端、数据库或 Git：
+默认关闭。完整接入步骤如下：
+
+1. 由公司确认简历可交由外部 AI 服务处理，并确定可发送字段、保留期和 HR 责任人。
+2. 使用公司管理的 OpenAI 项目，在 <https://platform.openai.com/api-keys> 创建服务端 API Key。不要把 Key 发到聊天、后台页面、日志或 Git。
+3. 在 OpenAI 项目中确认一个已开通且支持 Structured Outputs 的模型名称。
+4. 复制 `.env.example` 为项目根目录的 `.env`（已有 `.env` 时只修改对应项），填写：
 
 ```bash
 APP_OPENAI_ENABLED=true
 OPENAI_API_KEY=你的服务端OpenAI密钥
 OPENAI_MODEL=你已启用且支持Structured Outputs的模型
+OPENAI_TIMEOUT=60s
 ```
 
-HR 在“简历登记与 AI 分析”中完成来源审核后，仍须在每一次提交时确认对外处理。请求设置为 `store=false`，但外部服务仍适用其自身的数据处理政策；使用前应按公司隐私制度取得必要授权。
+5. 在项目根目录只重建后端容器，让新的服务端环境变量生效：
+
+```bash
+docker compose up -d --no-build --force-recreate backend
+docker compose ps
+```
+
+6. 登录 <http://localhost:8088>，系统管理员进入左侧“AI 接入”，点击“刷新状态”。页面只显示 Key 是否已配置，不会显示 Key 内容。
+7. 状态为“可用”后点击“运行无简历数据测试”。测试只发送固定探针，不包含候选人、简历或岗位信息；成功后页面显示模型、延迟和 OpenAI 请求 ID。
+8. 进入“简历审核与分析”：登记来源 → HR 批准 AI → 粘贴已脱敏文本或本机提取文件 → HR 校对 → 勾选本次外部处理确认 → 提交分析 → 人工复核证据、缺口和追问建议。
+
+连通性测试失败时，页面会分别提示密钥/权限错误、模型不可用、限额或速率限制、网络请求失败。先按提示修正 `.env` 或 OpenAI 项目配置，再重新创建后端容器并测试。
+
+API Key 只存在于后端进程环境，不能写入前端、数据库或 Git。HR 在完成来源审核后，仍须在每一次提交时确认对外处理。请求设置为 `store=false`，但外部服务仍适用其自身的数据处理政策；使用前应按公司隐私制度取得必要授权。
 
 ### AI 分析结果保留期
 

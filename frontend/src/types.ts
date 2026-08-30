@@ -41,6 +41,8 @@ export interface ResumeAnalysisResult {recommendation:ResumeAnalysisRecommendati
 export type ResumeAnalysisFeedbackType='ADOPTED'|'AMENDED'|'NOT_USED'
 export interface ResumeAnalysisFeedback {id:string;feedbackType:ResumeAnalysisFeedbackType;note:string;createdBy:string;createdAt:string}
 export interface ResumeAnalysisRun {id:string;resumeIntakeId:string;candidateName:string;jobTitle:string;provider:string;modelVersion:string;status:'SUCCEEDED'|'FAILED';result?:ResumeAnalysisResult;errorMessage?:string;feedback:ResumeAnalysisFeedback[];createdBy:string;createdAt:string;resultExpiresAt?:string;resultPurgedAt?:string}
+export interface OpenAiConfigurationStatus {enabled:boolean;apiKeyConfigured:boolean;modelConfigured:boolean;officialEndpoint:boolean;ready:boolean;model:string;endpointHost:string;timeoutSeconds:number;resultRetentionDays:number;requestStorageDisabled:boolean;status:'READY_FOR_TEST'|'CONFIGURATION_REQUIRED';missingConfiguration:string[]}
+export interface OpenAiConnectionTest {success:boolean;model:string;requestId:string;elapsedMilliseconds:number;checkedAt:string;message:string}
 export interface AuditLog { id: string; actorName: string; action: string; targetType: string; targetId?: string; targetLabel?: string; result: 'SUCCESS' | 'FAILURE'; details?: string; requestId?:string; occurredAt: string }
 export interface GatewaySnapshot { operation:string;consecutiveFailures:number;circuitOpenUntil?:string;requestsInWindow:number;availablePermits:number }
 export interface OperationsSummary { status:'READY';flywayVersion:string;auditAppendOnly:boolean;activeBrowserDevices:number;staleBrowserDevices:number;unreadObservations:number;unverifiedPageCaptures:number;checkedAt:string;gateways:GatewaySnapshot[] }
