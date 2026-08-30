@@ -25,6 +25,7 @@ interface JobFormValue {
 interface JobReviewFormValue {
   location: string; salaryMinK: number; salaryMaxK: number; salaryMonths: number
   experienceRequirement: string; educationRequirement: string; description: string; screeningRequirements: string
+  recruitmentType: string; jobCategory: string; overseasRequirement: string; jobKeywords: string; workAddress: string
   replySummary: string; salaryDisplay: string; captureConfirmed: boolean; knowledgeApproved: boolean; activateConfirmed: boolean
 }
 
@@ -54,7 +55,7 @@ const reviewDialogOpen = ref(false)
 const reviewJob = ref<JobPosition | null>(null)
 const reviewSaving = ref(false)
 const reviewFormRef = ref<FormInstance>()
-const reviewForm = reactive<JobReviewFormValue>({ location: '', salaryMinK: 1, salaryMaxK: 1, salaryMonths: 12, experienceRequirement: '', educationRequirement: '', description: '', screeningRequirements: '', replySummary: '', salaryDisplay: '', captureConfirmed: false, knowledgeApproved: false, activateConfirmed: false })
+const reviewForm = reactive<JobReviewFormValue>({ location: '', salaryMinK: 1, salaryMaxK: 1, salaryMonths: 12, experienceRequirement: '', educationRequirement: '', recruitmentType: '', jobCategory: '', overseasRequirement: '', jobKeywords: '', workAddress: '', description: '', screeningRequirements: '', replySummary: '', salaryDisplay: '', captureConfirmed: false, knowledgeApproved: false, activateConfirmed: false })
 
 const canManage = computed(() => ['SYSTEM_ADMIN', 'RECRUITMENT_ADMIN'].includes(authStore.state.user?.role ?? ''))
 const activeCompanies = computed(() => companies.value.filter((company) => company.status === 'ACTIVE'))
@@ -212,7 +213,7 @@ function realValue(value?: string) {
 }
 function suggestedReplySummary(job: JobPosition) {
   const salary = job.salaryDisplay || `${job.salaryMinK}-${job.salaryMaxK}K${job.salaryMonths > 12 ? `·${job.salaryMonths}薪` : ''}`
-  return `${job.title}，工作地点${job.location}，薪资${salary}，经验要求${job.experienceRequirement}，学历要求${job.educationRequirement}。具体工作内容和安排以招聘同事后续沟通为准。`
+  return `${job.title}，工作地点${job.workAddress || job.location}，薪资${salary}，经验要求${job.experienceRequirement}，学历要求${job.educationRequirement}。具体工作内容和安排以招聘同事后续沟通为准。`
 }
 function reviewEvidenceLabel(job: JobPosition) {
   if (job.captureSource === 'VISIBLE_PAGE') return `BOSS 职位页已同步 · ${job.captureCompleteness ?? 0} 个公开字段`
@@ -223,7 +224,9 @@ function openImportedReview(job: JobPosition) {
   Object.assign(reviewForm, {
     location: realValue(job.location), salaryMinK: job.salaryMinK, salaryMaxK: job.salaryMaxK,
     salaryMonths: job.salaryMonths, experienceRequirement: realValue(job.experienceRequirement),
-    educationRequirement: realValue(job.educationRequirement), description: realValue(job.description),
+    educationRequirement: realValue(job.educationRequirement), recruitmentType: realValue(job.recruitmentType),
+    jobCategory: realValue(job.jobCategory), overseasRequirement: realValue(job.overseasRequirement),
+    jobKeywords: realValue(job.jobKeywords), workAddress: realValue(job.workAddress), description: realValue(job.description),
     screeningRequirements: realValue(job.screeningRequirements), replySummary: job.replySummary || suggestedReplySummary(job),
     salaryDisplay: job.salaryDisplay ?? '', captureConfirmed: false, knowledgeApproved: false, activateConfirmed: false,
   })

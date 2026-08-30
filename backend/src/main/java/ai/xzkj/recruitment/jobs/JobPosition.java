@@ -122,6 +122,15 @@ public class JobPosition {
         this.knowledgeVersion++;
     }
 
+    public void updateReviewedDetails(String recruitmentType, String jobCategory, String overseasRequirement,
+                                      String jobKeywords, String workAddress) {
+        this.recruitmentType = recruitmentType;
+        this.jobCategory = jobCategory;
+        this.overseasRequirement = overseasRequirement;
+        this.jobKeywords = jobKeywords;
+        this.workAddress = workAddress;
+    }
+
     public void markVisiblePageCapture(int completeness) {
         this.captureSource = "VISIBLE_PAGE";
         this.captureCompleteness = (short) completeness;

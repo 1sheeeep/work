@@ -119,10 +119,13 @@
     const jobCategory = compact(root.querySelector("input[name='jobCategory']")?.value)
       || compact(root.querySelector('.job-category-tag-container')?.innerText) || rowValue('职位类型');
     const overseasRequirement = compact(root.querySelector('.overseas-entry-container .chose-item.active')?.textContent) || rowValue('是否驻外');
-    const experienceRequirement = compact(root.querySelector('.job-experience-row .ui-select-selected-value')?.textContent) || rowValue('经验');
-    const educationRequirement = rowValue('学历');
+    const experienceRaw = compact(root.querySelector('.job-experience-row .ui-select-selected-value')?.textContent) || rowValue('经验');
+    const experienceRequirement = matchText(experienceRaw, /(?:经验不限|不限|应届生|在校生|\d{1,2}(?:-\d{1,2})?年(?:以上|以内)?)/);
+    const educationRaw = rowValue('学历');
+    const educationRequirement = matchText(educationRaw, /(?:学历不限|不限|初中及以下|中专\/中技|高中|大专|本科|硕士|博士)(?:及以上)?/);
     const salaryValues = [...root.querySelectorAll('.scope-selecter .scope-select .ui-select-selected-value')].map((node) => compact(node.textContent)).filter(Boolean);
-    const salaryDisplay = salaryValues.length >= 2 ? `${salaryValues[0]}-${salaryValues[1]}` : (rowValue('薪资详情') || salaryValues.join('-'));
+    const salaryRaw = salaryValues.length >= 2 ? `${salaryValues[0]}-${salaryValues[1]}` : (rowValue('薪资详情') || salaryValues.join('-'));
+    const salaryDisplay = matchText(salaryRaw, /\d{1,3}(?:\.\d+)?\s*[-–~至]\s*\d{1,3}(?:\.\d+)?\s*[Kk](?:\s*[·x×]\s*\d{2}\s*薪)?/);
     const salary = parseSalary(salaryDisplay);
     const salaryMonthsText = compact(root.querySelector('.salaryMonth-select .ui-select-selected-value')?.textContent) || rowValue('薪数');
     const salaryMonthsMatch = salaryMonthsText.match(/(?:^|\D)(1[2-6])(?:\D|$)/);

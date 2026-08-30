@@ -240,6 +240,7 @@ class JobPositionServiceTest {
 
     private JobPositionReviewRequest reviewRequest() {
         return new JobPositionReviewRequest("上海·徐汇", 20, 35, 13, "3-5 年", "本科及以上",
+                "社招全职", "后端开发", "境内岗位", "Java, Spring", "上海市徐汇区",
                 "负责企业招聘产品的后端服务开发", "Java 基础扎实", "负责稳定的后端服务开发",
                 "20-35K·13薪，具体以面试沟通为准", true, true, true);
     }

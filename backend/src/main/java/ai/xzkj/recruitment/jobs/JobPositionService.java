@@ -183,6 +183,9 @@ public class JobPositionService {
                 request.salaryMaxK(), request.salaryMonths(), cleanRequired(request.experienceRequirement()),
                 cleanRequired(request.educationRequirement()), cleanRequired(request.description()),
                 cleanOptional(request.screeningRequirements()));
+        job.updateReviewedDetails(cleanOptional(request.recruitmentType()), cleanOptional(request.jobCategory()),
+                cleanOptional(request.overseasRequirement()), cleanOptional(request.jobKeywords()),
+                cleanOptional(request.workAddress()));
         job.verifyVisiblePageCapture();
         job.updateKnowledge(cleanRequired(request.replySummary()), cleanOptional(request.salaryDisplay()), true);
         job.changeStatus(JobPositionStatus.ACTIVE);
