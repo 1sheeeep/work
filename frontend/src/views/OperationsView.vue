@@ -51,6 +51,10 @@ onMounted(load)
         <article><span>Flyway</span><strong>V{{ summary.flywayVersion }}</strong></article>
         <article><span>审计日志</span><strong :class="summary.auditAppendOnly ? 'healthy' : 'danger'">{{ summary.auditAppendOnly ? '只追加' : '需检查' }}</strong></article>
         <article><span>已打开断路</span><strong :class="openCircuits ? 'danger' : 'healthy'">{{ openCircuits }}</strong></article>
+        <article><span>活跃浏览器设备</span><strong :class="summary.activeBrowserDevices ? 'healthy' : ''">{{ summary.activeBrowserDevices }}</strong></article>
+        <article><span>心跳超时设备</span><strong :class="summary.staleBrowserDevices ? 'danger' : 'healthy'">{{ summary.staleBrowserDevices }}</strong></article>
+        <article><span>未读观察会话</span><strong>{{ summary.unreadObservations }}</strong></article>
+        <article><span>待核对页面采集</span><strong :class="summary.unverifiedPageCaptures ? 'danger' : 'healthy'">{{ summary.unverifiedPageCaptures }}</strong></article>
       </div>
 
       <section class="surface-panel">
@@ -61,7 +65,7 @@ onMounted(load)
 
       <section class="surface-panel readiness">
         <div class="section-title-row"><div><h2>上线核对</h2><p>真实证书、域名和密钥仍需在目标环境配置</p></div></div>
-        <ul><li><el-icon><CircleCheck /></el-icon>HTTPS / Secure Cookie 生产编排已提供</li><li><el-icon><CircleCheck /></el-icon>Prometheus 指标与存活/就绪探针已提供</li><li><el-icon><CircleCheck /></el-icon>浏览器设备心跳、撤销和风险停机已提供</li></ul>
+        <ul><li><el-icon><CircleCheck /></el-icon>HTTPS / Secure Cookie 生产编排已提供</li><li><el-icon><CircleCheck /></el-icon>Prometheus 指标与存活/就绪探针已提供</li><li><el-icon><CircleCheck /></el-icon>浏览器设备心跳、撤销和风险停机已提供</li><li :class="{danger:summary.staleBrowserDevices || summary.unverifiedPageCaptures}"><el-icon><Warning v-if="summary.staleBrowserDevices || summary.unverifiedPageCaptures"/><CircleCheck v-else/></el-icon>{{ summary.staleBrowserDevices ? `先处理 ${summary.staleBrowserDevices} 个心跳超时设备` : summary.unverifiedPageCaptures ? `先核对 ${summary.unverifiedPageCaptures} 个页面采集岗位` : '浏览器设备和页面采集资料均无待处理项' }}</li></ul>
       </section>
     </template>
   </div>
