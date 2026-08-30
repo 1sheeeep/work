@@ -44,6 +44,9 @@ public class JobPosition {
     @Column(name = "knowledge_approved", nullable = false) private boolean knowledgeApproved;
     @Column(name = "knowledge_version", nullable = false) private int knowledgeVersion;
     @Column(name = "knowledge_approved_at") private Instant knowledgeApprovedAt;
+    @Column(name = "capture_source", nullable = false, length = 32) private String captureSource;
+    @Column(name = "capture_completeness") private Short captureCompleteness;
+    @Column(name = "captured_at") private Instant capturedAt;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 16)
@@ -72,6 +75,7 @@ public class JobPosition {
         this.educationRequirement = educationRequirement;
         this.description = description;
         this.screeningRequirements = screeningRequirements;
+        this.captureSource = "MANUAL";
         this.status = JobPositionStatus.DRAFT;
         this.createdAt = Instant.now();
         this.updatedAt = this.createdAt;
@@ -104,6 +108,12 @@ public class JobPosition {
         this.knowledgeVersion++;
     }
 
+    public void markVisiblePageCapture(int completeness) {
+        this.captureSource = "VISIBLE_PAGE";
+        this.captureCompleteness = (short) completeness;
+        this.capturedAt = Instant.now();
+    }
+
     @PreUpdate
     void preUpdate() { this.updatedAt = Instant.now(); }
 
@@ -124,6 +134,9 @@ public class JobPosition {
     public boolean isKnowledgeApproved() { return knowledgeApproved; }
     public int getKnowledgeVersion() { return knowledgeVersion; }
     public Instant getKnowledgeApprovedAt() { return knowledgeApprovedAt; }
+    public String getCaptureSource() { return captureSource; }
+    public Short getCaptureCompleteness() { return captureCompleteness; }
+    public Instant getCapturedAt() { return capturedAt; }
     public JobPositionStatus getStatus() { return status; }
     public long getVersion() { return version; }
     public Instant getCreatedAt() { return createdAt; }

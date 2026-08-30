@@ -27,8 +27,9 @@ import java.nio.charset.StandardCharsets;import java.security.*;import java.time
   JobPosition duplicate=existing.stream().filter(job->SafeReplyComposer.normalizePublicTitle(job.getTitle()).equals(normalized)).findFirst().orElse(null);
   if(duplicate!=null)return new CapturedJobDraftResponse(false,"EXISTING_JOB",duplicate.getId(),duplicate.getTitle(),account.getCompany().getName(),account.getDisplayName(),duplicate.getStatus().name());
   if(request.salaryMaxK()<request.salaryMinK())throw bad("INVALID_SALARY_RANGE","月薪上限不能低于月薪下限");
-  JobPosition job=jobs.save(new JobPosition(account.getCompany(),account,title,clean(request.location(),120),request.salaryMinK(),request.salaryMaxK(),request.salaryMonths(),clean(request.experienceRequirement(),80),clean(request.educationRequirement(),80),clean(request.description(),10000),cleanOptional(request.screeningRequirements(),5000)));
-  audit.systemSuccess("CAPTURE_BROWSER_JOB_DRAFT","JOB_POSITION",job.getId(),job.getTitle(),"从当前可见 BOSS 岗位页采集并创建待人工核对草稿，不记录页面 URL 或 Cookie");
+  JobPosition job=new JobPosition(account.getCompany(),account,title,clean(request.location(),120),request.salaryMinK(),request.salaryMaxK(),request.salaryMonths(),clean(request.experienceRequirement(),80),clean(request.educationRequirement(),80),clean(request.description(),10000),cleanOptional(request.screeningRequirements(),5000));
+  job.markVisiblePageCapture(request.captureCompleteness());jobs.save(job);
+  audit.systemSuccess("CAPTURE_BROWSER_JOB_DRAFT","JOB_POSITION",job.getId(),job.getTitle(),"从当前可见 BOSS 岗位页采集并创建待人工核对草稿，完整度 "+request.captureCompleteness()+"/6；不记录页面 URL 或 Cookie");
   return new CapturedJobDraftResponse(true,"CREATED_DRAFT",job.getId(),job.getTitle(),account.getCompany().getName(),account.getDisplayName(),job.getStatus().name());
  }
  @Transactional public SendClaimResponse claim(String authorization,CreateSendClaimRequest request){

@@ -32,7 +32,7 @@ function renderQuality(){
 }
 async function saveDraft(event){
  event.preventDefault();if(!form.reportValidity())return
- const values=Object.fromEntries(new FormData(form).entries());const payload={...values,salaryMinK:Number(values.salaryMinK),salaryMaxK:Number(values.salaryMaxK),salaryMonths:Number(values.salaryMonths)}
+ const values=Object.fromEntries(new FormData(form).entries());const payload={...values,salaryMinK:Number(values.salaryMinK),salaryMaxK:Number(values.salaryMaxK),salaryMonths:Number(values.salaryMonths),captureCompleteness:Number(captureConfidence?.recognized||0)}
  if(payload.salaryMaxK<payload.salaryMinK)return setStatus('月薪上限不能低于下限。','error')
  save.disabled=true;setStatus('正在保存到招聘系统…','')
  try{const result=await chrome.runtime.sendMessage({type:'IMPORT_JOB_DRAFT',payload});if(!result?.ok)return setStatus(errorLabel(result?.action),'error');if(result.created)setStatus(`已创建职位草稿：${result.title}（${result.companyName} / ${result.accountName}）`,'success');else setStatus(`系统中已存在该岗位：${result.title}，未重复创建。`,'warning')}finally{save.disabled=false}
