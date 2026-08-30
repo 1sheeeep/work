@@ -45,6 +45,10 @@ export async function sendActionReceipt(config, deviceToken, receipt) {
   return request(config.backendUrl, '/api/local-connector/runtime/action-leases/receipt', { method: 'POST', token: deviceToken, body: receipt });
 }
 
+export async function reportOfflineDrill(config, deviceToken, report) {
+  return request(config.backendUrl, '/api/local-connector/runtime/offline-drills', { method: 'POST', token: deviceToken, body: report });
+}
+
 async function request(backendUrl, path, options) {
   let response;
   try {

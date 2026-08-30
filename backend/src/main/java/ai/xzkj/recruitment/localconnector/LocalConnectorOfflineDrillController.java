@@ -1,0 +1,3 @@
+package ai.xzkj.recruitment.localconnector;
+import jakarta.validation.Valid;import org.springframework.http.HttpHeaders;import org.springframework.web.bind.annotation.*;import java.util.*;
+@RestController class LocalConnectorOfflineDrillController{private final LocalConnectorOfflineDrillService service;LocalConnectorOfflineDrillController(LocalConnectorOfflineDrillService s){service=s;}@PostMapping("/api/local-connector/runtime/offline-drills")OfflineDrillResponse report(@RequestHeader(HttpHeaders.AUTHORIZATION)String token,@Valid@RequestBody OfflineDrillReport r){return service.report(token,r);}@GetMapping("/api/local-connector/offline-drills")List<OfflineDrillResponse> list(){return service.list();}}
