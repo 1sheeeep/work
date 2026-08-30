@@ -8,7 +8,7 @@ export interface CompanyScope { id: string; name: string; code: string; status: 
 export interface HrUser { id: string; username: string; displayName: string; role: Exclude<UserRole, 'SYSTEM_ADMIN'>; enabled: boolean; companies: CompanyScope[]; createdAt: string; updatedAt: string }
 export type BossAccountStatus = 'ACTIVE' | 'INACTIVE'
 export type BossConnectionStatus = 'UNVERIFIED' | 'CONNECTED' | 'DEGRADED' | 'UNAVAILABLE'
-export type BossCapability = 'JOB_SYNC' | 'CANDIDATE_READ' | 'MESSAGE_SEND' | 'INTERVIEW_INVITE'
+export type BossCapability = 'JOB_SYNC' | 'CANDIDATE_READ' | 'MESSAGE_SEND'
 export type BossGatewayType='LOCAL_CDP_CONNECTOR'
 export interface BossAccount { id: string; company: CompanyScope; displayName: string; externalIdentifier: string; gatewayType: BossGatewayType; status: BossAccountStatus; connectionStatus: BossConnectionStatus; capabilities: BossCapability[]; lastCheckedAt?: string; version: number; createdAt: string; updatedAt: string }
 export type JobPositionStatus = 'DRAFT' | 'ACTIVE' | 'CLOSED'

@@ -20,7 +20,6 @@ public class CandidateController {
         return service.list(keyword, companyId, jobPositionId, status, humanTakenOver);
     }
     @GetMapping("/{id}") public CandidateDetailResponse detail(@PathVariable UUID id) { return service.detail(id); }
-    @PostMapping public CandidateCreateResponse create(@Valid @RequestBody CandidateCreateRequest request) { return service.create(request); }
     @PostMapping("/{id}/takeover") public CandidateContactResponse takeOver(@PathVariable UUID id) { return service.takeOver(id); }
     @PostMapping("/{id}/release") public CandidateContactResponse release(@PathVariable UUID id) { return service.release(id); }
     @PostMapping("/{id}/screening/human") public CandidateContactResponse humanDecision(@PathVariable UUID id, @Valid @RequestBody HumanDecisionRequest request) { return service.humanDecision(id, request); }

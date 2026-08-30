@@ -1,17 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
-import type { FormInstance, FormRules } from "element-plus";
+import { computed, onMounted, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import {
-  Plus,
-  Refresh,
-  Search,
-  UserFilled,
-} from "@element-plus/icons-vue";
+import { Refresh, Search, UserFilled } from "@element-plus/icons-vue";
 import {
   api,
   apiErrorMessage,
-  apiFieldErrors,
   ensureCsrf,
 } from "../services/api";
 import { authStore } from "../stores/auth";
@@ -20,64 +13,21 @@ import type {
   CandidateContactStatus,
   CandidateDetail,
   Company,
-  JobPosition,
   ScreeningOutcome,
 } from "../types";
 
-interface CandidateForm {
-  jobPositionId: string;
-  source: "BOSS" | "MANUAL";
-  externalCandidateId: string;
-  displayName: string;
-  currentTitle: string;
-  yearsExperience: number;
-  education: string;
-  skillsSummary: string;
-  hardRuleOutcome: ScreeningOutcome;
-  hardRuleRationale: string;
-  aiOutcome: ScreeningOutcome;
-  aiRationale: string;
-  modelVersion: string;
-  promptVersion: string;
-}
 const loading = ref(true),
   loadError = ref(""),
   candidates = ref<CandidateContact[]>([]),
-  jobs = ref<JobPosition[]>([]),
   companies = ref<Company[]>([]);
 const keyword = ref(""),
   companyFilter = ref(""),
-  jobFilter = ref(""),
   statusFilter = ref<CandidateContactStatus | "">(""),
   takeoverFilter = ref("");
-const createOpen = ref(false),
-  saving = ref(false),
-  formRef = ref<FormInstance>(),
-  formError = ref(""),
-  fieldErrors = reactive<Record<string, string>>({});
-const form = reactive<CandidateForm>({
-  jobPositionId: "",
-  source: "MANUAL",
-  externalCandidateId: "",
-  displayName: "",
-  currentTitle: "",
-  yearsExperience: 3,
-  education: "本科",
-  skillsSummary: "",
-  hardRuleOutcome: "PASS",
-  hardRuleRationale: "满足职位硬性要求",
-  aiOutcome: "REVIEW",
-  aiRationale: "建议 HR 进一步确认项目经验",
-  modelVersion: "human-screening-v1",
-  promptVersion: "candidate-screening-v1",
-});
 const detailOpen = ref(false),
   detailLoading = ref(false),
   detail = ref<CandidateDetail | null>(null),
   acting = ref(false);
-const activeJobs = computed(() =>
-  jobs.value.filter((j) => j.status === "ACTIVE"),
-);
 const selectedId = ref(""),
   quickFilter = ref<"ALL" | "NEEDS_REPLY" | "AUTO_REPLIED" | "DRAFT" | "TAKEN">("NEEDS_REPLY");
 const displayedCandidates = computed(() =>
@@ -143,29 +93,6 @@ const outcomeLabels: Record<ScreeningOutcome, string> = {
   REJECT: "淘汰",
   REVIEW: "待复核",
 };
-const rules: FormRules<CandidateForm> = {
-  jobPositionId: [
-    { required: true, message: "请选择已启用职位", trigger: "change" },
-  ],
-  externalCandidateId: [
-    { required: true, message: "请输入来源候选人 ID", trigger: "blur" },
-  ],
-  displayName: [
-    { required: true, message: "请输入候选人姓名", trigger: "blur" },
-  ],
-  hardRuleRationale: [
-    { required: true, message: "请输入硬规则理由", trigger: "blur" },
-  ],
-  aiRationale: [
-    { required: true, message: "请输入 AI 建议理由", trigger: "blur" },
-  ],
-  modelVersion: [
-    { required: true, message: "请输入模型版本", trigger: "blur" },
-  ],
-  promptVersion: [
-    { required: true, message: "请输入提示版本", trigger: "blur" },
-  ],
-};
 
 function statusType(status: CandidateContactStatus) {
   return (
@@ -185,19 +112,15 @@ function decisionType(outcome?: ScreeningOutcome) {
       ? "danger"
       : "warning";
 }
-function clearErrors() {
-  Object.keys(fieldErrors).forEach((k) => delete fieldErrors[k]);
-}
 async function loadData() {
   loading.value = true;
   loadError.value = "";
   try {
-    const [cr, jr, or] = await Promise.all([
+    const [cr, or] = await Promise.all([
       api.get<CandidateContact[]>("/candidate-contacts", {
         params: {
           keyword: keyword.value.trim() || undefined,
           companyId: companyFilter.value || undefined,
-          jobPositionId: jobFilter.value || undefined,
           status: statusFilter.value || undefined,
           humanTakenOver:
             takeoverFilter.value === ""
@@ -205,11 +128,9 @@ async function loadData() {
               : takeoverFilter.value === "true",
         },
       }),
-      api.get<JobPosition[]>("/job-positions"),
       api.get<Company[]>("/organization/companies"),
     ]);
     candidates.value = cr.data;
-    jobs.value = jr.data;
     companies.value = or.data;
     if (!cr.data.some((item) => item.id === selectedId.value))
       selectedId.value = cr.data[0]?.id || "";
@@ -232,48 +153,6 @@ function relativeTime(value: string) {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours} 小时前更新`;
   return `${Math.floor(hours / 24)} 天前更新`;
-}
-function openCreate() {
-  Object.assign(form, {
-    jobPositionId: activeJobs.value[0]?.id ?? "",
-    source: "MANUAL",
-    externalCandidateId: "",
-    displayName: "",
-    currentTitle: "",
-    yearsExperience: 3,
-    education: "本科",
-    skillsSummary: "",
-    hardRuleOutcome: "PASS",
-    hardRuleRationale: "满足职位硬性要求",
-    aiOutcome: "REVIEW",
-    aiRationale: "建议 HR 进一步确认项目经验",
-    modelVersion: "human-screening-v1",
-    promptVersion: "candidate-screening-v1",
-  });
-  formError.value = "";
-  clearErrors();
-  createOpen.value = true;
-}
-async function save() {
-  formError.value = "";
-  clearErrors();
-  if (!(await formRef.value?.validate().catch(() => false))) return;
-  saving.value = true;
-  try {
-    await ensureCsrf();
-    const { data } = await api.post("/candidate-contacts", form);
-    ElMessage.success(
-      data.replayed ? "候选人已存在，已复用原记录" : "候选人已加入工作台",
-    );
-    createOpen.value = false;
-    await loadData();
-    await openDetail(data.candidate);
-  } catch (e) {
-    Object.assign(fieldErrors, apiFieldErrors(e));
-    formError.value = apiErrorMessage(e, "候选人保存失败");
-  } finally {
-    saving.value = false;
-  }
 }
 async function openDetail(candidate: CandidateContact) {
   detailOpen.value = true;
@@ -376,9 +255,7 @@ onMounted(loadData);
         <h1>待跟进会话</h1>
         <p>HR 返回后优先处理仍在等待的候选人；已自动接待的会话不会被当作已经完成。</p>
       </div>
-      <el-button type="primary" :icon="Plus" @click="openCreate"
-        >新增候选人</el-button
-      >
+      <el-button :icon="Refresh" @click="loadData">刷新</el-button>
     </header>
     <el-alert
       title="隐私保护：原始外部候选人 ID 不落库，联系方式不采集；所有外发消息默认进入人工审核。"
@@ -457,8 +334,7 @@ onMounted(loadData);
         <div v-if="!candidates.length" class="empty-state">
           <el-icon><UserFilled /></el-icon
           ><strong>还没有符合条件的候选人</strong
-          ><span>可通过本地连接器识别或由 HR 人工登记首个候选人职位关系。</span
-          ><el-button type="primary" @click="openCreate">新增候选人</el-button>
+          ><span>真实候选人会由本地连接器和后端受信链路建立，不能在前端手工造数据。</span>
         </div>
         <template v-else>
           <div class="candidate-workspace">
@@ -691,79 +567,6 @@ onMounted(loadData);
           </div></template
         >
       </section></template
-    >
-
-    <el-dialog v-model="createOpen" title="新增候选人" width="760px"
-      ><el-alert
-        v-if="formError"
-        :title="formError"
-        type="error"
-        :closable="false"
-      /><el-form ref="formRef" :model="form" :rules="rules" label-position="top"
-        ><div class="form-grid">
-          <el-form-item label="已启用职位" prop="jobPositionId"
-            ><el-select v-model="form.jobPositionId" filterable
-              ><el-option
-                v-for="job in activeJobs"
-                :key="job.id"
-                :label="`${job.title}（${job.company.name}）`"
-                :value="job.id" /></el-select></el-form-item
-          ><el-form-item label="候选人来源"
-            ><el-select v-model="form.source"
-              ><el-option label="人工录入" value="MANUAL" /></el-select></el-form-item
-          ><el-form-item label="来源候选人 ID" prop="externalCandidateId"
-            ><el-input
-              v-model="form.externalCandidateId"
-              placeholder="仅用于生成不可逆去重摘要" /></el-form-item
-          ><el-form-item label="候选人姓名" prop="displayName"
-            ><el-input v-model="form.displayName" /></el-form-item
-          ><el-form-item label="当前职位"
-            ><el-input v-model="form.currentTitle" /></el-form-item
-          ><el-form-item label="工作年限"
-            ><el-input-number
-              v-model="form.yearsExperience"
-              :min="0"
-              :max="60" /></el-form-item
-          ><el-form-item label="学历"
-            ><el-input v-model="form.education" /></el-form-item
-          ><el-form-item label="技能摘要"
-            ><el-input v-model="form.skillsSummary" /></el-form-item
-          ><el-form-item label="硬规则结论"
-            ><el-select v-model="form.hardRuleOutcome"
-              ><el-option
-                v-for="(label, value) in outcomeLabels"
-                :key="value"
-                :label="label"
-                :value="value" /></el-select></el-form-item
-          ><el-form-item label="AI 建议"
-            ><el-select v-model="form.aiOutcome"
-              ><el-option
-                v-for="(label, value) in outcomeLabels"
-                :key="value"
-                :label="label"
-                :value="value" /></el-select></el-form-item
-          ><el-form-item label="模型版本" prop="modelVersion"
-            ><el-input v-model="form.modelVersion" /></el-form-item
-          ><el-form-item label="提示版本" prop="promptVersion"
-            ><el-input v-model="form.promptVersion"
-          /></el-form-item>
-        </div>
-        <el-form-item label="硬规则理由" prop="hardRuleRationale"
-          ><el-input
-            v-model="form.hardRuleRationale"
-            type="textarea"
-            :rows="2" /></el-form-item
-        ><el-form-item label="AI 建议理由" prop="aiRationale"
-          ><el-input
-            v-model="form.aiRationale"
-            type="textarea"
-            :rows="2" /></el-form-item></el-form
-      ><template #footer
-        ><el-button @click="createOpen = false">取消</el-button
-        ><el-button type="primary" :loading="saving" @click="save"
-          >加入工作台</el-button
-        ></template
-      ></el-dialog
     >
 
     <el-drawer
