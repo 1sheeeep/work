@@ -2,7 +2,7 @@ import { parseArgs } from 'node:util';
 import { loadConfig, connectorDataDirectory } from './lib/config.mjs';
 import { startAccountChrome } from './lib/chrome.mjs';
 import { pairConnector, sendHeartbeat, syncUnreadObservations, verifySelectedConversation } from './lib/backend.mjs';
-import { loadState, saveDeviceCredentials } from './lib/state.mjs';
+import { accountSafety, freezeAccount, loadState, recoverAccountMonitoring, saveDeviceCredentials } from './lib/state.mjs';
 import { inspectAccountPage } from './lib/page-probe.mjs';
 import { observeUnreadConversations, readSelectedConversation } from './lib/conversation-monitor.mjs';
 
@@ -14,6 +14,7 @@ const { positionals, values } = parseArgs({
     'pairing-token': { type: 'string' },
     'chrome-path': { type: 'string' },
     'data-dir': { type: 'string' },
+    'confirm-recovery': { type: 'boolean' },
   },
 });
 
@@ -46,7 +47,15 @@ try {
   } else if (command === 'status') {
     await printStatus(selected, state);
   } else if (command === 'observe') {
-    await Promise.all(selected.map((account) => heartbeatOne(config, state, account)));
+    await Promise.all(selected.map((account) => heartbeatOne(config, state, account, dataDirectory)));
+  } else if (command === 'recover') {
+    if (selected.length !== 1 || !values['confirm-recovery']) throw new Error('恢复时必须指定一个账号并添加 --confirm-recovery，表示 HR 已人工处理登录或验证问题。');
+    const account=selected[0];
+    const inspections=[];
+    for(let i=0;i<3;i+=1)inspections.push(await inspectAccountPage(account.cdpPort));
+    if(!inspections.every(x=>x.code==='CHAT_PAGE_READY'))throw new Error('页面未连续三次稳定处于沟通页，账号继续冻结。');
+    await recoverAccountMonitoring(dataDirectory,state,account.accountId,{humanConfirmed:true,pageState:'CHAT_PAGE_READY',hasRiskOrVerification:false,stableCycles:3});
+    console.log(`✓ ${account.label} 已恢复为只监测状态；真实写能力仍保持关闭。`);
   } else if (command === 'start') {
     await run(selected, config, state, values['chrome-path']);
   } else {
@@ -73,7 +82,8 @@ async function printStatus(accounts, state) {
   for (const account of accounts) {
     const inspection = await inspectAccountPage(account.cdpPort);
     const paired = Boolean(state.accounts[account.accountId]?.deviceToken);
-    console.log(`${account.label}\n  Profile: ${account.profileKey}\n  页面状态: ${inspection.code}\n  状态说明: ${inspection.reason}\n  后台配对: ${paired ? '已配对' : '未配对'}`);
+    const safety=accountSafety(state,account.accountId);
+    console.log(`${account.label}\n  Profile: ${account.profileKey}\n  页面状态: ${inspection.code}\n  状态说明: ${inspection.reason}\n  后台配对: ${paired ? '已配对' : '未配对'}\n  账号隔离: ${safety.state}${safety.stopCode?` (${safety.stopCode})`:''}`);
   }
 }
 
@@ -82,10 +92,10 @@ async function run(accounts, config, state, chromePath) {
   console.log(`正在启动 ${accounts.length} 个独立账号 Profile；当前版本只同步脱敏未读快照，不读取消息正文，也不会发送内容。`);
   await Promise.all(accounts.map(async (account) => {
     await startAccountChrome(account, chromePath);
-    await heartbeatOne(config, state, account);
+    await heartbeatOne(config, state, account, config.dataDirectory);
   }));
   const timer = setInterval(() => {
-    Promise.all(accounts.map((account) => heartbeatOne(config, state, account))).catch(() => {});
+    Promise.all(accounts.map((account) => heartbeatOne(config, state, account, config.dataDirectory))).catch(() => {});
   }, config.heartbeatIntervalSeconds * 1_000);
   const stop = () => {
     clearInterval(timer);
@@ -96,7 +106,7 @@ async function run(accounts, config, state, chromePath) {
   process.once('SIGTERM', stop);
 }
 
-async function heartbeatOne(config, state, account) {
+async function heartbeatOne(config, state, account, dataDirectory) {
   const credentials = state.accounts[account.accountId];
   const inspection = await inspectAccountPage(account.cdpPort);
   if (!credentials?.deviceToken) {
@@ -104,6 +114,14 @@ async function heartbeatOne(config, state, account) {
     return inspection;
   }
   try {
+    if (['RISK_OR_VERIFICATION','LOGIN_REQUIRED'].includes(inspection.code)) await freezeAccount(dataDirectory,state,account.accountId,inspection.code);
+    const safety=accountSafety(state,account.accountId);
+    if(safety.state==='FROZEN'){
+      const reason=`账号已持久化冻结：${safety.stopCode}；必须由 HR 人工确认恢复。`;
+      await sendHeartbeat(config,account,credentials.deviceToken,'PAUSED',reason);
+      console.log(`! ${account.label}：FROZEN · ${reason}`);
+      return inspection;
+    }
     let reason = inspection.reason;
     if (inspection.code === 'CHAT_PAGE_READY') {
       const observation = await observeUnreadConversations(account.cdpPort);
@@ -138,6 +156,7 @@ function printHelp() {
   node src/index.mjs start  --config connector.config.json
   node src/index.mjs status --config connector.config.json
   node src/index.mjs observe --config connector.config.json
+  node src/index.mjs recover --config connector.config.json --account <账号 UUID> --confirm-recovery
 
 每个账号必须使用不同的 profileKey 和 cdpPort。连接器只启动可见 Chrome；它只同步会话未读计数和不可逆摘要，不读取或导出 Cookie、候选人姓名、消息正文，也不会处理验证码或发送消息。`);
 }

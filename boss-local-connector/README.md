@@ -33,11 +33,19 @@
    node src/index.mjs observe --config connector.config.json
    ```
 
+账号因验证码、风险页或登录失效被冻结后，关闭或重启连接器不会自动恢复。HR 处理完成并停留在沟通页后，执行：
+
+```bash
+node src/index.mjs recover --config connector.config.json --account <账号UUID> --confirm-recovery
+```
+
+恢复命令会连续执行三次只读页面检查；全部稳定后仅恢复未读监测，页面写能力仍保持关闭。
+
 ## 多账号隔离
 
 - 一个账号对应一个 `profileKey`、一个 Chrome 用户数据目录和一个 CDP 端口。
 - 一个账号掉线、登录失效或出现验证码，只暂停该账号；其他账号不受影响。
 - CDP 仅监听 `127.0.0.1`，不对局域网开放。
-- 连接器本地状态默认位于 `~/.recruitment-boss-connector/`，其中只保存后台设备令牌；目录权限为当前操作系统用户可读。
+- 连接器本地状态默认位于 `~/.recruitment-boss-connector/`，其中只保存后台设备令牌和账号冻结状态；目录权限为当前操作系统用户可读。
 
 不要将 `connector.config.json`、连接令牌或本地状态目录提交到 Git。
