@@ -1,4 +1,4 @@
-import { DEFAULT_BACKEND_URL, isJobManagementUrl, jobSnapshotSignature, publicStatus, snapshotSignature, validateBackendUrl, validateJobSnapshot, validateSnapshot } from './bridge-core.mjs';
+import { DEFAULT_BACKEND_URL, isJobManagementUrl, jobSnapshotSignature, publicStatus, snapshotSignature, validateBackendUrl, validateJobSnapshot, validateSnapshot, validateValidationReadiness } from './bridge-core.mjs';
 
 const SETTINGS_KEY = 'bridgeSettingsV1';
 const RUNTIME_KEY = 'bridgeRuntimeV1';
@@ -44,6 +44,8 @@ async function handleMessage(message, sender) {
       return { ok: true, status: await getPublicStatus() };
     case 'BRIDGE_COLLECT_JOBS_NOW':
       return { ok: true, jobSync: await collectJobsFromBestTab(), status: await getPublicStatus() };
+    case 'BRIDGE_CHECK_REPLY_READINESS':
+      return { ok: true, readiness: await checkReplyReadiness(), status: await getPublicStatus() };
     case 'BRIDGE_PAGE_SNAPSHOT':
       if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的快照。');
       return submitSnapshot(message.payload);
@@ -59,6 +61,24 @@ async function handleMessage(message, sender) {
     default:
       throw new Error('未知的桥接请求。');
   }
+}
+
+async function checkReplyReadiness() {
+  const settings = await getSettings();
+  if (!settings.deviceToken) throw new Error('请先完成本机账号配对。');
+  if (settings.enabled === false) throw new Error('只读桥接已暂停。');
+  const tabs = await chrome.tabs.query({ url: BOSS_TAB_PATTERNS });
+  const tab = tabs.find((item) => item.active && /\/web\/chat\/(?:index|user-center)(?:[/?#]|$)/i.test(item.url || ''));
+  if (!tab?.id) throw new Error('请在当前 Chrome 中手动打开 BOSS 沟通页并选中一个已读会话。');
+  const response = await sendToBossTab(tab.id, { type: 'BRIDGE_CHECK_REPLY_READINESS' });
+  if (!response?.ok) throw new Error(response?.error || '回复入口尚未稳定识别。');
+  validateValidationReadiness(response.readiness);
+  const result = await request(settings.backendUrl, '/api/local-connector/runtime/validation-readiness', {
+    method: 'POST', token: settings.deviceToken, body: response.readiness,
+  });
+  const readinessState = '回复入口已连续稳定识别 3 次，可在后台开启单次人工验收；本次未点击、未输入、未发送。';
+  await setRuntime({ readinessState, lastReadinessAt: new Date().toISOString() });
+  return result;
 }
 
 async function collectJobsFromBestTab() {

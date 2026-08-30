@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isJobManagementUrl, jobSnapshotSignature, publicStatus, snapshotSignature, validateBackendUrl, validateJobSnapshot, validateSnapshot } from '../src/bridge-core.mjs';
+import { isJobManagementUrl, jobSnapshotSignature, publicStatus, snapshotSignature, validateBackendUrl, validateJobSnapshot, validateSnapshot, validateValidationReadiness } from '../src/bridge-core.mjs';
 
 const digest = 'a'.repeat(64);
 const digest2 = 'b'.repeat(64);
@@ -69,4 +69,11 @@ test('accepts unified visible job detail fields', () => {
   }] };
   assert.equal(validateJobSnapshot(payload), payload);
   assert.match(jobSnapshotSignature(payload), /东莞中熙时代大厦22楼/);
+});
+
+test('accepts only stable and anonymized reply readiness evidence', () => {
+  const payload = { actionType: 'SEND_MESSAGE', chatDigest: digest, controlDigest: digest2, pageState: 'CHAT_PAGE_READY', selectedConversationVerified: true, hasRiskOrVerification: false, stableCycles: 3 };
+  assert.equal(validateValidationReadiness(payload), payload);
+  assert.throws(() => validateValidationReadiness({ ...payload, stableCycles: 2 }), /稳定/);
+  assert.throws(() => validateValidationReadiness({ ...payload, hasRiskOrVerification: true }), /安全状态/);
 });

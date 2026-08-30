@@ -64,6 +64,14 @@ export function validateSelected(selected) {
   return selected;
 }
 
+export function validateValidationReadiness(payload) {
+  if (!payload || payload.actionType !== 'SEND_MESSAGE' || payload.pageState !== 'CHAT_PAGE_READY') throw new Error('当前不是可验收的回复页面。');
+  if (!DIGEST_PATTERN.test(payload.chatDigest || '') || !DIGEST_PATTERN.test(payload.controlDigest || '')) throw new Error('页面验收摘要无效。');
+  if (payload.selectedConversationVerified !== true || payload.hasRiskOrVerification !== false) throw new Error('当前会话或页面安全状态未通过。');
+  if (!Number.isInteger(payload.stableCycles) || payload.stableCycles < 3 || payload.stableCycles > 20) throw new Error('稳定检查次数无效。');
+  return payload;
+}
+
 export function validateJobSnapshot(payload) {
   if (!payload || payload.pageState !== 'JOB_MANAGEMENT_READY') throw new Error('当前不是可采集的职位管理页。');
   if (!Array.isArray(payload.entries) || payload.entries.length === 0 || payload.entries.length > MAX_JOBS) throw new Error('职位列表数量无效。');
@@ -114,5 +122,7 @@ export function publicStatus(settings, runtime) {
     jobState: runtime?.jobState || '尚未同步职位页面。',
     jobTotal: runtime?.jobTotal || 0,
     lastJobSyncAt: runtime?.lastJobSyncAt || null,
+    readinessState: runtime?.readinessState || '尚未检查当前会话的回复入口。',
+    lastReadinessAt: runtime?.lastReadinessAt || null,
   };
 }

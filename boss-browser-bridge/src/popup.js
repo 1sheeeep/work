@@ -1,4 +1,4 @@
-const elements = Object.fromEntries(['stateBadge','summary','pairForm','accountName','totalCount','currentUnreadCount','trackedUnreadCount','reason','detailState','lastSync','jobState','lastJobSync','collectJobs','enabled','collect','forget','message','deviceName','pairingToken'].map((id) => [id, document.getElementById(id)]));
+const elements = Object.fromEntries(['stateBadge','summary','pairForm','accountName','totalCount','currentUnreadCount','trackedUnreadCount','reason','detailState','lastSync','jobState','lastJobSync','collectJobs','readinessState','lastReadiness','checkReadiness','enabled','collect','forget','message','deviceName','pairingToken'].map((id) => [id, document.getElementById(id)]));
 
 elements.pairForm.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -19,6 +19,13 @@ elements.collectJobs.addEventListener('click', () => void busy(elements.collectJ
   render(result.status);
   show(result.status.jobState);
 }, '同步中…'));
+elements.checkReadiness.addEventListener('click', () => void busy(elements.checkReadiness, async () => {
+  show('正在连续检查当前会话和回复入口，不会读取或修改输入内容…');
+  const result = await send({ type: 'BRIDGE_CHECK_REPLY_READINESS' });
+  if (!result.ok) throw new Error(result.error);
+  render(result.status);
+  show(result.status.readinessState);
+}, '检查中…'));
 elements.forget.addEventListener('click', () => void busy(elements.forget, async () => { const result = await send({ type: 'BRIDGE_FORGET_DEVICE' }); if (!result.ok) throw new Error(result.error); render(result.status); }));
 
 void act({ type: 'BRIDGE_GET_STATUS' });
@@ -34,6 +41,7 @@ function render(status) {
   elements.accountName.textContent = status.accountName || '-'; elements.totalCount.textContent = status.total; elements.currentUnreadCount.textContent = status.currentUnread; elements.trackedUnreadCount.textContent = status.trackedUnread;
   elements.reason.textContent = status.reason; elements.detailState.textContent = `详情复核：${status.detailState}`; elements.lastSync.textContent = status.lastSyncAt ? `最近同步：${new Date(status.lastSyncAt).toLocaleString('zh-CN')}` : '尚未同步真实快照'; elements.enabled.checked = status.enabled;
   elements.jobState.textContent = status.jobState; elements.lastJobSync.textContent = status.lastJobSyncAt ? `最近职位同步：${new Date(status.lastJobSyncAt).toLocaleString('zh-CN')} · ${status.jobTotal} 个` : '尚未同步职位管理页';
+  elements.readinessState.textContent = status.readinessState; elements.lastReadiness.textContent = status.lastReadinessAt ? `最近检查：${new Date(status.lastReadinessAt).toLocaleString('zh-CN')}` : '尚未形成人工验收证据';
   const running = status.state === 'RUNNING'; const paused = ['PAUSED','ERROR'].includes(status.state);
   elements.stateBadge.textContent = running ? '只读运行中' : paused ? '已暂停' : status.paired ? '已配对' : '未配对'; elements.stateBadge.className = `badge ${running ? 'running' : paused ? 'paused' : ''}`;
 }

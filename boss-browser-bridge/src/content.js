@@ -21,8 +21,10 @@
   let collecting = false;
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (!['BRIDGE_COLLECT', 'BRIDGE_COLLECT_JOBS'].includes(message?.type)) return false;
-    const task = message.type === 'BRIDGE_COLLECT_JOBS' ? collectJobsAndPublish(Boolean(message.allowEmbeddedJobList)) : collectAndPublish(true);
+    if (!['BRIDGE_COLLECT', 'BRIDGE_COLLECT_JOBS', 'BRIDGE_CHECK_REPLY_READINESS'].includes(message?.type)) return false;
+    const task = message.type === 'BRIDGE_COLLECT_JOBS'
+      ? collectJobsAndPublish(Boolean(message.allowEmbeddedJobList))
+      : message.type === 'BRIDGE_CHECK_REPLY_READINESS' ? collectReplyReadiness() : collectAndPublish(true);
     task.then((result) => sendResponse(result || { ok: true })).catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   });
@@ -90,6 +92,34 @@
       if (first.signature !== second.signature) return { ok: false, error: '职位列表仍在变化，请等待页面稳定后重试。' };
       const response = await send({ type: 'BRIDGE_JOB_SNAPSHOT', payload: { pageState: 'JOB_MANAGEMENT_READY', entries: second.entries, observedAt: new Date().toISOString() } });
       return response?.ok ? response : { ok: false, pageMatched: true, error: response?.error || '本地服务未接受职位快照。' };
+    } finally { collecting = false; }
+  }
+
+  async function collectReplyReadiness() {
+    if (collecting) return { ok: false, error: '页面正在生成只读快照，请稍后重试。' };
+    collecting = true;
+    try {
+      const samples = [];
+      for (let cycle = 0; cycle < 3; cycle++) {
+        const page = classifyPage();
+        if (!page.ok) return { ok: false, error: page.reason };
+        const selected = await collectSelectedConversation();
+        if (!selected.ok) return { ok: false, error: selected.reason };
+        const active = [...document.querySelectorAll(SELECTORS.activeConversation)].find(visible);
+        const replyRoot = active?.closest('[class*="conversation"], [class*="chat"]') || active?.parentElement?.parentElement || active;
+        const editor = replyRoot && [...replyRoot.querySelectorAll('textarea, [contenteditable="true"], [role="textbox"]')]
+          .find((node) => visible(node) && !node.disabled && node.getAttribute('aria-disabled') !== 'true');
+        const sendButton = replyRoot && [...replyRoot.querySelectorAll('button, [role="button"]')]
+          .find((node) => visible(node) && !node.disabled && node.getAttribute('aria-disabled') !== 'true' && /^发送(?:消息)?$/.test(compact(node.textContent)));
+        if (!editor || !sendButton) return { ok: false, error: '当前会话未同时找到可见回复输入框和发送按钮，已停止验收。' };
+        const controlShape = [editor.tagName, editor.getAttribute('role') || '', editor.getAttribute('contenteditable') || '', sendButton.tagName, compact(sendButton.textContent)].join('|');
+        samples.push({ chatDigest: selected.chatDigest, controlDigest: await digest(controlShape) });
+        if (cycle < 2) await delay(400);
+      }
+      if (!samples.every((item) => item.chatDigest === samples[0].chatDigest && item.controlDigest === samples[0].controlDigest)) {
+        return { ok: false, error: '当前会话或回复入口在检查期间发生变化，已停止验收。' };
+      }
+      return { ok: true, readiness: { actionType: 'SEND_MESSAGE', chatDigest: samples[0].chatDigest, controlDigest: samples[0].controlDigest, pageState: 'CHAT_PAGE_READY', selectedConversationVerified: true, hasRiskOrVerification: false, stableCycles: 3 } };
     } finally { collecting = false; }
   }
 
