@@ -64,6 +64,7 @@ export function publicStatus(settings, runtime) {
     reason: runtime?.reason || '等待检测 BOSS 沟通页。',
     lastSyncAt: runtime?.lastSyncAt || null,
     total: runtime?.total || 0,
-    unread: runtime?.unread || 0,
+    currentUnread: runtime?.currentUnread ?? runtime?.unread ?? 0,
+    trackedUnread: runtime?.trackedUnread ?? runtime?.unread ?? 0,
   };
 }

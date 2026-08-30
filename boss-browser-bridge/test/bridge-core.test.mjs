@@ -23,9 +23,11 @@ test('rejects duplicate identities and raw or malformed values', () => {
   assert.throws(() => validateSnapshot({ pageState: 'CHAT_PAGE_READY', entries: [{ ...entry, previewDigest: '候选人消息原文' }] }), /摘要无效/);
 });
 
-test('public status never exposes the local device token', () => {
-  const status = publicStatus({ deviceToken: 'secret-device-token', accountName: '主账号', enabled: true }, { state: 'RUNNING' });
+test('public status never exposes the local device token and keeps legacy counters compatible', () => {
+  const status = publicStatus({ deviceToken: 'secret-device-token', accountName: '主账号', enabled: true }, { state: 'RUNNING', unread: 5 });
   assert.equal(status.paired, true);
   assert.equal(status.accountName, '主账号');
+  assert.equal(status.currentUnread, 5);
+  assert.equal(status.trackedUnread, 5);
   assert.equal('deviceToken' in status, false);
 });

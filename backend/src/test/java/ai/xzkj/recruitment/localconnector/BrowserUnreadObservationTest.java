@@ -65,5 +65,23 @@ class BrowserUnreadObservationTest {
         assertThat(observation.getResolvedAt()).isEqualTo(replaced);
     }
 
+    @Test void blocksDraftEligibilityWhenConversationIsMissingFromLatestPartialSnapshot(){
+        BrowserDevice device=mock(BrowserDevice.class);when(device.getBossAccount()).thenReturn(mock(BossAccount.class));
+        Instant first=Instant.parse("2026-08-29T12:00:00Z"),missing=first.plusSeconds(120);
+        BrowserUnreadObservation observation=new BrowserUnreadObservation(device,DIGEST,first,first);
+        observation.observe(entry(1,first),first);
+        observation.verifyDetail("b".repeat(64),"INBOUND",first,true,first);
+
+        observation.markMissingFromLatestSnapshot(missing);
+
+        assertThat(observation.isUnread()).isTrue();
+        assertThat(observation.getEligibilityStatus()).isEqualTo("SNAPSHOT_CONFIRMATION_REQUIRED");
+        assertThat(observation.getLatestDirection()).isNull();
+
+        observation.observe(entry(1,missing.plusSeconds(30)),missing.plusSeconds(30));
+        observation.evaluate(missing.plusSeconds(30),1,true);
+        assertThat(observation.getEligibilityStatus()).isEqualTo("DETAIL_REQUIRED");
+    }
+
     private UnreadObservationEntry entry(int unread,Instant at){return new UnreadObservationEntry(DIGEST,null,null,null,null,unread,at,at);}
 }

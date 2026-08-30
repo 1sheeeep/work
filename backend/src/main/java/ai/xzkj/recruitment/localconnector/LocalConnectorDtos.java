@@ -2,11 +2,11 @@ package ai.xzkj.recruitment.localconnector;
 // Internal transport records for the local connector API.
 import jakarta.validation.Valid;import jakarta.validation.constraints.*;import java.time.Instant;import java.util.*;
 record CreatePairingRequest(@NotNull UUID accountId){}
-record PairDeviceRequest(@NotBlank@Size(max=200)String pairingToken,@NotBlank@Size(max=100)String deviceName){}
+record PairDeviceRequest(@NotBlank@Size(max=200)String pairingToken,@NotBlank@Size(max=100)String deviceName,@NotBlank@Pattern(regexp="BROWSER_READONLY_BRIDGE")String clientType,@NotBlank@Pattern(regexp="[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?")@Size(max=32)String clientVersion){}
 record HeartbeatRequest(@NotBlank@Pattern(regexp="DISABLED|RUNNING|PAUSED|OFFLINE")String state,@Size(max=300)String reason){}
 record PairingResponse(String pairingToken,Instant expiresAt,UUID accountId,String accountName){}
 record DeviceCredentialsResponse(UUID deviceId,String deviceToken,UUID accountId,String accountName){}
-record DeviceResponse(UUID id,UUID accountId,String accountName,String displayName,String status,String runtimeState,String stopReason,Instant lastHeartbeatAt,Instant createdAt,Instant revokedAt){static DeviceResponse from(BrowserDevice d){return new DeviceResponse(d.getId(),d.getBossAccount().getId(),d.getBossAccount().getDisplayName(),d.getDisplayName(),d.getStatus(),d.getRuntimeState(),d.getStopReason(),d.getLastHeartbeatAt(),d.getCreatedAt(),d.getRevokedAt());}}
+record DeviceResponse(UUID id,UUID accountId,String accountName,String displayName,String clientType,String clientVersion,String status,String runtimeState,String stopReason,Instant lastHeartbeatAt,Instant createdAt,Instant revokedAt){static DeviceResponse from(BrowserDevice d){return new DeviceResponse(d.getId(),d.getBossAccount().getId(),d.getBossAccount().getDisplayName(),d.getDisplayName(),d.getClientType(),d.getClientVersion(),d.getStatus(),d.getRuntimeState(),d.getStopReason(),d.getLastHeartbeatAt(),d.getCreatedAt(),d.getRevokedAt());}}
 record UnreadObservationEntry(@NotBlank@Pattern(regexp="[a-f0-9]{64}")String chatDigest,@Pattern(regexp="[a-f0-9]{64}")String previewDigest,@Pattern(regexp="[a-f0-9]{64}")String jobDigest,@Size(max=120)String jobTitle,@Pattern(regexp="[a-f0-9]{64}")String timeDigest,@Min(0)@Max(999)int unreadCount,Instant firstSeenAt,Instant lastSeenAt){}
 record UnreadObservationSnapshot(@NotNull@Size(max=200)List<@Valid UnreadObservationEntry> entries){}
 record UnreadObservationSyncResponse(int activeUnread,int received,Instant serverNow){}

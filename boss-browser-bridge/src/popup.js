@@ -1,4 +1,4 @@
-const elements = Object.fromEntries(['stateBadge','summary','pairForm','accountName','totalCount','unreadCount','reason','lastSync','enabled','collect','forget','message','deviceName','pairingToken'].map((id) => [id, document.getElementById(id)]));
+const elements = Object.fromEntries(['stateBadge','summary','pairForm','accountName','totalCount','currentUnreadCount','trackedUnreadCount','reason','lastSync','enabled','collect','forget','message','deviceName','pairingToken'].map((id) => [id, document.getElementById(id)]));
 
 elements.pairForm.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -24,7 +24,7 @@ async function send(message) { return chrome.runtime.sendMessage(message); }
 async function busy(button, operation) { button.disabled = true; try { await operation(); } catch (error) { show(error.message, true); } finally { button.disabled = false; } }
 function render(status) {
   elements.summary.hidden = !status.paired; elements.pairForm.hidden = status.paired;
-  elements.accountName.textContent = status.accountName || '-'; elements.totalCount.textContent = status.total; elements.unreadCount.textContent = status.unread;
+  elements.accountName.textContent = status.accountName || '-'; elements.totalCount.textContent = status.total; elements.currentUnreadCount.textContent = status.currentUnread; elements.trackedUnreadCount.textContent = status.trackedUnread;
   elements.reason.textContent = status.reason; elements.lastSync.textContent = status.lastSyncAt ? `最近同步：${new Date(status.lastSyncAt).toLocaleString('zh-CN')}` : '尚未同步真实快照'; elements.enabled.checked = status.enabled;
   const running = status.state === 'RUNNING'; const paused = ['PAUSED','ERROR'].includes(status.state);
   elements.stateBadge.textContent = running ? '只读运行中' : paused ? '已暂停' : status.paired ? '已配对' : '未配对'; elements.stateBadge.className = `badge ${running ? 'running' : paused ? 'paused' : ''}`;

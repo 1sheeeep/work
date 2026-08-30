@@ -59,7 +59,12 @@ async function pair(payload) {
   const backendUrl = validateBackendUrl(payload?.backendUrl || DEFAULT_BACKEND_URL);
   const credentials = await request(backendUrl, '/api/local-connector/runtime/pair', {
     method: 'POST',
-    body: { pairingToken, deviceName: `Chrome 只读桥接 · ${deviceName}` },
+    body: {
+      pairingToken,
+      deviceName: `Chrome 只读桥接 · ${deviceName}`,
+      clientType: 'BROWSER_READONLY_BRIDGE',
+      clientVersion: chrome.runtime.getManifest().version,
+    },
   });
   const settings = {
     backendUrl,
@@ -132,7 +137,7 @@ async function doSubmitSnapshot(settings, payload) {
   if (runtime.lastSignature === signature && now - Number(runtime.lastSubmittedAt || 0) < MIN_SYNC_INTERVAL_MS) {
     return { ok: true, skipped: true };
   }
-  await request(settings.backendUrl, '/api/local-connector/runtime/unread-observations', {
+  const sync = await request(settings.backendUrl, '/api/local-connector/runtime/unread-observations', {
     method: 'POST', token: settings.deviceToken, body: { entries: payload.entries },
   });
   let detailReason = '';
@@ -146,10 +151,11 @@ async function doSubmitSnapshot(settings, payload) {
       detailReason = `；详情暂未入库：${safeError(error)}`;
     }
   }
-  const unread = payload.entries.filter((entry) => entry.unreadCount > 0).length;
-  const reason = `只读桥接已识别 ${payload.entries.length} 个会话，其中 ${unread} 个未读（仅上传摘要）${detailReason}`;
+  const currentUnread = payload.entries.filter((entry) => entry.unreadCount > 0).length;
+  const trackedUnread = Number.isInteger(sync?.activeUnread) ? sync.activeUnread : currentUnread;
+  const reason = `本次页面稳定识别 ${payload.entries.length} 个会话、${currentUnread} 个未读；后端持续观察 ${trackedUnread} 条（仅上传摘要）${detailReason}`;
   await sendHeartbeatIfPaired(settings, 'RUNNING', reason);
-  await setRuntime({ state: 'RUNNING', reason, lastSyncAt: new Date().toISOString(), total: payload.entries.length, unread, lastSignature: signature, lastSubmittedAt: now });
+  await setRuntime({ state: 'RUNNING', reason, lastSyncAt: new Date().toISOString(), total: payload.entries.length, currentUnread, trackedUnread, lastSignature: signature, lastSubmittedAt: now });
   return { ok: true };
 }
 
