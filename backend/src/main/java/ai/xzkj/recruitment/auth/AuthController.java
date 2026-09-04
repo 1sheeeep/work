@@ -30,19 +30,22 @@ public class AuthController {
     private final CurrentUserService currentUserService;
     private final AuditService auditService;
     private final LoginAttemptService loginAttemptService;
+    private final RememberMeService rememberMeService;
 
     public AuthController(
             AuthenticationManager authenticationManager,
             SecurityContextRepository securityContextRepository,
             CurrentUserService currentUserService,
             AuditService auditService,
-            LoginAttemptService loginAttemptService
+            LoginAttemptService loginAttemptService,
+            RememberMeService rememberMeService
     ) {
         this.authenticationManager = authenticationManager;
         this.securityContextRepository = securityContextRepository;
         this.currentUserService = currentUserService;
         this.auditService = auditService;
         this.loginAttemptService = loginAttemptService;
+        this.rememberMeService = rememberMeService;
     }
 
     @GetMapping("/csrf")
@@ -66,6 +69,8 @@ public class AuthController {
             SecurityContextHolder.setContext(context);
             securityContextRepository.saveContext(context, request, response);
             SystemUser user = currentUserService.requireCurrentUser();
+            if (body.rememberMe()) rememberMeService.issue(user, request, response);
+            else rememberMeService.revoke(request, response);
             loginAttemptService.recordSuccess(remoteAddress, body.username());
             auditService.success("LOGIN", "SYSTEM_USER", user.getId(), user.getDisplayName(), "登录系统");
             return AuthenticatedUser.from(user);
@@ -83,18 +88,20 @@ public class AuthController {
     }
 
     @PostMapping("/logout")
-    public void logout(HttpServletRequest request) {
+    public void logout(HttpServletRequest request, HttpServletResponse response) {
         SystemUser user = currentUserService.requireCurrentUser();
         auditService.success("LOGOUT", "SYSTEM_USER", user.getId(), user.getDisplayName(), "退出系统");
         var session = request.getSession(false);
         if (session != null) {
             session.invalidate();
         }
+        rememberMeService.revoke(request, response);
         SecurityContextHolder.clearContext();
     }
 
     public record LoginRequest(@NotBlank(message = "请输入用户名") String username,
-                               @NotBlank(message = "请输入密码") String password) {
+                               @NotBlank(message = "请输入密码") String password,
+                               boolean rememberMe) {
     }
 
     public record AuthenticatedUser(String id, String username, String displayName, UserRole role) {

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "招聘值守台·BOSS 只读桥接",
-  "version": "0.4.1",
-  "description": "在已登录的 BOSS 招聘页面中只读识别未读状态，并向本机招聘值守台上报最小化摘要。",
+  "name": "招聘值守台·BOSS 安全桥接",
+  "version": "0.12.3",
+  "description": "默认只读识别 BOSS 未读状态；只有 HR 在扩展内二次确认时，才可对当前已打开会话单次发送固定测试草稿。",
   "permissions": ["alarms", "storage", "tabs", "scripting"],
   "host_permissions": [
     "https://zhipin.com/*",
@@ -22,13 +22,25 @@
     }
   ],
   "action": {
-    "default_title": "BOSS 只读桥接",
+    "default_title": "BOSS 安全桥接",
     "default_popup": "src/popup.html"
   },
   "commands": {
     "check-reply-readiness": {
       "suggested_key": { "default": "Alt+Shift+R", "mac": "Alt+Shift+R" },
       "description": "只读检查当前 BOSS 会话的回复入口"
+    },
+    "fill-test-draft": {
+      "suggested_key": { "default": "Alt+Shift+D", "mac": "Alt+Shift+D" },
+      "description": "向当前已读会话的空输入框写入固定测试草稿（不发送）"
+    },
+    "fill-approved-draft": {
+      "suggested_key": { "default": "Alt+Shift+F", "mac": "Alt+Shift+F" },
+      "description": "向当前会话空输入框填入后台已审核安全草稿（不发送）"
+    },
+    "inspect-current-controls": {
+      "suggested_key": { "default": "Alt+Shift+I", "mac": "Alt+Shift+I" },
+      "description": "不打开扩展弹窗，只读采集当前会话与已展开浮层的脱敏 DOM"
     }
   }
 }

@@ -9,7 +9,7 @@ describe('LoginView', () => {
       history: createMemoryHistory(),
       routes: [
         { path: '/login', component: LoginView },
-        { path: '/organization', component: { template: '<div>organization</div>' } },
+        { path: '/dashboard', component: { template: '<div>dashboard</div>' } },
       ],
     })
     await router.push('/login')

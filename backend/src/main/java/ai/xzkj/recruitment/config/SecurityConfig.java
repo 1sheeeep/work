@@ -2,6 +2,8 @@ package ai.xzkj.recruitment.config;
 
 import ai.xzkj.recruitment.auth.SystemUserRepository;
 import ai.xzkj.recruitment.auth.EnabledUserFilter;
+import ai.xzkj.recruitment.auth.RememberMeAuthenticationFilter;
+import ai.xzkj.recruitment.auth.RememberMeService;
 import ai.xzkj.recruitment.common.ApiError;
 import tools.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletResponse;
@@ -61,7 +63,9 @@ public class SecurityConfig {
             HttpSecurity http,
             ObjectMapper objectMapper,
             SecurityContextRepository securityContextRepository,
-            SystemUserRepository userRepository
+            SystemUserRepository userRepository,
+            UserDetailsService userDetailsService,
+            RememberMeService rememberMeService
     ) throws Exception {
         CookieCsrfTokenRepository csrfRepository = CookieCsrfTokenRepository.withHttpOnlyFalse();
         csrfRepository.setCookiePath("/");
@@ -83,7 +87,10 @@ public class SecurityConfig {
                                 response, objectMapper, HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "登录已失效，请重新登录"))
                         .accessDeniedHandler((request, response, exception) -> writeError(
                                 response, objectMapper, HttpStatus.FORBIDDEN, "FORBIDDEN", "当前账号没有此操作权限")));
-        http.addFilterAfter(new EnabledUserFilter(userRepository, objectMapper), SecurityContextHolderFilter.class);
+        http.addFilterAfter(new RememberMeAuthenticationFilter(
+                rememberMeService, userDetailsService, securityContextRepository), SecurityContextHolderFilter.class);
+        http.addFilterAfter(new EnabledUserFilter(
+                userRepository, objectMapper, rememberMeService), RememberMeAuthenticationFilter.class);
         return http.build();
     }
 

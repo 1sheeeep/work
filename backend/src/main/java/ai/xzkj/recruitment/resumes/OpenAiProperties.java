@@ -33,9 +33,13 @@ public class OpenAiProperties {
             URI uri = URI.create(baseUrl);
             String host = uri.getHost();
             return "https".equalsIgnoreCase(uri.getScheme()) && host != null
-                    && ("api.openai.com".equalsIgnoreCase(host) || host.toLowerCase().endsWith(".api.openai.com"));
+        && ("api.openai.com".equalsIgnoreCase(host)
+        || host.toLowerCase().endsWith(".api.openai.com")
+        || "dashscope.aliyuncs.com".equalsIgnoreCase(host)
+        || host.toLowerCase().endsWith(".maas.aliyuncs.com"));
         } catch (Exception exception) {
             return false;
         }
     }
+
 }

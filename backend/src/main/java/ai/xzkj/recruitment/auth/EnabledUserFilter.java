@@ -18,10 +18,13 @@ import java.time.Instant;
 public class EnabledUserFilter extends OncePerRequestFilter {
     private final SystemUserRepository userRepository;
     private final ObjectMapper objectMapper;
+    private final RememberMeService rememberMeService;
 
-    public EnabledUserFilter(SystemUserRepository userRepository, ObjectMapper objectMapper) {
+    public EnabledUserFilter(SystemUserRepository userRepository, ObjectMapper objectMapper,
+                             RememberMeService rememberMeService) {
         this.userRepository = userRepository;
         this.objectMapper = objectMapper;
+        this.rememberMeService = rememberMeService;
     }
 
     @Override
@@ -35,6 +38,7 @@ public class EnabledUserFilter extends OncePerRequestFilter {
             if (!enabled) {
                 var session = request.getSession(false);
                 if (session != null) session.invalidate();
+                rememberMeService.revoke(request, response);
                 SecurityContextHolder.clearContext();
                 response.setStatus(HttpStatus.UNAUTHORIZED.value());
                 response.setContentType(MediaType.APPLICATION_JSON_VALUE);

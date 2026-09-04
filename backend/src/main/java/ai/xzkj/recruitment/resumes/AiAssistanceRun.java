@@ -27,14 +27,15 @@ public class AiAssistanceRun {
     @Column(name = "error_message", length = 1000) private String errorMessage;
     @Column(name = "result_expires_at") private Instant resultExpiresAt;
     @Column(name = "result_purged_at") private Instant resultPurgedAt;
-    @ManyToOne(fetch = FetchType.LAZY, optional = false) @JoinColumn(name = "created_by") private SystemUser createdBy;
+    @ManyToOne(fetch = FetchType.LAZY) @JoinColumn(name = "created_by") private SystemUser createdBy;
+    @Column(nullable = false, length = 24) private String origin;
     @Column(name = "created_at", nullable = false) private Instant createdAt;
 
     protected AiAssistanceRun() {}
 
     static AiAssistanceRun succeeded(ResumeIntake intake, SystemUser user, String model, String inputHash,
                                      String rationale, String structuredResult, Instant resultExpiresAt) {
-        AiAssistanceRun run = base(intake, user, model, inputHash);
+        AiAssistanceRun run = base(intake, user, model, inputHash, "MANUAL");
         run.status = "SUCCEEDED";
         run.outcome = "REVIEW";
         run.rationale = rationale;
@@ -45,13 +46,25 @@ public class AiAssistanceRun {
 
     static AiAssistanceRun failed(ResumeIntake intake, SystemUser user, String model, String inputHash,
                                   String errorMessage) {
-        AiAssistanceRun run = base(intake, user, model, inputHash);
+        AiAssistanceRun run = base(intake, user, model, inputHash, "MANUAL");
         run.status = "FAILED";
         run.errorMessage = errorMessage;
         return run;
     }
 
-    private static AiAssistanceRun base(ResumeIntake intake, SystemUser user, String model, String inputHash) {
+    static AiAssistanceRun unattendedSucceeded(ResumeIntake intake, String model, String inputHash,
+                                               String rationale, String structuredResult, Instant expiresAt) {
+        AiAssistanceRun run = base(intake, null, model, inputHash, "UNATTENDED");
+        run.status="SUCCEEDED"; run.outcome="REVIEW"; run.rationale=rationale;
+        run.structuredResult=structuredResult; run.resultExpiresAt=expiresAt; return run;
+    }
+
+    static AiAssistanceRun unattendedFailed(ResumeIntake intake, String model, String inputHash, String error) {
+        AiAssistanceRun run = base(intake, null, model, inputHash, "UNATTENDED");
+        run.status="FAILED"; run.errorMessage=error; return run;
+    }
+
+    private static AiAssistanceRun base(ResumeIntake intake, SystemUser user, String model, String inputHash, String origin) {
         AiAssistanceRun run = new AiAssistanceRun();
         run.id = UUID.randomUUID();
         run.assistanceType = "RESUME_ANALYSIS";
@@ -63,6 +76,7 @@ public class AiAssistanceRun {
         run.promptVersion = "resume-analysis-v1";
         run.inputHash = inputHash;
         run.createdBy = user;
+        run.origin = origin;
         run.createdAt = Instant.now();
         return run;
     }
@@ -81,6 +95,7 @@ public class AiAssistanceRun {
     public Instant getResultPurgedAt() { return resultPurgedAt; }
     public boolean isResultPurged() { return resultPurgedAt != null; }
     public SystemUser getCreatedBy() { return createdBy; }
+    public String getOrigin() { return origin; }
     public Instant getCreatedAt() { return createdAt; }
 
     boolean purgeResult(Instant now) {

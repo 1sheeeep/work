@@ -3,23 +3,29 @@ import { authStore } from './stores/auth'
 
 const router = createRouter({
   history: createWebHistory(),
+  scrollBehavior(to) {
+    if (to.hash) return { el: to.hash, behavior: 'smooth' }
+    return { top: 0 }
+  },
   routes: [
     { path: '/login', name: 'login', component: () => import('./views/LoginView.vue'), meta: { public: true } },
+    { path: '/hr-login', name: 'hr-login', component: () => import('./views/LoginView.vue'), meta: { public: true, portal: 'hr' } },
     {
       path: '/', component: () => import('./layouts/AppLayout.vue'),
       children: [
         { path: '', redirect: '/dashboard' },
         { path: 'dashboard', name: 'dashboard', component: () => import('./views/DashboardView.vue') },
-        { path: 'organization', name: 'organization', component: () => import('./views/OrganizationView.vue') },
+        { path: 'organization', redirect: '/job-positions' },
         { path: 'boss-accounts', name: 'boss-accounts', component: () => import('./views/BossAccountsView.vue') },
         { path: 'job-positions', name: 'job-positions', component: () => import('./views/JobPositionsView.vue') },
-        { path: 'candidates', name: 'candidates', component: () => import('./views/CandidatesView.vue') },
+        { path: 'candidates', redirect: '/dashboard#attention-panel' },
         { path: 'resume-intakes', name: 'resume-intakes', component: () => import('./views/ResumeIntakesView.vue') },
-        { path: 'auto-replies', name: 'auto-replies', component: () => import('./views/AutoRepliesView.vue') },
-        { path: 'hr-users', name: 'hr-users', component: () => import('./views/HrUsersView.vue'), meta: { role: 'SYSTEM_ADMIN' } },
-        { path: 'audit-logs', name: 'audit-logs', component: () => import('./views/AuditLogView.vue'), meta: { role: 'SYSTEM_ADMIN' } },
-        { path: 'operations', name: 'operations', component: () => import('./views/OperationsView.vue'), meta: { role: 'SYSTEM_ADMIN' } },
-        { path: 'ai-settings', name: 'ai-settings', component: () => import('./views/AiSettingsView.vue'), meta: { role: 'SYSTEM_ADMIN' } },
+        { path: 'system-logs', name: 'system-logs', component: () => import('./views/SystemLogsView.vue'), meta: { role: 'SYSTEM_ADMIN' } },
+        { path: 'auto-replies', redirect: '/dashboard' },
+        { path: 'hr-users', redirect: '/boss-accounts' },
+        { path: 'audit-logs', redirect: '/system-logs' },
+        { path: 'operations', redirect: '/system-logs' },
+        { path: 'ai-settings', redirect: '/resume-intakes' },
       ],
     },
     { path: '/:pathMatch(.*)*', redirect: '/dashboard' },

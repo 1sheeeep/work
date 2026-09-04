@@ -9,49 +9,60 @@ vi.mock('../services/api', () => ({
   ensureCsrf: vi.fn(),
 }))
 vi.mock('../stores/auth', () => ({
-  authStore: { state: { user: { id: 'admin', username: 'admin', displayName: '系统管理员', role: 'SYSTEM_ADMIN' } } },
+  authStore: { state: { user: { id: 'admin', displayName: '系统管理员', role: 'SYSTEM_ADMIN' } } },
 }))
 
+const company = { id: 'company-1', name: '内部企业', code: 'INTERNAL', status: 'ACTIVE' }
+
 describe('BossAccountsView', () => {
-  it('requires company, display name and external identifier before creating an account', async () => {
+  it('creates an internal account without exposing company administration', async () => {
     vi.mocked(api.get)
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [company] })
       .mockResolvedValueOnce({ data: [] })
       .mockResolvedValueOnce({ data: [] })
       .mockResolvedValueOnce({ data: [] })
     const wrapper = mount(BossAccountsView, { attachTo: document.body })
     await flushPromises()
 
-    await wrapper.findAll('button').find((button) => button.text().includes('新增 BOSS 账号'))?.trigger('click')
+    await wrapper.findAll('button').find(button => button.text().includes('新增账号'))?.trigger('click')
     await flushPromises()
     const dialog = wrapper.get('.el-dialog')
-    await dialog.findAll('button').find((button) => button.text().includes('确认创建'))?.trigger('click')
+    await dialog.findAll('button').find(button => button.text() === '保存')?.trigger('click')
     await flushPromises()
 
-    expect(dialog.findAll('.el-form-item.is-error')).toHaveLength(3)
-    expect(api.get).toHaveBeenCalledWith('/boss-accounts')
+    expect(dialog.findAll('.el-form-item.is-error')).toHaveLength(2)
+    expect(dialog.text()).not.toContain('归属企业')
     wrapper.unmount()
   })
 
-  it('guides an HR through the minimal read-only bridge pairing flow', async () => {
+  it('shows bridge status in the list and keeps pairing guidance in a dialog', async () => {
     vi.mocked(api.get)
       .mockResolvedValueOnce({ data: [{
-        id: 'account-1', displayName: '上海社招账号', externalIdentifier: 'boss-shanghai', status: 'ACTIVE',
-        connectionStatus: 'UNVERIFIED', capabilities: [], company: { id: 'company-1', name: '测试企业', code: 'TEST' },
-        gatewayType: 'LOCAL_CDP_CONNECTOR',
+        id: 'account-1', displayName: 'BOSS 主招聘账号', externalIdentifier: 'boss-main-01', status: 'ACTIVE',
+        connectionStatus: 'CONNECTED', capabilities: [], company, gatewayType: 'LOCAL_CDP_CONNECTOR',
       }] })
-      .mockResolvedValueOnce({ data: [] })
-      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [company] })
+      .mockResolvedValueOnce({ data: [{ id: 'device-1', accountId: 'account-1', status: 'ACTIVE', runtimeState: 'RUNNING', pageContext: 'CHAT', lastHeartbeatAt: '2026-08-31T08:00:00Z', lastSuccessfulSyncAt: '2026-08-31T07:59:55Z', lastSuccessfulSyncType: 'CHAT', lastSuccessfulChatSyncAt: '2026-08-31T07:59:55Z', lastPauseAt: '2026-08-31T07:55:00Z', lastPauseReason: 'BOSS 页面脚本尚未就绪', lastRecoveredAt: '2026-08-31T07:59:55Z', recoveryStatus: 'RECOLLECTED' }] })
+      .mockResolvedValueOnce({ data: [{ id: 'observation-1', accountId: 'account-1', unread: true, unreadCount: 2, resolutionStatus: 'UNRESOLVED' }] })
+      .mockResolvedValueOnce({ data: [{ id: 'job-1', bossAccount: { id: 'account-1' }, captureSource: 'VISIBLE_PAGE', status: 'ACTIVE' }] })
     const wrapper = mount(BossAccountsView, { attachTo: document.body })
     await flushPromises()
-    await wrapper.findAll('.el-collapse-item__header').find((item) => item.text().includes('已有账号配置'))?.trigger('click')
-    await wrapper.findAll('button').find((button) => button.text().includes('查看接入说明'))?.trigger('click')
+
+    expect(wrapper.text()).toContain('桥接在线')
+    expect(wrapper.text()).toContain('沟通页')
+    expect(wrapper.text()).toContain('恢复已确认')
+    expect(wrapper.text()).toContain('最后成功同步')
+    expect(wrapper.text()).toContain('BOSS 页面脚本尚未就绪')
+    expect(wrapper.text()).toContain('2 条未读')
+    expect(wrapper.text()).toContain('1 个同步岗位')
+    expect(wrapper.text()).not.toContain('独立 Profile 登录')
+    await wrapper.findAll('button').find(button => button.text().includes('查看桥接'))?.trigger('click')
     await flushPromises()
 
-    expect(document.body.textContent).toContain('本机接入说明')
-    expect(document.body.textContent).toContain('当前仅接入只读桥接器')
-    expect(document.body.textContent).toContain('在对应 Chrome Profile 中完成一次只读桥接')
-    expect(document.body.textContent).toContain('boss-browser-bridge')
-    expect(document.body.textContent).not.toContain('复制连接码并配对')
+    expect(document.body.textContent).toContain('浏览器桥接')
+    expect(document.body.textContent).toContain('专属的 Chrome Profile')
+    expect(document.body.textContent).toContain('生成一次性连接码')
     wrapper.unmount()
   })
 })

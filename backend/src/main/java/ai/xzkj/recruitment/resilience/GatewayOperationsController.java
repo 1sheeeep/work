@@ -21,9 +21,9 @@ public class GatewayOperationsController {
     @GetMapping public OperationsSummary summary() {
         String version = jdbcTemplate.queryForObject("SELECT version FROM flyway_schema_history WHERE success = true ORDER BY installed_rank DESC LIMIT 1", String.class);
         Boolean immutable = jdbcTemplate.queryForObject("SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_audit_logs_append_only' AND NOT tgisinternal)", Boolean.class);
-        long activeDevices = count("SELECT COUNT(*) FROM browser_devices WHERE status = 'ACTIVE'");
-        long staleDevices = count("SELECT COUNT(*) FROM browser_devices WHERE status = 'ACTIVE' AND (last_heartbeat_at IS NULL OR last_heartbeat_at < CURRENT_TIMESTAMP - INTERVAL '2 minutes')");
-        long unreadObservations = count("SELECT COUNT(*) FROM browser_unread_observations WHERE unread = TRUE");
+        long activeDevices = count("SELECT COUNT(*) FROM local_connector_devices WHERE status = 'ACTIVE'");
+        long staleDevices = count("SELECT COUNT(*) FROM local_connector_devices WHERE status = 'ACTIVE' AND (last_heartbeat_at IS NULL OR last_heartbeat_at < CURRENT_TIMESTAMP - INTERVAL '2 minutes')");
+        long unreadObservations = count("SELECT COUNT(*) FROM local_connector_unread_observations WHERE unread = TRUE");
         long unverifiedCaptures = count("SELECT COUNT(*) FROM job_positions WHERE capture_source = 'VISIBLE_PAGE' AND capture_verified = FALSE");
         return new OperationsSummary("READY", version, Boolean.TRUE.equals(immutable), activeDevices, staleDevices,
                 unreadObservations, unverifiedCaptures, Instant.now(), guard.snapshots());

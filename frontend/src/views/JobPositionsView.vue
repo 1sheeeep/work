@@ -1,17 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
-import { useRouter } from "vue-router";
 import type { FormInstance, FormRules } from "element-plus";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { Briefcase, Refresh, Search } from "@element-plus/icons-vue";
+import { Briefcase, Connection, DocumentChecked, Refresh, Search, Warning } from "@element-plus/icons-vue";
 import { api, apiErrorMessage, ensureCsrf } from "../services/api";
 import { authStore } from "../stores/auth";
-import type {
-  BossAccount,
-  Company,
-  JobPosition,
-  JobPositionStatus,
-} from "../types";
+import type { Company, JobPosition, JobPositionStatus } from "../types";
 
 interface JobReviewFormValue {
   location: string;
@@ -35,19 +29,20 @@ interface JobReviewFormValue {
 }
 
 const loading = ref(true);
-const router = useRouter();
 const loadError = ref("");
 const jobs = ref<JobPosition[]>([]);
 const companies = ref<Company[]>([]);
-const bossAccounts = ref<BossAccount[]>([]);
 const keyword = ref("");
-const companyFilter = ref("");
 const statusFilter = ref<JobPositionStatus | "">("");
 const changingStatusId = ref("");
 const reviewDialogOpen = ref(false);
 const reviewJob = ref<JobPosition | null>(null);
 const reviewSaving = ref(false);
 const reviewFormRef = ref<FormInstance>();
+const companyDialogOpen = ref(false);
+const companySaving = ref(false);
+const selectedCompany = ref<Company | null>(null);
+const companyForm = reactive({ industry: "", scale: "", summary: "", approved: false });
 const reviewForm = reactive<JobReviewFormValue>({
   location: "",
   salaryMinK: 1,
@@ -74,6 +69,11 @@ const canManage = computed(() =>
     authStore.state.user?.role ?? "",
   ),
 );
+const canApproveCompanyKnowledge = computed(() => authStore.state.user?.role === "SYSTEM_ADMIN");
+const visibleCompanies = computed(() => {
+  const ids = new Set(jobs.value.map((job) => job.company.id));
+  return companies.value.filter((company) => ids.has(company.id));
+});
 const stats = computed(() => ({
   total: jobs.value.length,
   active: jobs.value.filter((job) => job.status === "ACTIVE").length,
@@ -84,14 +84,6 @@ const stats = computed(() => ({
   pageCaptured: jobs.value.filter((job) => job.captureSource === "VISIBLE_PAGE")
     .length,
 }));
-const latestPageCapture = computed(
-  () =>
-    jobs.value
-      .filter((job) => job.captureSource === "VISIBLE_PAGE" && job.capturedAt)
-      .map((job) => job.capturedAt as string)
-      .sort()
-      .at(-1) ?? "",
-);
 const reviewQueue = computed(() =>
   jobs.value
     .filter((job) => job.reviewReadiness?.importedDraft)
@@ -113,6 +105,9 @@ const reviewRules: FormRules<JobReviewFormValue> = {
   description: [
     { required: true, message: "请输入真实职位描述", trigger: "blur" },
   ],
+  replySummary: [
+    { required: true, message: "请填写挂机回复中的岗位介绍", trigger: "blur" },
+  ],
 };
 
 function statusTagType(status: JobPositionStatus) {
@@ -125,26 +120,78 @@ async function loadData() {
   loading.value = true;
   loadError.value = "";
   try {
-    const [jobResponse, companyResponse, accountResponse] = await Promise.all([
+    const [jobResponse, companyResponse] = await Promise.all([
       api.get<JobPosition[]>("/job-positions", {
         params: {
           keyword: keyword.value.trim() || undefined,
-          companyId: companyFilter.value || undefined,
           status: statusFilter.value || undefined,
         },
       }),
       api.get<Company[]>("/organization/companies"),
-      api.get<BossAccount[]>("/boss-accounts"),
     ]);
     jobs.value = jobResponse.data.filter(
       (job) => job.captureSource === "VISIBLE_PAGE",
     );
     companies.value = companyResponse.data;
-    bossAccounts.value = accountResponse.data;
   } catch (error) {
     loadError.value = apiErrorMessage(error, "职位资料加载失败，请重试");
   } finally {
     loading.value = false;
+  }
+}
+
+function openCompanyKnowledge(company: Company) {
+  selectedCompany.value = company;
+  Object.assign(companyForm, {
+    industry: company.knowledgeIndustry ?? "",
+    scale: company.knowledgeScale ?? "",
+    summary: company.knowledgeSummary ?? "",
+    approved: company.knowledgeApproved,
+  });
+  companyDialogOpen.value = true;
+}
+
+function openJobCompanyKnowledge(job: JobPosition) {
+  const company = companies.value.find((item) => item.id === job.company.id);
+  if (company) openCompanyKnowledge(company);
+}
+
+async function recalculateDrafts() {
+  try {
+    await api.post("/local-connector/observations/recalculate-drafts");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function saveCompanyKnowledge() {
+  if (!selectedCompany.value) return;
+  if (!companyForm.industry.trim() || !companyForm.summary.trim()) {
+    ElMessage.warning("请填写行业和公司介绍");
+    return;
+  }
+  if (!companyForm.approved) {
+    ElMessage.warning("请确认审核后再保存");
+    return;
+  }
+  companySaving.value = true;
+  try {
+    await ensureCsrf();
+    await api.put(`/organization/companies/${selectedCompany.value.id}/knowledge`, {
+      industry: companyForm.industry.trim(),
+      scale: companyForm.scale.trim() || null,
+      summary: companyForm.summary.trim(),
+      approved: true,
+    });
+    const recalculated = await recalculateDrafts();
+    companyDialogOpen.value = false;
+    ElMessage.success(recalculated ? "公司回复资料已生效，未读草稿已重新评估" : "公司回复资料已生效");
+    await loadData();
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error, "公司回复资料保存失败"));
+  } finally {
+    companySaving.value = false;
   }
 }
 
@@ -200,10 +247,10 @@ function realValue(value?: string) {
   return value;
 }
 function suggestedReplySummary(job: JobPosition) {
-  const salary =
-    job.salaryDisplay ||
-    `${job.salaryMinK}-${job.salaryMaxK}K${job.salaryMonths > 12 ? `·${job.salaryMonths}薪` : ""}`;
-  return `${job.title}，工作地址${job.workAddress || job.location}，薪资详情${salary}，经验${job.experienceRequirement}，学历${job.educationRequirement}。具体工作内容和安排以招聘同事后续沟通为准。`;
+  const description = realValue(job.description).replace(/\s+/g, " ").trim();
+  return description
+    ? description.slice(0, 1000)
+    : `负责${job.title}相关工作，具体职责以招聘同事后续沟通为准`;
 }
 function reviewEvidenceLabel(job: JobPosition) {
   if (job.captureSource === "VISIBLE_PAGE")
@@ -234,14 +281,10 @@ function openImportedReview(job: JobPosition) {
   });
   reviewDialogOpen.value = true;
 }
-function goToCompanyKnowledge() {
-  router.push("/organization");
-}
 async function completeImportedReview() {
   if (reviewJob.value) {
     reviewForm.location = reviewForm.workAddress || reviewForm.location;
-    reviewForm.replySummary = `${reviewJob.value.title}，工作地址${reviewForm.workAddress || reviewForm.location}，薪资详情${reviewForm.salaryDisplay || `${reviewForm.salaryMinK}-${reviewForm.salaryMaxK}K`}，经验${reviewForm.experienceRequirement}，学历${reviewForm.educationRequirement}。具体信息以招聘同事后续沟通为准。`;
-    reviewForm.screeningRequirements = "";
+    if (!reviewForm.replySummary.trim()) reviewForm.replySummary = suggestedReplySummary(reviewJob.value);
   }
   if (
     !reviewJob.value ||
@@ -267,12 +310,7 @@ async function completeImportedReview() {
       `/job-positions/${reviewJob.value.id}/review-and-activate`,
       reviewForm,
     );
-    let recalculated = true;
-    try {
-      await api.post("/local-connector/observations/recalculate-drafts");
-    } catch {
-      recalculated = false;
-    }
+    const recalculated = await recalculateDrafts();
     ElMessage.success(
       recalculated
         ? "岗位已审核启用，现有未读草稿已重新评估"
@@ -291,20 +329,14 @@ onMounted(loadData);
 </script>
 
 <template>
-  <div class="page-shell">
+  <div class="page-shell positions-page">
     <header class="page-heading">
       <div>
-        <h1>职位管理</h1>
-        <p>同步并核对 BOSS 职位管理页中的真实职位信息。</p>
+        <h1>岗位资料 · 运营面板</h1>
+        <p>同步、核对并维护当前实际招聘岗位。</p>
       </div>
+      <el-button :icon="Refresh" :loading="loading" @click="loadData">刷新</el-button>
     </header>
-    <el-alert
-      title="职位只能绑定同企业、已启用且通过能力检查的 BOSS 账号；关闭后保留历史且不可重新启用。"
-      type="info"
-      :closable="false"
-      show-icon
-      class="scope-alert"
-    />
     <div v-if="loading" class="surface-panel skeleton-stack">
       <el-skeleton :rows="7" animated />
     </div>
@@ -316,46 +348,49 @@ onMounted(loadData);
     </div>
     <template v-else>
       <div class="metrics-strip">
-        <div>
-          <span>职位总数</span><strong>{{ stats.total }}</strong>
+        <div class="static-card card-indicator">
+          <el-icon><Briefcase /></el-icon><div><span>职位总数</span><strong>{{ stats.total }}</strong><small>当前维护的岗位总数</small></div>
         </div>
-        <div>
-          <span>页面同步</span><strong>{{ stats.pageCaptured }}</strong>
+        <div class="static-card card-indicator">
+          <el-icon><Connection /></el-icon><div><span>页面同步</span><strong>{{ stats.pageCaptured }}</strong><small>已同步的页面数量</small></div>
         </div>
-        <div>
-          <span>安全草稿就绪</span><strong>{{ stats.safeReady }}</strong>
+        <div class="static-card card-indicator">
+          <el-icon><DocumentChecked /></el-icon><div><span>安全草稿就绪</span><strong>{{ stats.safeReady }}</strong><small>已就绪可发布的草稿</small></div>
         </div>
-        <div>
-          <span>待完善草稿</span><strong>{{ stats.draft }}</strong>
+        <div class="static-card card-indicator">
+          <el-icon><Warning /></el-icon><div><span>待完善草稿</span><strong>{{ stats.draft }}</strong><small>需要完善后发布</small></div>
         </div>
       </div>
-      <section class="surface-panel browser-import-guide">
-        <div>
-          <strong>BOSS 职位管理页同步</strong>
-          <p>
-            在已配对的 Chrome Profile
-            中手动打开“职位管理”，点击扩展里的“同步当前职位页”。系统按招聘账号和岗位标题去重，只创建待审核草稿。
-          </p>
-          <small v-if="latestPageCapture"
-            >最近入库：{{
-              new Date(latestPageCapture).toLocaleString("zh-CN")
-            }}</small
-          ><small v-else>尚无职位管理页采集记录</small>
+      <div class="positions-workspace card-panel">
+      <section v-if="visibleCompanies.length" class="company-knowledge-panel">
+        <div class="section-title-row">
+          <div>
+            <h2>公司介绍</h2>
+            <p>用于候选人咨询时的公司基本情况回复。</p>
+          </div>
         </div>
-        <el-button :icon="Refresh" @click="loadData">刷新同步结果</el-button>
+        <div class="company-knowledge-list">
+          <article v-for="company in visibleCompanies" :key="company.id">
+            <div>
+              <strong>{{ company.name }}</strong>
+              <span class="company-knowledge-state" :class="{ ready: company.knowledgeApproved }"><i></i>{{ company.knowledgeApproved ? `${company.knowledgeIndustry} · 已审核 v${company.knowledgeVersion}` : '未完成，公司信息暂不用于自动回复' }}</span>
+            </div>
+            <el-button v-if="canApproveCompanyKnowledge" @click="openCompanyKnowledge(company)">{{ company.knowledgeApproved ? '查看公司介绍' : '完善公司介绍' }}</el-button>
+            <small v-else-if="!company.knowledgeApproved">需系统管理员完成</small>
+          </article>
+        </div>
+        <div class="company-ambient" aria-hidden="true"><i></i><i></i><i></i><b></b></div>
       </section>
-      <section v-if="reviewQueue.length" class="surface-panel review-queue">
+      <section v-if="reviewQueue.length" class="review-queue">
         <div class="section-title-row">
           <div>
             <h2>真实岗位待办</h2>
-            <p>
-              优先处理已有真实页面或未读证据的岗位。每个岗位必须单独补全、核对和批准，不提供批量自动审核。
-            </p>
+            <p>核对同步资料并启用可参与值守的岗位。</p>
           </div>
           <el-tag type="warning">{{ reviewQueue.length }} 个待处理</el-tag>
         </div>
         <div class="review-cards">
-          <article v-for="job in reviewQueue" :key="job.id">
+          <article v-for="job in reviewQueue" :key="job.id" class="decision-card decision-card--warning card-emphasis card-emphasis--warning">
             <header>
               <div class="job-identity">
                 <strong>{{ job.title }}</strong
@@ -371,12 +406,9 @@ onMounted(loadData);
                 >1 岗位资料</span
               ><span :class="{ done: job.reviewReadiness.captureReady }"
                 >2 页面核对</span
-              ><span
-                :class="{ done: job.reviewReadiness.companyKnowledgeReady }"
-                >3 企业知识</span
               ><span :class="{ done: job.reviewReadiness.jobKnowledgeReady }"
-                >4 岗位知识</span
-              ><span :class="{ done: job.status === 'ACTIVE' }">5 启用</span>
+                >3 回复内容</span
+              ><span :class="{ done: job.status === 'ACTIVE' }">4 已启用</span>
             </div>
             <p>
               {{
@@ -385,13 +417,7 @@ onMounted(loadData);
               }}
             </p>
             <footer>
-              <el-button
-                v-if="!job.reviewReadiness.companyKnowledgeReady"
-                text
-                type="warning"
-                @click="goToCompanyKnowledge"
-                >先审核企业资料</el-button
-              ><el-button
+              <el-button v-if="!job.reviewReadiness.companyKnowledgeReady && canApproveCompanyKnowledge" link type="warning" @click="openJobCompanyKnowledge(job)">先完善公司回复资料</el-button><span v-else-if="!job.reviewReadiness.companyKnowledgeReady" class="internal-blocker">公司回复资料未就绪</span><el-button
                 type="primary"
                 :disabled="!job.reviewReadiness.companyKnowledgeReady"
                 @click="openImportedReview(job)"
@@ -401,11 +427,11 @@ onMounted(loadData);
           </article>
         </div>
       </section>
-      <section class="surface-panel jobs-panel">
+      <section class="jobs-panel">
         <div class="section-title-row jobs-title">
           <div>
-            <h2>职位列表</h2>
-            <p>草稿完善后才可启用，启用时会再次校验 BOSS Capability</p>
+            <h2>招聘岗位</h2>
+            <p>仅显示从真实 BOSS 页面同步的岗位，状态变化保留人工确认。</p>
           </div>
           <div class="filters">
             <el-input
@@ -415,16 +441,6 @@ onMounted(loadData);
               :prefix-icon="Search"
               @keyup.enter="loadData"
             /><el-select
-              v-model="companyFilter"
-              clearable
-              placeholder="全部企业"
-              @change="loadData"
-              ><el-option
-                v-for="company in companies"
-                :key="company.id"
-                :label="company.name"
-                :value="company.id" /></el-select
-            ><el-select
               v-model="statusFilter"
               placeholder="全部状态"
               @change="loadData"
@@ -442,11 +458,11 @@ onMounted(loadData);
           <span class="empty-state__icon"
             ><el-icon><Briefcase /></el-icon></span
           ><strong>还没有符合条件的职位</strong
-          ><span>请在 BOSS 职位管理页使用只读桥接同步真实职位。</span>
+          ><span>真实岗位同步后会显示在这里。</span>
         </div>
         <template v-else>
-          <el-table :data="jobs" class="jobs-table"
-            ><el-table-column type="expand"
+          <el-table :data="jobs" class="jobs-table" table-layout="fixed"
+            ><el-table-column type="expand" width="44"
               ><template #default="{ row }"
                 ><div class="captured-job-detail">
                   <h3>职位基本信息与要求</h3>
@@ -505,26 +521,26 @@ onMounted(loadData);
             ><el-table-column label="职位名称" min-width="210"
               ><template #default="{ row }"
                 ><div class="job-identity">
-                  <strong>{{ row.title }}</strong
-                  ><span
+                  <strong :title="row.title">{{ row.title }}</strong
+                  ><span :title="`${row.location} · ${salaryLabel(row as JobPosition)}`"
                     >{{ row.location }} ·
                     {{ salaryLabel(row as JobPosition) }}</span
                   >
                 </div></template
               ></el-table-column
-            ><el-table-column label="公司" min-width="165"
+            ><el-table-column label="公司" min-width="145"
               ><template #default="{ row }"
                 ><strong>{{ row.company.name }}</strong>
                 <div class="muted">{{ row.company.code }}</div></template
               ></el-table-column
-            ><el-table-column label="BOSS 账号" min-width="175"
+            ><el-table-column label="BOSS 账号" min-width="155"
               ><template #default="{ row }"
                 ><strong>{{ row.bossAccount.displayName }}</strong>
                 <div class="muted">
                   {{ row.bossAccount.externalIdentifier }}
                 </div></template
               ></el-table-column
-            ><el-table-column label="资料来源" min-width="155"
+            ><el-table-column label="资料来源" min-width="160" class-name="job-state-stack-column"
               ><template #default="{ row }"
                 ><el-tag
                   :type="
@@ -556,18 +572,18 @@ onMounted(loadData);
                   }}
                 </div></template
               ></el-table-column
-            ><el-table-column label="安全草稿" min-width="160"
+            ><el-table-column label="安全草稿" min-width="150" class-name="job-state-stack-column"
               ><template #default="{ row }"
                 ><el-tag :type="row.safeReplyReady ? 'success' : 'warning'">{{
                   row.safeReplyReady
                     ? `已就绪 v${row.knowledgeVersion}`
                     : "资料待完善"
                 }}</el-tag>
-                <div v-if="!row.safeReplyReady" class="readiness-issues">
+                <div v-if="!row.safeReplyReady" class="readiness-issues" :title="row.safeReplyIssues.join('、')">
                   {{ row.safeReplyIssues.join("、") }}
                 </div></template
               ></el-table-column
-            ><el-table-column label="状态" width="100"
+            ><el-table-column label="状态" width="100" class-name="job-status-column"
               ><template #default="{ row }"
                 ><el-tag :type="statusTagType(row.status)">{{
                   statusLabels[row.status as JobPositionStatus]
@@ -576,10 +592,10 @@ onMounted(loadData);
             ><el-table-column
               v-if="canManage"
               label="操作"
-              width="310"
-              fixed="right"
+              width="120"
+              class-name="job-actions-column"
               ><template #default="{ row }"
-                ><el-button
+                ><div class="job-actions"><el-button
                   v-if="row.reviewReadiness?.importedDraft"
                   link
                   type="warning"
@@ -601,12 +617,12 @@ onMounted(loadData);
                   :loading="changingStatusId === row.id"
                   @click="changeStatus(row as JobPosition, 'CLOSED')"
                   >关闭</el-button
-                ></template
+                ></div></template
               ></el-table-column
             ></el-table
           >
           <div class="job-cards">
-            <article v-for="job in jobs" :key="job.id">
+            <article v-for="job in jobs" :key="job.id" class="entity-card">
               <header>
                 <div class="job-identity">
                   <strong>{{ job.title }}</strong
@@ -666,12 +682,14 @@ onMounted(loadData);
           </div>
         </template>
       </section>
+      </div>
     </template>
 
     <el-dialog
       v-model="reviewDialogOpen"
       :title="`${reviewJob?.title ?? ''} · 完成真实岗位审核`"
       width="820px"
+      append-to-body
       destroy-on-close
       ><el-alert
         title="以下字段名称和顺序与 BOSS 职位详情页保持一致；请只核对真实页面信息。"
@@ -684,7 +702,7 @@ onMounted(loadData);
         :model="reviewForm"
         :rules="reviewRules"
         label-position="top"
-        ><h3 class="boss-section-title">职位基本信息</h3>
+        ><h3 class="boss-section-title">基础信息</h3>
         <div class="form-grid boss-field-grid">
           <el-form-item label="公司">
             <el-input :model-value="reviewJob?.company.name" disabled />
@@ -702,6 +720,7 @@ onMounted(loadData);
             <el-input v-model="reviewForm.overseasRequirement" maxlength="40" />
           </el-form-item>
         </div>
+        <h3 class="boss-section-title">岗位内容</h3>
         <el-form-item label="职位描述" prop="description"
           ><el-input
             v-model="reviewForm.description"
@@ -711,7 +730,6 @@ onMounted(loadData);
             show-word-limit
             placeholder="与 BOSS 职位描述保持一致"
         /></el-form-item>
-        <h3 class="boss-section-title">职位要求</h3>
         <div class="form-grid boss-field-grid">
           <el-form-item label="经验" prop="experienceRequirement">
             <el-input
@@ -735,6 +753,11 @@ onMounted(loadData);
             <el-input v-model="reviewForm.workAddress" maxlength="240" />
           </el-form-item>
         </div>
+        <h3 class="boss-section-title">回复内容</h3>
+        <el-form-item label="岗位工作内容" prop="replySummary">
+          <el-input v-model="reviewForm.replySummary" type="textarea" :rows="4" maxlength="1000" show-word-limit placeholder="仅填写主要工作内容；地点、薪资和公司介绍由系统使用上方已审核字段组合" />
+        </el-form-item>
+        <h3 class="boss-section-title">审核结果</h3>
         <div class="review-confirmations">
           <el-checkbox v-model="reviewForm.captureConfirmed"
             >我已对照真实 BOSS 岗位页核对上述资料</el-checkbox
@@ -754,31 +777,21 @@ onMounted(loadData);
         ></template
       ></el-dialog
     >
+    <el-dialog v-model="companyDialogOpen" :title="`${selectedCompany?.name ?? ''} · 公司统一回复资料`" width="620px" append-to-body>
+      <el-form label-position="top">
+        <div class="form-grid company-form-grid">
+          <el-form-item label="所属行业" required><el-input v-model="companyForm.industry" maxlength="120" /></el-form-item>
+          <el-form-item label="公司规模"><el-input v-model="companyForm.scale" maxlength="120" /></el-form-item>
+        </div>
+        <el-form-item label="公司介绍" required><el-input v-model="companyForm.summary" type="textarea" :rows="5" maxlength="1000" show-word-limit /></el-form-item>
+        <el-checkbox v-model="companyForm.approved">我已核对上述公开资料，确认可用于挂机回复</el-checkbox>
+      </el-form>
+      <template #footer><el-button @click="companyDialogOpen = false">取消</el-button><el-button type="primary" :loading="companySaving" @click="saveCompanyKnowledge">保存并生效</el-button></template>
+    </el-dialog>
   </div>
 </template>
 
 <style scoped>
-.browser-import-guide {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  margin-bottom: 20px;
-  padding: 18px 20px;
-  border-left: 4px solid var(--primary);
-}
-.browser-import-guide p {
-  margin: 5px 0;
-  color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1.6;
-}
-.browser-import-guide small {
-  color: var(--text-secondary);
-}
-.scope-alert {
-  margin-bottom: 20px;
-}
 .metrics-strip {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -815,11 +828,65 @@ onMounted(loadData);
 }
 .filters {
   display: grid;
-  grid-template-columns: minmax(220px, 280px) 155px 125px auto;
+  grid-template-columns: minmax(220px, 280px) 155px auto;
   gap: 8px;
 }
 .jobs-table {
   width: 100%;
+}
+.jobs-table :deep(.el-table__row > td) {
+  height: 92px;
+  padding: 0;
+  vertical-align: top;
+}
+.jobs-table :deep(.el-table__row > td > .cell) {
+  padding-top: 16px;
+  padding-bottom: 16px;
+}
+.jobs-table :deep(.cell) {
+  min-width: 0;
+  overflow: hidden;
+}
+.jobs-table :deep(td .cell > strong),
+.jobs-table .muted,
+.jobs-table .readiness-issues {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jobs-table .job-identity strong {
+  display: -webkit-box;
+  min-height: 40px;
+  overflow: hidden;
+  line-height: 20px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.jobs-table .job-identity span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jobs-table :deep(.job-status-column .cell),
+.jobs-table :deep(.job-actions-column .cell) {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+.jobs-table :deep(.job-state-stack-column .el-tag),
+.jobs-table :deep(.job-status-column .el-tag) {
+  height: 24px;
+  line-height: 22px;
+  vertical-align: top;
+}
+.job-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+.job-actions .el-button + .el-button {
+  margin-left: 0;
 }
 .job-identity strong,
 .job-identity span {
@@ -876,6 +943,37 @@ onMounted(loadData);
 .review-queue {
   margin-bottom: 20px;
 }
+.company-knowledge-panel {
+  margin-bottom: 20px;
+}
+.company-knowledge-list {
+  display: grid;
+  gap: 10px;
+  padding: 0 20px 20px;
+}
+.company-knowledge-list article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-muted);
+}
+.company-knowledge-list strong,
+.company-knowledge-list span {
+  display: block;
+}
+.company-knowledge-list span,
+.company-knowledge-list small {
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.company-form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
 .review-cards {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -897,7 +995,7 @@ onMounted(loadData);
 }
 .review-steps {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 5px;
   margin: 14px 0;
 }
@@ -918,6 +1016,7 @@ onMounted(loadData);
   color: #b54708;
   font-size: 12px;
 }
+.internal-blocker{align-self:center;color:var(--warning);font-size:11px}
 .review-confirmations {
   display: grid;
   gap: 10px;
@@ -990,7 +1089,68 @@ onMounted(loadData);
   }
   .filters {
     width: 100%;
-    grid-template-columns: minmax(200px, 1fr) 150px 120px auto;
+    grid-template-columns: minmax(200px, 1fr) 150px auto;
+  }
+}
+@media (max-width: 1360px) {
+  .jobs-table {
+    display: none;
+  }
+  .job-cards {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    padding: 14px;
+  }
+  .job-cards article {
+    min-width: 0;
+    padding: 16px;
+    border: 1px solid var(--border);
+    background: var(--surface-raised);
+  }
+  .job-cards header {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .job-cards dl {
+    display: grid;
+    gap: 11px;
+    margin: 17px 0;
+  }
+  .job-cards dl div {
+    display: grid;
+    grid-template-columns: 90px minmax(0, 1fr);
+    gap: 10px;
+  }
+  .job-cards dt {
+    color: var(--text-secondary);
+    font-size: 13px;
+  }
+  .job-cards dd {
+    min-width: 0;
+    margin: 0;
+    overflow-wrap: anywhere;
+    font-size: 13px;
+  }
+  .job-description {
+    display: -webkit-box;
+    margin: 0;
+    overflow: hidden;
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.6;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+  }
+  .job-cards footer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 18px;
+  }
+  .job-cards footer .el-button {
+    margin: 0;
   }
 }
 @media (max-width: 720px) {
@@ -1001,14 +1161,23 @@ onMounted(loadData);
     font-size: 21px;
   }
   .filters,
-  .review-cards {
+  .review-cards,
+  .company-form-grid {
     grid-template-columns: 1fr;
+  }
+  .company-knowledge-list article {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .company-knowledge-list article .el-button,
+  .company-knowledge-list article > small {
+    grid-column: 1 / -1;
+    justify-self: start;
   }
   .jobs-table {
     display: none;
   }
   .job-cards {
-    display: grid;
+    grid-template-columns: 1fr;
     gap: 12px;
     padding: 14px;
   }
@@ -1067,4 +1236,173 @@ onMounted(loadData);
     grid-template-columns: 1fr;
   }
 }
+
+/* 指标静止、待审核项强调、移动岗位卡保留实体反馈。 */
+.metrics-strip .static-card { min-height: 92px; padding: 18px 20px; border: 1px solid var(--border); border-left: 3px solid var(--card-accent, var(--brand-600)); border-radius: var(--card-radius); background: #fff; box-shadow: var(--shadow-card); transform: none; }
+.metrics-strip .static-card:nth-child(2) { --card-accent: var(--color-info); }
+.metrics-strip .static-card:nth-child(3) { --card-accent: var(--success); }
+.metrics-strip .static-card:nth-child(4) { --card-accent: var(--warning); }
+.metrics-strip .static-card strong { font-size: 30px; line-height: 1; }
+.metrics-strip .static-card:hover { border-color: var(--border); box-shadow: var(--shadow-card); transform: none; }
+.review-cards article.decision-card { padding: 16px 14px; border: 0; border-left: 3px solid var(--warning); border-radius: 10px; background: #fff9ed; }
+.job-cards article.entity-card { border: 1px solid var(--border); border-radius: var(--card-radius); background: #fff; box-shadow: var(--shadow-card); }
+.job-cards article.entity-card:hover { border-color: var(--border-strong); background: #fff; box-shadow: var(--shadow-card-hover); transform: translateY(-1px); }
+
+.metrics-strip {
+  gap: 14px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+.metrics-strip div {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--card-radius);
+  background: linear-gradient(145deg, #fff 35%, #f8fbfa 100%);
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.metrics-strip div::after {
+  position: absolute;
+  top: -24px;
+  right: -20px;
+  width: 70px;
+  height: 70px;
+  border-radius: 50%;
+  background: #d8f4ee;
+  content: '';
+  opacity: .58;
+}
+
+.metrics-strip div:nth-child(2)::after { background: #dceaff; }
+.metrics-strip div:nth-child(3)::after { background: #d7f1dd; }
+.metrics-strip div:nth-child(4)::after { background: #fff0c9; }
+.metrics-strip div > * { position: relative; z-index: 1; }
+.metrics-strip div:hover { transform: translateY(-2px); border-color: var(--border-strong); box-shadow: var(--shadow-card-hover); }
+
+.review-cards article,
+.job-cards article {
+  border-radius: var(--card-radius);
+  transition: transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.review-cards article:hover,
+.job-cards article:hover {
+  transform: translateY(-2px);
+  border-color: #dcb86b;
+  box-shadow: var(--shadow-card-hover);
+}
+
+.jobs-title { background: linear-gradient(180deg, #fff, #fbfcfc); }
+.filters > * { min-width: 0; }
+.captured-job-detail dl div { border: 1px solid #e6edeb; }
+@media (max-width: 720px) {
+  .metrics-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metrics-strip div { border-right: 1px solid var(--border); }
+  .job-cards article { border-radius: var(--card-radius); background: linear-gradient(145deg, #fff 35%, #fbfcfc 100%); box-shadow: var(--shadow-sm); }
+}
+@media (max-width: 430px) {
+  .metrics-strip { grid-template-columns: 1fr; }
+}
+
+/* 岗位资料采用“同步情况 → 待办 → 列表”的渐进层级，降低长表单压迫感。 */
+.metrics-strip { gap: 12px; }
+.metrics-strip div { padding: 17px 18px; background: var(--surface-raised); }
+.metrics-strip div::after { display: none; }
+.metrics-strip div:first-child { border-left: 3px solid var(--brand-600); }
+.metrics-strip div:nth-child(2) { border-left: 3px solid #5587bd; }
+.metrics-strip div:nth-child(3) { border-left: 3px solid #15936c; }
+.metrics-strip div:nth-child(4) { border-left: 3px solid #d18a20; }
+.metrics-strip div { min-height: 94px; border-radius: var(--radius-lg); box-shadow: var(--shadow-card); transform: none; }
+.metrics-strip div:hover { border-color: var(--border); box-shadow: var(--shadow-card); transform: none; }
+.company-knowledge-list { padding: 0 22px 22px; }
+.company-knowledge-list article { border-color: var(--border-subtle); background: #f8faf9; }
+.review-cards { padding: 0 22px 22px; }
+.review-cards article { border-color: #efd8a9; background: #fffcf7; }
+.review-steps span { border: 1px solid transparent; }
+.review-steps span.done { border-color: #c5ead9; }
+.jobs-title { align-items: center; background: #fff; }
+.filters .el-input, .filters .el-select { min-width: 0; }
+.jobs-table :deep(.el-table__expanded-cell) { padding-top: 0; padding-bottom: 0; background: #fbfcfc; }
+.captured-job-detail { padding: 18px 30px 24px; }
+.captured-job-detail h3 { color: var(--brand-900); font-size: 15px; }
+.captured-job-detail dl div { border-color: var(--border-subtle); border-radius: 10px; background: #fff; }
+.reply-preview { border-color: #cce5df; background: #f5fbf9; }
+.review-confirmations { border-color: #ead49f; background: #fffcf7; }
+@media (max-width: 720px) { .company-knowledge-list, .review-cards { padding: 0 16px 16px; } .captured-job-detail { padding: 16px; } }
+
+/* 外层面板负责分区，内部资料与待办改用平面行，避免卡片继续嵌套。 */
+.company-knowledge-list { padding-bottom: 10px; }
+.company-knowledge-list article { padding: 14px 2px; border: 0; border-top: 1px solid var(--border-subtle); border-radius: 0; background: transparent; }
+.company-knowledge-list article { grid-template-columns: minmax(0, 1fr) auto; }
+.company-knowledge-list article:first-child { border-top: 0; }
+.company-knowledge-state { display: flex !important; align-items: center; gap: 7px; }
+.company-knowledge-state i { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: var(--warning); }
+.company-knowledge-state.ready i { background: var(--success); }
+.review-cards { gap: 0 20px; padding-bottom: 12px; }
+.review-cards article { padding: 16px 2px; border: 0; border-top: 1px solid var(--border-subtle); border-radius: 0; background: transparent; box-shadow: none; }
+.review-cards article:nth-child(-n + 2) { border-top: 0; }
+.review-cards article:hover { border-color: var(--border-subtle); background: #fbfcfc; box-shadow: none; transform: none; }
+.review-steps { gap: 8px; }
+.review-steps span { padding: 6px 3px; border: 0; border-bottom: 2px solid #dfe6eb; border-radius: 0; background: transparent; }
+.review-steps span.done { border: 0; border-bottom: 2px solid #55b99b; background: transparent; color: #147255; }
+.review-cards article > p { padding: 0; background: transparent; }
+.jobs-title { padding: 24px 26px; }
+.jobs-panel { border-radius: var(--radius-lg); }
+.jobs-table :deep(.el-table__row) { height: 86px; }
+.jobs-table :deep(.el-table__cell) { vertical-align: middle; }
+.jobs-table :deep(.el-tag) { display: inline-flex; align-items: center; min-height: 26px; line-height: 1.2; }
+.job-cards article:hover { border-color: var(--border); box-shadow: var(--shadow-card); transform: none; }
+@media (max-width: 720px) {
+  .review-cards article:nth-child(2) { border-top: 1px solid var(--border-subtle); }
+}
+
+/* V80 岗位运营面板：摘要、公司资料、真实岗位表在同一阅读节奏中。 */
+.page-shell { width: min(100%, 1440px); max-width: none; }
+.page-heading { margin-bottom: 30px; }.page-heading h1 { font-size: clamp(30px, 2.5vw, 38px); letter-spacing: -.035em; }
+.metrics-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; margin-bottom: 26px; }
+.metrics-strip > .static-card { display: grid; grid-template-columns: 58px minmax(0, 1fr); align-items: center; gap: 17px; min-height: 122px; padding: 22px; border: 1px solid var(--border); border-left: 3px solid var(--card-accent, var(--brand-600)); border-radius: 16px; background: #fff; box-shadow: 0 8px 22px rgba(23, 32, 51, .045); }
+.metrics-strip > .static-card:nth-child(2) { --card-accent: #4e8cf7; }.metrics-strip > .static-card:nth-child(3) { --card-accent: #8b6feb; }.metrics-strip > .static-card:nth-child(4) { --card-accent: var(--warning); }
+.metrics-strip > .static-card::after { display: none; }.metrics-strip > .static-card > .el-icon { display: grid; width: 58px; height: 58px; place-items: center; border-radius: 17px; background: color-mix(in srgb, var(--card-accent, var(--brand-600)) 10%, white); color: var(--card-accent, var(--brand-600)); font-size: 27px; }
+.metrics-strip > .static-card > div { position: static; display: block; min-width: 0; overflow: visible; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; transform: none; transition: none; }
+.metrics-strip > .static-card > div::after { display: none; }.metrics-strip > .static-card span, .metrics-strip > .static-card strong, .metrics-strip > .static-card small { display: block; }.metrics-strip > .static-card span { color: var(--text-secondary); font-size: 12px; }.metrics-strip > .static-card strong { margin-top: 4px; font-size: 30px; line-height: 1; }.metrics-strip > .static-card small { margin-top: 8px; color: var(--text-tertiary); font-size: 11px; }
+.company-knowledge-panel { min-height: 162px; overflow: hidden; border-radius: 17px; background: linear-gradient(110deg, #fff 62%, #f3fbf9); }.company-knowledge-panel .section-title-row { padding: 22px 24px 12px; }.company-knowledge-list { padding: 0 24px 18px; }.company-knowledge-list article { min-height: 58px; padding-block: 11px; }
+.review-queue { margin-bottom: 20px; border-radius: 17px; }.review-queue .section-title-row { padding: 21px 24px 12px; }.review-cards { padding: 0 24px 12px; }.review-cards article { min-height: 146px; padding-block: 16px; }.review-steps { grid-template-columns: repeat(4, minmax(0, 1fr)); }.review-steps span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jobs-panel { overflow: hidden; border-radius: 17px; }.jobs-title { min-height: 96px; padding: 20px 24px; }.jobs-title h2 { font-size: 20px; }.filters { gap: 10px; }.filters .el-input { width: 308px; }.filters .el-select { width: 156px; }.filters .el-button { min-height: 40px; padding-inline: 18px; }
+.jobs-table :deep(.el-table__header-wrapper th) { height: 44px; background: #f8fafc; color: #4d5d68; font-size: 12px; }.jobs-table :deep(.el-table__row) { height: 78px; }.jobs-table :deep(.el-table__cell) { padding-top: 10px; padding-bottom: 10px; }.jobs-table :deep(.cell) { overflow: visible; }.jobs-table :deep(.el-table__row:hover > td) { background: #f7fbfa !important; }.jobs-table :deep(.el-table__body tr:last-child > td) { border-bottom: 0; }
+.job-identity strong { font-size: 14px; }.job-identity span, .jobs-table .muted { font-size: 11px; }.jobs-table :deep(.el-tag) { min-height: 24px; border-radius: 6px; font-size: 11px; }.job-actions { justify-content: flex-end; gap: 10px; }.job-actions .el-button { min-height: 28px; padding-inline: 6px; }
+@media (max-width: 1160px) { .metrics-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }.filters .el-input { width: min(280px, 28vw); } }
+@media (max-width: 760px) { .page-heading { margin-bottom: 22px; }.metrics-strip { gap: 12px; margin-bottom: 18px; }.metrics-strip > .static-card { min-height: 100px; padding: 17px; }.metrics-strip > .static-card > .el-icon { width: 44px; height: 44px; border-radius: 13px; font-size: 21px; }.filters { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 122px auto; }.filters .el-input, .filters .el-select { width: 100%; }.jobs-title { align-items: stretch; }.jobs-title > div:first-child { margin-bottom: 12px; } }
+@media (max-width: 520px) { .metrics-strip { grid-template-columns: 1fr; }.filters { grid-template-columns: 1fr; }.filters .el-button { width: 100%; }.company-knowledge-panel .section-title-row, .company-knowledge-list, .review-queue .section-title-row, .review-cards, .jobs-title { padding-inline: 16px; } }
+
+/* 公司介绍使用低对比度轮廓，仅作为空间层次，不承载信息或操作。 */
+.company-knowledge-panel { position: relative; isolation: isolate; }.company-knowledge-panel .section-title-row, .company-knowledge-panel .company-knowledge-list { position: relative; z-index: 1; }.company-ambient { position: absolute; right: 34px; bottom: 0; z-index: 0; display: flex; align-items: end; gap: 8px; height: 120px; opacity: .36; pointer-events: none; }.company-ambient i { display: block; width: 28px; height: 70px; border: 1px solid #9bddd0; border-bottom: 0; border-radius: 5px 5px 0 0; background: linear-gradient(90deg, rgba(135,220,203,.14) 0 24%, transparent 24% 36%, rgba(135,220,203,.14) 36% 60%, transparent 60% 72%, rgba(135,220,203,.14) 72%); }.company-ambient i:nth-child(2) { width: 38px; height: 104px; }.company-ambient i:nth-child(3) { width: 25px; height: 54px; }.company-ambient b { position: absolute; right: -34px; bottom: 0; width: 230px; height: 54px; border-radius: 100% 0 0; background: radial-gradient(ellipse at bottom, rgba(139,223,207,.3), transparent 68%); }.company-knowledge-list article { padding-right: 260px; }
+@media (max-width: 760px) { .company-ambient { right: 14px; transform: scale(.75); transform-origin: right bottom; }.company-knowledge-list article { padding-right: 160px; } }
+@media (max-width: 520px) { .company-ambient { display: none; }.company-knowledge-list article { padding-right: 0; } }
+
+/* 筛选区按可收缩网格布局，避免搜索框覆盖状态选择器。 */
+.jobs-title { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(0, 650px); align-items: center; gap: 22px; }.jobs-title > div:first-child { min-width: 0; }.filters { display: grid; grid-template-columns: minmax(0, 1fr) 156px auto; width: 100%; min-width: 0; }.filters .el-input, .filters .el-select { width: 100% !important; min-width: 0; }
+@media (max-width: 1120px) { .jobs-title { grid-template-columns: 1fr; }.filters { max-width: none; }.jobs-title > div:first-child { margin-bottom: 0; } }
+@media (max-width: 560px) { .filters { grid-template-columns: 1fr; }.filters .el-button { width: 100%; } }
+
+/* 单一岗位工作区：内部模块依靠分区标题和分隔线组织，不继续叠加卡片。 */
+.positions-workspace { padding: 0; overflow: hidden; }
+.positions-workspace > section {
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  border-radius: 0;
+  background: #fff;
+  box-shadow: none;
+}
+.positions-workspace > section:last-child { border-bottom: 0; }
+.positions-workspace .section-title-row { border-bottom: 1px solid var(--border-subtle); }
+.positions-workspace .filters { align-items: center; }
 </style>

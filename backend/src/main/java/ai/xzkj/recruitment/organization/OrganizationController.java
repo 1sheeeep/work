@@ -73,4 +73,11 @@ public class OrganizationController {
                                                    @Valid @RequestBody CompanyKnowledgeRequest request) {
         return service.updateCompanyKnowledge(id, request);
     }
+
+    @PutMapping("/companies/{id}/ai-auto-analysis")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN')")
+    public CompanyResponse configureAiAutoAnalysis(@PathVariable UUID id,
+                                                    @Valid @RequestBody CompanyAiAnalysisAuthorizationRequest request) {
+        return service.configureAiAutoAnalysis(id, request);
+    }
 }

@@ -38,6 +38,7 @@ record ResumeAnalysisResponse(
         String provider,
         String modelVersion,
         String status,
+        String origin,
         ResumeAnalysisResult result,
         String errorMessage,
         List<ResumeAnalysisFeedbackResponse> feedback,
@@ -53,8 +54,8 @@ record ResumeAnalysisResponse(
         return new ResumeAnalysisResponse(
                 run.getId(), intake.getId(), intake.getContact().getCandidate().getDisplayName(),
                 intake.getContact().getJobPosition().getTitle(), run.getProvider(), run.getModelVersion(),
-                run.getStatus(), result, run.getErrorMessage(), feedback.stream().map(ResumeAnalysisFeedbackResponse::from).toList(),
-                run.getCreatedBy().getDisplayName(), run.getCreatedAt(), run.getResultExpiresAt(), run.getResultPurgedAt()
+                run.getStatus(), run.getOrigin(), result, run.getErrorMessage(), feedback.stream().map(ResumeAnalysisFeedbackResponse::from).toList(),
+                run.getCreatedBy() == null ? "系统自动分析" : run.getCreatedBy().getDisplayName(), run.getCreatedAt(), run.getResultExpiresAt(), run.getResultPurgedAt()
         );
     }
 }
@@ -84,19 +85,51 @@ record ResumeAnalysisResult(
 
     static ResumeAnalysisResult parseExternal(String json, ObjectMapper mapper) {
         try {
-            return validate(mapper.readValue(json, ResumeAnalysisResult.class));
+            return validate(normalize(mapper.readValue(extractJsonObject(json), ResumeAnalysisResult.class)));
         } catch (RuntimeException exception) {
             throw new ApiException(HttpStatus.BAD_GATEWAY, "OPENAI_RESPONSE_INVALID", "OpenAI 返回的简历分析格式无效，未生成可用结论");
         }
     }
 
+    private static String extractJsonObject(String value) {
+        if (value == null) throw new IllegalArgumentException("Missing JSON response");
+        String clean = value.trim();
+        if (clean.startsWith("```")) {
+            int firstLineEnd = clean.indexOf('\n');
+            int closingFence = clean.lastIndexOf("```");
+            if (firstLineEnd >= 0 && closingFence > firstLineEnd) {
+                clean = clean.substring(firstLineEnd + 1, closingFence).trim();
+            }
+        }
+        int start = clean.indexOf('{');
+        int end = clean.lastIndexOf('}');
+        if (start < 0 || end < start) throw new IllegalArgumentException("Missing JSON object");
+        return clean.substring(start, end + 1);
+    }
+
     static ResumeAnalysisResult parseStored(String json, ObjectMapper mapper) {
         try {
-            return validate(mapper.readValue(json, ResumeAnalysisResult.class));
+            return validate(normalize(mapper.readValue(json, ResumeAnalysisResult.class)));
         } catch (RuntimeException exception) {
             throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "RESUME_ANALYSIS_RECORD_INVALID", "已保存的简历分析记录无法读取");
         }
     }
+
+    private static ResumeAnalysisResult normalize(ResumeAnalysisResult value) {
+        if (value == null) return null;
+        List<ResumeAnalysisEvidence> evidence = value.evidence() == null ? null : value.evidence().stream()
+                .filter(item -> item != null && meaningful(item.criterion()) && meaningful(item.finding()))
+                .map(item -> new ResumeAnalysisEvidence(item.criterion().trim(), item.finding().trim(), item.status()))
+                .toList();
+        return new ResumeAnalysisResult(value.recommendation(), trim(value.summary()), evidence,
+                cleanTextList(value.gaps()), cleanTextList(value.risks()), cleanTextList(value.followUpQuestions()));
+    }
+
+    private static List<String> cleanTextList(List<String> values) {
+        return values == null ? null : values.stream().filter(ResumeAnalysisResult::meaningful).map(String::trim).toList();
+    }
+
+    private static String trim(String value) { return value == null ? null : value.trim(); }
 
     private static ResumeAnalysisResult validate(ResumeAnalysisResult value) {
         if (value == null || !RECOMMENDATIONS.contains(value.recommendation()) || !usable(value.summary(), 1200)
@@ -115,7 +148,11 @@ record ResumeAnalysisResult(
     }
 
     private static boolean usable(String value, int maxLength) {
-        return value != null && !value.isBlank() && value.length() <= maxLength;
+        return meaningful(value) && value.length() <= maxLength;
+    }
+
+    private static boolean meaningful(String value) {
+        return value != null && !value.isBlank() && value.codePoints().anyMatch(Character::isLetterOrDigit);
     }
 }
 

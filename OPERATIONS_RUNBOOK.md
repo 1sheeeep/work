@@ -6,7 +6,8 @@
 2. 从 `secrets/*.example` 创建无 `.example` 后缀的数据库和管理员密码文件，权限设为 `0600`；这些文件已被 Git 忽略，禁止把真实值写入 Git。
 3. 域名 A/AAAA 记录指向主机，防火墙仅开放 80/443 和受控管理入口。
 4. 执行 `docker compose -f compose.production.yaml --env-file .env.production config`，检查结果中无明文密码。
-5. 执行 `scripts/release-check.sh` 和全量 Playwright，再创建数据库备份。
+5. 执行 `scripts/release-check.sh` 和收敛后的 Playwright E2E，确认四个日常入口、系统管理员日志入口及旧 URL 重定向均正常，再创建数据库备份。
+6. 测试和预发布必须确认 `APP_BROWSER_MONITOR_ONLY=true`。未完成真实页面逐动作验收、双人生产批准和低配额试运行前，不得建立或开启后台自动发送执行器。
 
 ## 发布
 
@@ -29,7 +30,7 @@ Caddy 自动申请和续期 TLS 证书；应用 Session Cookie 在生产配置�
 - 安全看门狗默认每 30 秒执行；可用 `APP_BROWSER_SAFETY_WATCHDOG_INTERVAL` 调整扫描周期，用 `APP_BROWSER_HEARTBEAT_TIMEOUT` 调整离线阈值。不建议将心跳阈值设为少于 2 分钟。
 - 指标 `recruitment_browser_safety_total{event="device_offline|send_lease_expired|fill_lease_expired"}` 增长时需核对对应账号；租约过期不得手工改回 READY/CLAIMED，应由 HR 核对真实页面后重新建立任务。
 - 管理员可访问 `/api/operations/gateways` 查看各 Gateway 操作的连续失败数和断路截止时间。
-- 管理员运行保障页显示 Flyway、审计只追加和 Gateway 保护状态；浏览器设备心跳与停机原因在“自动跟进”页查看。
+- 系统管理员统一在“项目运行日志”查看关键运行状态与操作记录；账号的最近心跳、最后成功同步、暂停原因和恢复后重采证据在“招聘账号”查看。旧“运行保障”、“自动跟进”和独立操作日志页面不再可达。
 
 ## 备份与恢复
 
@@ -61,3 +62,9 @@ scripts/restore-drill.sh
 - BOSS Gateway 或浏览器伴随端超时、限流或断路时，自动回复必须失败关闭，保留失败状态供人工检查和后续幂等重试。
 - 不得将 Cookie、Token、密码、候选人消息正文写入审计或普通日志。
 - 新账号必须依次通过“DOM 适配与只监测”、“仅草稿”和“单账号小配额试发”，确认页面识别、发送限额、人工接管和紧急停止流程后才可开启自动发送。任何验证码、风险提示、登录异常、平台告警或投诉都应立即关闭该账号策略，不允许使用规避风控手段。
+
+## 收敛页面的运行核对
+
+- HR 首次开启挂机时，如某个已连接账号尚无策略，系统只允许建立安全默认策略（固定收悉模板、待审核草稿、自动发送关闭）。开启后应在项目运行日志中看到策略创建或值守变更记录。
+- 公司统一回复资料和岗位工作内容只在“岗位资料”办理；公司级 AI 自动分析授权和 BOSS 简历异常恢复只在“简历分析”办理。不要尝试通过旧 URL 找回已删页面。
+- “今日值守”中的岗位关联只能在严格标题匹配失败的未读详情中出现。候选项为空时，应先在岗位页完善同账号真实岗位，不得跨账号关联或手工伪造岗位。

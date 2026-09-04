@@ -9,9 +9,10 @@ export function validateClaimEnvelope(value) {
   return Object.freeze({ ...value, executorAvailable: false });
 }
 
-export function buildReceipt(leaseToken, outcome, receiptDigest, reason) {
-  if (!leaseToken || !OUTCOMES.has(outcome) || !DIGEST.test(receiptDigest ?? '')) throw new Error('动作回执无效。');
+export function buildReceipt(leaseToken, outcome, beforeStateDigest, afterStateDigest, receiptDigest, reason) {
+  if (!leaseToken || !OUTCOMES.has(outcome) || !DIGEST.test(beforeStateDigest ?? '') || !DIGEST.test(afterStateDigest ?? '') || !DIGEST.test(receiptDigest ?? '')) throw new Error('动作回执无效。');
+  if (outcome === 'SUCCEEDED' && beforeStateDigest === afterStateDigest) throw new Error('成功动作缺少页面变化证据。');
   const cleanReason = String(reason ?? '').trim();
   if (!cleanReason || cleanReason.length > 300) throw new Error('动作回执说明无效。');
-  return Object.freeze({ leaseToken, outcome, receiptDigest, reason: cleanReason });
+  return Object.freeze({ leaseToken, outcome, beforeStateDigest, afterStateDigest, receiptDigest, reason: cleanReason });
 }

@@ -79,4 +79,32 @@ class AutoReplyMonitorOnlyTest {
         assertThat(response.messageSendCapable()).isFalse();
         assertThat(response.autoSendEnabled()).isFalse();
     }
+
+    @Test
+    void createsSafeDefaultsWhenAnExistingAccountStartsDutyForTheFirstTime() {
+        AutoReplyPolicyRepository policies = mock(AutoReplyPolicyRepository.class);
+        BossAccountRepository accounts = mock(BossAccountRepository.class);
+        CurrentUserService users = mock(CurrentUserService.class);
+        GroupProfile group = new GroupProfile("测试集团", "测试");
+        Company company = new Company(group, "测试企业", "TEST", null, null);
+        BossAccount account = new BossAccount(company, "测试账号", "test-account");
+        account.applyCapabilityCheck(BossConnectionStatus.CONNECTED, Set.of(BossCapability.CANDIDATE_READ, BossCapability.JOB_SYNC));
+        SystemUser admin = new SystemUser("admin", "hash", "管理员", UserRole.RECRUITMENT_ADMIN);
+        admin.assignCompanyScopes(Set.of(company));
+        when(users.requireCurrentUser()).thenReturn(admin);
+        when(accounts.findWithDetailsById(account.getId())).thenReturn(Optional.of(account));
+        when(policies.findByBossAccountId(account.getId())).thenReturn(Optional.empty());
+        when(policies.save(any(AutoReplyPolicy.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        AutoReplyService service = new AutoReplyService(policies, mock(AutoReplyAttemptRepository.class), accounts,
+                mock(ConversationMessageRepository.class), users, mock(BossGateway.class), mock(AuditService.class), true);
+        AutoReplyResponse response = service.changeAwayMode(account.getId(),
+                new AwayModeRequest(AwayMode.TEMPORARY, Instant.now().plusSeconds(3600)));
+
+        assertThat(response.configured()).isTrue();
+        assertThat(response.awayActive()).isTrue();
+        assertThat(response.autoSendEnabled()).isFalse();
+        assertThat(response.responseTimeoutMinutes()).isEqualTo(120);
+        assertThat(response.dailyLimit()).isEqualTo(20);
+    }
 }

@@ -2,6 +2,7 @@ export const DEFAULT_BACKEND_URL = 'http://localhost:8088';
 export const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 export const MAX_CONVERSATIONS = 200;
 export const MAX_JOBS = 200;
+export const MAX_CONTROL_DIAGNOSTICS = 120;
 
 export function validateBackendUrl(value) {
   let url;
@@ -24,6 +25,24 @@ export function isJobManagementUrl(value) {
     const path = new URL(value).pathname.toLowerCase();
     return /^\/web\/chat\/job\/list\/?$/.test(path) || (/(?:job|position)/.test(path) && !/^\/web\/chat\/(?:index|user-center)\/?$/.test(path));
   } catch { return false; }
+}
+
+export function pageContextFromUrl(value) {
+  try {
+    const url = new URL(value);
+    if (!/(^|\.)zhipin\.com$/i.test(url.hostname)) return 'NO_BOSS_PAGE';
+    const path = url.pathname.toLowerCase();
+    if (/^\/web\/chat\/(?:index|user-center)\/?$/.test(path)) return 'CHAT';
+    if (/^\/web\/chat\/job\/list\/?$/.test(path)) return 'JOB_LIST';
+    if (/(?:\/job\/(?:edit|detail)|\/position\/detail)/.test(path)) return 'JOB_DETAIL';
+    return 'OTHER_BOSS';
+  } catch { return 'NO_BOSS_PAGE'; }
+}
+
+export function consolePathForContext(context) {
+  if (context === 'CHAT') return '/dashboard';
+  if (context === 'JOB_LIST' || context === 'JOB_DETAIL') return '/job-positions';
+  return '/boss-accounts';
 }
 
 export function validateSnapshot(payload) {
@@ -69,6 +88,88 @@ export function validateValidationReadiness(payload) {
   if (!DIGEST_PATTERN.test(payload.chatDigest || '') || !DIGEST_PATTERN.test(payload.controlDigest || '')) throw new Error('页面验收摘要无效。');
   if (payload.selectedConversationVerified !== true || payload.hasRiskOrVerification !== false) throw new Error('当前会话或页面安全状态未通过。');
   if (!Number.isInteger(payload.stableCycles) || payload.stableCycles < 3 || payload.stableCycles > 20) throw new Error('稳定检查次数无效。');
+  return payload;
+}
+
+export function validateDraftFillResult(payload) {
+  if (!payload || payload.actionType !== 'DRAFT_FILL_TEST') throw new Error('草稿测试结果类型无效。');
+  for (const key of ['chatDigest', 'controlDigest', 'draftDigest']) {
+    if (!DIGEST_PATTERN.test(payload[key] || '')) throw new Error('草稿测试摘要无效。');
+  }
+  if (!Number.isInteger(payload.filledLength) || payload.filledLength < 1 || payload.filledLength > 120) throw new Error('草稿测试长度无效。');
+  if (payload.selectedUnread !== false) throw new Error('草稿测试只允许已读会话。');
+  if (!Number.isInteger(payload.stableCycles) || payload.stableCycles < 2 || payload.stableCycles > 10) throw new Error('草稿测试稳定检查次数无效。');
+  if (payload.sendTriggered !== false) throw new Error('草稿测试禁止触发发送。');
+  return payload;
+}
+
+export function validateApprovedDraftFillContext(payload) {
+  if (!payload || payload.actionType !== 'APPROVED_DRAFT_FILL') throw new Error('已审核草稿填入上下文无效。');
+  if (!DIGEST_PATTERN.test(payload.chatDigest || '') || !DIGEST_PATTERN.test(payload.controlDigest || '')) throw new Error('已审核草稿填入摘要无效。');
+  if (payload.latestDirection !== 'INBOUND' || payload.editorEmpty !== true) throw new Error('当前会话不满足已审核草稿填入条件。');
+  if (!Number.isInteger(payload.stableCycles) || payload.stableCycles < 2 || payload.stableCycles > 10) throw new Error('已审核草稿填入稳定次数无效。');
+  return payload;
+}
+
+export function validateApprovedDraftFillResult(payload) {
+  if (!payload || payload.actionType !== 'APPROVED_DRAFT_FILL' || payload.outcome !== 'FILLED') throw new Error('已审核草稿填入结果无效。');
+  for (const key of ['chatDigest', 'controlDigest', 'draftDigest', 'beforeStateDigest', 'afterStateDigest', 'receiptDigest']) {
+    if (!DIGEST_PATTERN.test(payload[key] || '')) throw new Error('已审核草稿填入回执摘要无效。');
+  }
+  if (payload.beforeStateDigest === payload.afterStateDigest) throw new Error('已审核草稿填入没有可验证的状态变化。');
+  if (payload.sendTriggered !== false) throw new Error('已审核草稿填入禁止触发发送。');
+  return payload;
+}
+
+export function validateCurrentTestDraftSendResult(payload) {
+  if (!payload || payload.actionType !== 'CURRENT_TEST_DRAFT_SEND' || !['SUCCEEDED', 'UNKNOWN'].includes(payload.outcome)) throw new Error('当前会话发送测试结果无效。');
+  for (const key of ['chatDigest', 'controlDigest', 'draftDigest', 'beforeStateDigest', 'afterStateDigest']) {
+    if (!DIGEST_PATTERN.test(payload[key] || '')) throw new Error('当前会话发送测试摘要无效。');
+  }
+  if (payload.clickTriggered !== true || payload.retryTriggered !== false) throw new Error('发送测试必须且只能触发一次。');
+  if (payload.outcome === 'SUCCEEDED' && payload.beforeStateDigest === payload.afterStateDigest) throw new Error('发送成功缺少可核对的页面状态变化。');
+  return payload;
+}
+
+export function validateCurrentActionEntryTestResult(payload) {
+  if (!payload || payload.actionType !== 'CURRENT_ACTION_ENTRY_TEST' || !['REQUEST_RESUME', 'EXCHANGE_PHONE', 'EXCHANGE_WECHAT', 'INTERVIEW'].includes(payload.action)) throw new Error('当前会话操作入口测试类型无效。');
+  if (!['DIALOG_OPENED', 'STATE_CHANGED', 'UNKNOWN'].includes(payload.outcome)) throw new Error('当前会话操作入口测试结果无效。');
+  for (const key of ['chatDigest', 'controlDigest', 'beforeStateDigest', 'afterStateDigest']) if (!DIGEST_PATTERN.test(payload[key] || '')) throw new Error('当前会话操作入口测试摘要无效。');
+  if (payload.clickTriggered !== true || payload.retryTriggered !== false) throw new Error('操作入口测试必须且只能触发一次。');
+  return payload;
+}
+
+export function validateExchangeConfirmationTestResult(payload) {
+  if (!payload || payload.actionType !== 'CURRENT_EXCHANGE_CONFIRMATION_TEST' || !['EXCHANGE_PHONE', 'EXCHANGE_WECHAT'].includes(payload.action)) throw new Error('联系方式二级确认测试类型无效。');
+  if (!['STATE_CHANGED', 'UNKNOWN'].includes(payload.outcome)) throw new Error('联系方式二级确认测试结果无效。');
+  for (const key of ['chatDigest', 'controlDigest', 'beforeStateDigest', 'afterStateDigest']) if (!DIGEST_PATTERN.test(payload[key] || '')) throw new Error('联系方式二级确认测试摘要无效。');
+  if (payload.clickTriggered !== true || payload.retryTriggered !== false) throw new Error('联系方式二级确认测试必须且只能触发一次。');
+  return payload;
+}
+
+export function validateControlDomDiagnostic(payload) {
+  if (!payload || payload.actionType !== 'CURRENT_CONTROL_DOM_DIAGNOSTIC' || payload.pageState !== 'CHAT_PAGE_READY') throw new Error('功能键 DOM 诊断类型无效。');
+  const allowedPayloadKeys = new Set(['actionType', 'pageState', 'chatDigest', 'observedAt', 'rawContentIncluded', 'truncated', 'editor', 'controls', 'reportDigest']);
+  if (Object.keys(payload).some((key) => !allowedPayloadKeys.has(key))) throw new Error('功能键 DOM 诊断包含未允许字段。');
+  if (!DIGEST_PATTERN.test(payload.chatDigest || '') || !DIGEST_PATTERN.test(payload.reportDigest || '')) throw new Error('功能键 DOM 诊断摘要无效。');
+  if (!Number.isFinite(Date.parse(payload.observedAt)) || payload.rawContentIncluded !== false) throw new Error('功能键 DOM 诊断安全标记无效。');
+  if (!payload.editor || !Array.isArray(payload.controls) || payload.controls.length > MAX_CONTROL_DIAGNOSTICS) throw new Error('功能键 DOM 诊断数量无效。');
+  const allowedKeys = new Set(['fingerprint', 'tag', 'classes', 'role', 'type', 'ariaLabel', 'title', 'tabIndex', 'disabled', 'visible', 'width', 'height', 'cursor', 'knownAction', 'ownerAction', 'interviewField', 'selected', 'labelDigest', 'dataAttributeNames', 'icon', 'ancestors']);
+  for (const control of [payload.editor, ...payload.controls]) {
+    if (!control || Object.keys(control).some((key) => !allowedKeys.has(key))) throw new Error('功能键 DOM 诊断包含未允许字段。');
+    if (!DIGEST_PATTERN.test(control.fingerprint || '') || !/^[A-Z][A-Z0-9-]{0,24}$/.test(control.tag || '')) throw new Error('功能键 DOM 控件摘要无效。');
+    if (!Array.isArray(control.classes) || control.classes.length > 12 || control.classes.some((item) => typeof item !== 'string' || item.length > 80)) throw new Error('功能键 DOM 类名无效。');
+    if (!Array.isArray(control.dataAttributeNames) || control.dataAttributeNames.length > 20 || control.dataAttributeNames.some((item) => !/^data-[a-z0-9_-]{1,60}$/i.test(item))) throw new Error('功能键 DOM 数据属性名无效。');
+    if (!Array.isArray(control.ancestors) || control.ancestors.length > 4 || control.ancestors.some((item) => typeof item !== 'string' || item.length > 240)) throw new Error('功能键 DOM 父级路径无效。');
+    for (const key of ['role', 'type', 'ariaLabel', 'title', 'cursor', 'icon']) if (control[key] !== null && control[key] !== undefined && (typeof control[key] !== 'string' || control[key].length > 160)) throw new Error('功能键 DOM 属性无效。');
+    for (const key of ['width', 'height']) if (!Number.isInteger(control[key]) || control[key] < 0 || control[key] > 10000) throw new Error('功能键 DOM 尺寸无效。');
+    if (!Number.isInteger(control.tabIndex) || typeof control.disabled !== 'boolean' || typeof control.visible !== 'boolean') throw new Error('功能键 DOM 状态无效。');
+    if (control.knownAction !== null && control.knownAction !== undefined && !['发送', '求简历', '接收简历', '换电话', '换微信', '约面试', '不合适', '确认', '确定', '取消', '暂不'].includes(control.knownAction)) throw new Error('功能键 DOM 操作标签无效。');
+    if (control.ownerAction !== null && control.ownerAction !== undefined && !['求简历', '换电话', '换微信', '约面试'].includes(control.ownerAction)) throw new Error('功能键 DOM 所属操作无效。');
+    if (control.interviewField !== null && control.interviewField !== undefined && !['JOB', 'ADDRESS', 'NOTE', 'DATE', 'TIME', 'MODE_OPTION', 'CONTACT', 'CANCEL', 'SEND'].includes(control.interviewField)) throw new Error('面试弹窗字段分类无效。');
+    if (control.selected !== null && control.selected !== undefined && typeof control.selected !== 'boolean') throw new Error('面试弹窗选择状态无效。');
+    if (control.labelDigest !== null && control.labelDigest !== undefined && !DIGEST_PATTERN.test(control.labelDigest)) throw new Error('功能键 DOM 文字摘要无效。');
+  }
   return payload;
 }
 
@@ -124,5 +225,32 @@ export function publicStatus(settings, runtime) {
     lastJobSyncAt: runtime?.lastJobSyncAt || null,
     readinessState: runtime?.readinessState || '尚未检查当前会话的回复入口。',
     lastReadinessAt: runtime?.lastReadinessAt || null,
+    draftTestState: runtime?.draftTestState || '尚未执行已读会话草稿写入测试。',
+    lastDraftTestAt: runtime?.lastDraftTestAt || null,
+    approvedDraftFillState: runtime?.approvedDraftFillState || '尚未填入后台已审核安全草稿。',
+    lastApprovedDraftFillAt: runtime?.lastApprovedDraftFillAt || null,
+    sendTestState: runtime?.sendTestState || '尚未执行当前会话单次发送测试。',
+    lastSendTestAt: runtime?.lastSendTestAt || null,
+    sendTestLocked: runtime?.sendTestLocked === true,
+    sendTestPrepared: /^[a-f0-9]{64}$/.test(runtime?.sendTestPreparedChatDigest || ''),
+    autoReplyTestArmed: runtime?.autoReplyTestArmed === true,
+    autoReplyTestState: runtime?.autoReplyTestState || '尚未开启当前会话新消息触发测试。',
+    autoReplyTestOutcome: runtime?.autoReplyTestOutcome || 'NOT_RUN',
+    autoReplyTestReason: runtime?.autoReplyTestReason || '尚未执行触发测试。',
+    autoReplyTestExpiresAt: runtime?.autoReplyTestExpiresAt || null,
+    lastAutoReplyTestAt: runtime?.lastAutoReplyTestAt || null,
+    autoReplyTestLastCheckedAt: runtime?.autoReplyTestLastCheckedAt || null,
+    autoReplyDiagnosticState: runtime?.autoReplyDiagnosticState || '尚未执行当前触发条件诊断。',
+    lastAutoReplyDiagnosticAt: runtime?.lastAutoReplyDiagnosticAt || null,
+    controlDiagnosticState: runtime?.controlDiagnosticState || '尚未识别当前会话功能键 DOM。',
+    lastControlDiagnosticAt: runtime?.lastControlDiagnosticAt || null,
+    controlDiagnostic: runtime?.controlDiagnostic || null,
+    actionTestState: runtime?.actionTestState || '尚未执行求简历或联系方式入口测试。',
+    lastActionTestAt: runtime?.lastActionTestAt || null,
+    actionTestLocks: runtime?.actionTestLocks || {},
+    exchangeConfirmState: runtime?.exchangeConfirmState || '尚未执行联系方式二级确定测试。',
+    lastExchangeConfirmAt: runtime?.lastExchangeConfirmAt || null,
+    exchangeConfirmLocks: runtime?.exchangeConfirmLocks || {},
+    pageContext: runtime?.pageContext || 'NO_BOSS_PAGE',
   };
 }

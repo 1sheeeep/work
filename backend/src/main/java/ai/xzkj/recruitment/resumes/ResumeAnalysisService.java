@@ -95,11 +95,13 @@ public class ResumeAnalysisService {
 
     private ResumeAnalysisResponse analyzeText(ResumeIntake intake, SystemUser user, String resumeText, String source) {
         String inputHash = hash(resumeText);
+        intake.analysisStarted();
         try {
             ResumeAnalysisResult result = client.analyze(intake.getContact().getJobPosition(), resumeText, actorHash(user));
             AiAssistanceRun run = runs.save(AiAssistanceRun.succeeded(
                     intake, user, properties.getModel(), inputHash, result.summary(), mapper.writeValueAsString(result), retention.expiresFrom(Instant.now())
             ));
+            intake.analysisSucceeded(Instant.now());
             audit.success("REQUEST_OPENAI_RESUME_ANALYSIS", "RESUME_INTAKE", intake.getId(), intake.getDisplayLabel(),
                     "HR 已确认外部 OpenAI 分析（" + source + "）；仅保存输入摘要和结构化结果，不保存简历原文");
             return response(run);
@@ -140,6 +142,7 @@ public class ResumeAnalysisService {
 
     private void recordFailure(ResumeIntake intake, SystemUser user, String inputHash, String code) {
         runs.save(AiAssistanceRun.failed(intake, user, properties.getModel(), inputHash, code));
+        intake.analysisUnavailable("FAILED", code, "OpenAI 分析未完成，请检查配置或稍后重试", Instant.now());
         audit.failure("REQUEST_OPENAI_RESUME_ANALYSIS", "RESUME_INTAKE", intake.getId(), intake.getDisplayLabel(),
                 "OpenAI 简历分析未完成，原因代码：" + code + "；简历原文未写入审计");
     }

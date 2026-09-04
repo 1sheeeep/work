@@ -3,7 +3,7 @@ import { api } from '../services/api'
 import JobPositionsView from './JobPositionsView.vue'
 
 vi.mock('../services/api', () => ({
-  api: { get: vi.fn() },
+  api: { get: vi.fn(), post: vi.fn(), put: vi.fn(), patch: vi.fn() },
   apiErrorMessage: (_error: unknown, fallback: string) => fallback,
   apiFieldErrors: () => ({}),
   ensureCsrf: vi.fn(),
@@ -11,21 +11,19 @@ vi.mock('../services/api', () => ({
 vi.mock('../stores/auth', () => ({
   authStore: { state: { user: { id: 'admin', username: 'admin', displayName: '系统管理员', role: 'SYSTEM_ADMIN' } } },
 }))
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
 
 describe('JobPositionsView', () => {
   beforeEach(() => vi.mocked(api.get).mockReset())
 
   it('uses BOSS synchronization as the only visible job intake', async () => {
-    vi.mocked(api.get)
-      .mockResolvedValueOnce({ data: [] })
-      .mockResolvedValueOnce({ data: [] })
+    vi.mocked(api.get).mockResolvedValueOnce({ data: [] })
       .mockResolvedValueOnce({ data: [] })
     const wrapper = mount(JobPositionsView, { attachTo: document.body })
     await flushPromises()
 
-    expect(wrapper.text()).toContain('BOSS 职位管理页同步')
-    expect(wrapper.text()).toContain('请在 BOSS 职位管理页使用只读桥接同步真实职位')
+    expect(wrapper.text()).toContain('岗位资料')
+    expect(wrapper.text()).toContain('真实岗位同步后会显示在这里')
+    expect(wrapper.text()).not.toContain('BOSS 职位管理页同步')
     expect(wrapper.text()).not.toContain('新增职位')
     expect(wrapper.text()).not.toContain('筛选要求')
     expect(wrapper.text()).not.toContain('月薪下限')
@@ -45,13 +43,12 @@ describe('JobPositionsView', () => {
         reviewReadiness: { importedDraft: true, profileComplete: false, captureReady: false, companyKnowledgeReady: false, jobKnowledgeReady: false, activationReady: false, blockers: ['岗位详情待补全', '企业回复知识待审核'] },
       }] })
       .mockResolvedValueOnce({ data: [] })
-      .mockResolvedValueOnce({ data: [] })
     const wrapper = mount(JobPositionsView)
     await flushPromises()
 
     expect(wrapper.text()).not.toContain('跨境电商运营助理')
     expect(wrapper.text()).not.toContain('在未读列表出现 8 次')
-    expect(wrapper.text()).toContain('请在 BOSS 职位管理页使用只读桥接同步真实职位')
+    expect(wrapper.text()).toContain('真实岗位同步后会显示在这里')
     wrapper.unmount()
   })
 
@@ -69,12 +66,17 @@ describe('JobPositionsView', () => {
         bossAccount: { id: 'account-1', displayName: 'BOSS 主招聘账号', externalIdentifier: 'boss-main-01', status: 'ACTIVE', connectionStatus: 'CONNECTED' },
         reviewReadiness: { importedDraft: true, profileComplete: false, captureReady: false, companyKnowledgeReady: true, jobKnowledgeReady: false, activationReady: false, blockers: ['职位描述待补全'] },
       }] })
-      .mockResolvedValueOnce({ data: [] })
-      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [{
+        id: 'company-1', name: '新知科技集团', code: 'XINZHI', status: 'ACTIVE',
+        knowledgeIndustry: '互联网', knowledgeSummary: '公司介绍', knowledgeApproved: true,
+        knowledgeVersion: 1, aiAutoAnalysisEnabled: false, version: 1,
+      }] })
     const wrapper = mount(JobPositionsView, { attachTo: document.body })
     await flushPromises()
 
     expect(wrapper.text()).toContain('BOSS 职位页已同步 · 5 个公开字段')
+    expect(wrapper.text()).toContain('公司介绍')
+    expect(wrapper.text()).toContain('已审核 v1')
     expect(wrapper.text()).not.toContain('在未读列表出现 129 次')
     await wrapper.findAll('button').find((button) => button.text().includes('补全、审核并启用'))?.trigger('click')
     await flushPromises()
@@ -85,6 +87,8 @@ describe('JobPositionsView', () => {
     for (const obsoleteField of ['筛选要求', '月薪下限', '月薪上限', '薪数', '岗位简介']) {
       expect(pageText).not.toContain(obsoleteField)
     }
+    expect(pageText).toContain('回复内容')
+    expect(pageText).toContain('岗位工作内容')
     wrapper.unmount()
   })
 })

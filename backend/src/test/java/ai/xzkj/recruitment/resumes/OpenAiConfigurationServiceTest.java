@@ -44,7 +44,7 @@ class OpenAiConfigurationServiceTest {
         assertThat(response.success()).isTrue();
         assertThat(response.requestId()).isEqualTo("req-safe-id");
         assertThat(response.message()).contains("Structured Outputs");
-        verify(audit).success(eq("TEST_OPENAI_CONNECTION"), eq("AI_CONFIGURATION"), isNull(), eq("OpenAI"),
+        verify(audit).success(eq("TEST_OPENAI_CONNECTION"), eq("AI_CONFIGURATION"), isNull(), eq("AI服务"),
                 contains("未发送候选人或简历数据"));
     }
 }

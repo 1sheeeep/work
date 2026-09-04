@@ -72,6 +72,8 @@ app:
     login-max-failures: ${APP_LOGIN_MAX_FAILURES:5}
     login-window: ${APP_LOGIN_WINDOW:15m}
     login-block-duration: ${APP_LOGIN_BLOCK_DURATION:15m}
+    remember-me-duration: ${APP_REMEMBER_ME_DURATION:7d}
+    remember-me-secure-cookie: ${APP_SECURE_COOKIE:false}
   bootstrap:
     admin-username: ${APP_BOOTSTRAP_ADMIN_USERNAME:}
     admin-password: ${APP_BOOTSTRAP_ADMIN_PASSWORD:}

@@ -122,6 +122,24 @@ public class OrganizationService {
         return CompanyResponse.from(company);
     }
 
+    @Transactional
+    public CompanyResponse configureAiAutoAnalysis(UUID id, CompanyAiAnalysisAuthorizationRequest request) {
+        Company company = requireCompany(id);
+        var user = currentUserService.requireCurrentUser();
+        if (request.enabled() && (!request.resumeProcessingAuthorized() || !request.candidateNoticeConfirmed()
+                || !request.retentionPolicyConfirmed())) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "AI_AUTO_ANALYSIS_CONFIRMATIONS_REQUIRED",
+                    "开启自动分析前必须确认简历处理权限、候选人告知和数据保留策略");
+        }
+        company.configureAiAutoAnalysis(request.enabled(), user);
+        auditService.success(request.enabled() ? "ENABLE_COMPANY_AI_AUTO_ANALYSIS" : "DISABLE_COMPANY_AI_AUTO_ANALYSIS",
+                "COMPANY", company.getId(), company.getName(),
+                request.enabled()
+                        ? "公司级简历自动分析已授权；正文仅在提取到 OpenAI 请求的同一内存链路中处理"
+                        : "公司级简历自动分析已关闭；新收到简历不再自动提交外部 AI");
+        return CompanyResponse.from(company);
+    }
+
     private GroupProfile requireGroup() {
         return groupRepository.findAll().stream().findFirst()
                 .orElseThrow(() -> new ApiException(

@@ -16,9 +16,9 @@ async function loadCurrentUser(): Promise<AuthenticatedUser | null> {
   return loadPromise
 }
 
-async function login(username: string, password: string): Promise<AuthenticatedUser> {
+async function login(username: string, password: string, rememberMe = false): Promise<AuthenticatedUser> {
   await ensureCsrf()
-  const { data } = await api.post<AuthenticatedUser>('/auth/login', { username, password })
+  const { data } = await api.post<AuthenticatedUser>('/auth/login', { username, password, rememberMe })
   state.user = data
   state.initialized = true
   return data

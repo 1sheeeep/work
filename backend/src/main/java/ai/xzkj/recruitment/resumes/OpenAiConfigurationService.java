@@ -28,7 +28,7 @@ public class OpenAiConfigurationService {
         if (!properties.isEnabled()) missing.add("APP_OPENAI_ENABLED");
         if (properties.getApiKey().isBlank()) missing.add("OPENAI_API_KEY");
         if (properties.getModel().isBlank()) missing.add("OPENAI_MODEL");
-        if (!properties.isOfficialEndpoint()) missing.add("OPENAI_BASE_URL（必须为 OpenAI 官方 HTTPS 地址）");
+        if (!properties.isOfficialEndpoint()) missing.add("OPENAI_BASE_URL（必须为 OpenAI 或阿里云百炼 HTTPS 地址）");
         boolean ready = missing.isEmpty();
         return new OpenAiConfigurationStatusResponse(
                 properties.isEnabled(), !properties.getApiKey().isBlank(), !properties.getModel().isBlank(),
@@ -42,14 +42,14 @@ public class OpenAiConfigurationService {
     public OpenAiConnectionTestResponse testConnection() {
         try {
             OpenAiResumeClient.ConnectionCheck result = client.testConnection();
-            audit.success("TEST_OPENAI_CONNECTION", "AI_CONFIGURATION", null, "OpenAI",
-                    "OpenAI 服务端连通测试成功；模型 " + result.model() + "；请求 ID " + result.requestId()
+            audit.success("TEST_OPENAI_CONNECTION", "AI_CONFIGURATION", null, "AI服务",
+                    "AI 服务端连通测试成功；模型 " + result.model() + "；请求 ID " + result.requestId()
                             + "；未发送候选人或简历数据");
             return new OpenAiConnectionTestResponse(true, result.model(), result.requestId(),
-                    result.elapsedMilliseconds(), result.checkedAt(), "OpenAI 已连接，Structured Outputs 测试通过");
+                    result.elapsedMilliseconds(), result.checkedAt(), "AI服务已连接，Structured Outputs 测试通过");
         } catch (ApiException exception) {
-            audit.failure("TEST_OPENAI_CONNECTION", "AI_CONFIGURATION", null, "OpenAI",
-                    "OpenAI 服务端连通测试失败；原因代码 " + exception.getCode() + "；未发送候选人或简历数据");
+            audit.failure("TEST_OPENAI_CONNECTION", "AI_CONFIGURATION", null, "AI服务",
+                    "AI 服务端连通测试失败；原因代码 " + exception.getCode() + "；未发送候选人或简历数据");
             throw exception;
         }
     }

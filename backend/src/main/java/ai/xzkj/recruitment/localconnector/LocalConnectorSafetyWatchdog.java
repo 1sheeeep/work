@@ -43,9 +43,15 @@ public class LocalConnectorSafetyWatchdog {
         Instant now=clock.instant(),cutoff=now.minus(heartbeatTimeout);
         for(BrowserDevice device:devices.findAllByOrderByCreatedAtDesc()){
             Instant heartbeat=device.getLastHeartbeatAt();
-            if("ACTIVE".equals(device.getStatus())&&heartbeat!=null&&!heartbeat.isAfter(cutoff)&&device.markOffline(HEARTBEAT_TIMEOUT_REASON)){
+            if("ACTIVE".equals(device.getStatus())&&heartbeat!=null&&!heartbeat.isAfter(cutoff)&&device.markOffline(HEARTBEAT_TIMEOUT_REASON,now)){
                 meters.counter("recruitment.browser.safety","event","device_offline").increment();
                 audit.systemSuccess("BROWSER_DEVICE_OFFLINE","BROWSER_DEVICE",device.getId(),device.getDisplayName(),"心跳超时，仅停止当前账号浏览器任务");
+            }
+        }
+        for(BrowserUnreadObservation observation:observations.findByDraftFillStatusAndDraftFillExpiresAtBefore("CLAIMED",now)){
+            if(observation.expireDraftFill(now)){
+                meters.counter("recruitment.browser.safety","event","draft_fill_expired").increment();
+                audit.systemSuccess("APPROVED_DRAFT_FILL_EXPIRED","UNREAD_OBSERVATION",observation.getId(),observation.getAccount().getDisplayName(),"60 秒填入凭据过期，结果冻结为待人工确认，禁止重复填入");
             }
         }
     }

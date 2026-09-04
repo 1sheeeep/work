@@ -17,19 +17,45 @@
     education: ['[class*="degree"]', '[class*="education"]'],
     description: ['[class*="job-detail"]', '[class*="description"]', '[class*="job-desc"]'],
   };
+  const TEST_DRAFT_TEXT = '【草稿测试，不会自动发送】您好，已收到您的消息。';
   let collectTimer = null;
   let collecting = false;
+  let autoReplyArm = null;
+  let autoReplyTimer = null;
+  let autoReplyBusy = false;
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (!['BRIDGE_COLLECT', 'BRIDGE_COLLECT_JOBS', 'BRIDGE_CHECK_REPLY_READINESS'].includes(message?.type)) return false;
+    if (!['BRIDGE_COLLECT', 'BRIDGE_COLLECT_JOBS', 'BRIDGE_CHECK_REPLY_READINESS', 'BRIDGE_INSPECT_CURRENT_CONTROLS', 'BRIDGE_TEST_CURRENT_ACTION_ENTRY', 'BRIDGE_CONFIRM_CURRENT_EXCHANGE', 'BRIDGE_FILL_TEST_DRAFT', 'BRIDGE_PREPARE_CURRENT_SEND_TEST', 'BRIDGE_SEND_CURRENT_TEST_DRAFT', 'BRIDGE_DIAGNOSE_CURRENT_AUTO_REPLY', 'BRIDGE_ARM_CURRENT_AUTO_REPLY_TEST', 'BRIDGE_CANCEL_CURRENT_AUTO_REPLY_TEST', 'BRIDGE_PREPARE_APPROVED_DRAFT_FILL', 'BRIDGE_FILL_APPROVED_DRAFT'].includes(message?.type)) return false;
     const task = message.type === 'BRIDGE_COLLECT_JOBS'
       ? collectJobsAndPublish(Boolean(message.allowEmbeddedJobList))
-      : message.type === 'BRIDGE_CHECK_REPLY_READINESS' ? collectReplyReadiness() : collectAndPublish(true);
+      : message.type === 'BRIDGE_CHECK_REPLY_READINESS'
+        ? collectReplyReadiness()
+        : message.type === 'BRIDGE_INSPECT_CURRENT_CONTROLS'
+          ? inspectCurrentConversationControls()
+        : message.type === 'BRIDGE_TEST_CURRENT_ACTION_ENTRY'
+          ? testCurrentActionEntry(message.action)
+        : message.type === 'BRIDGE_CONFIRM_CURRENT_EXCHANGE'
+          ? confirmCurrentExchange(message.action)
+        : message.type === 'BRIDGE_FILL_TEST_DRAFT'
+          ? fillTestDraft()
+          : message.type === 'BRIDGE_PREPARE_CURRENT_SEND_TEST'
+            ? prepareCurrentSendTest()
+          : message.type === 'BRIDGE_SEND_CURRENT_TEST_DRAFT'
+            ? sendCurrentTestDraft(message.expectedChatDigest)
+          : message.type === 'BRIDGE_DIAGNOSE_CURRENT_AUTO_REPLY'
+            ? diagnoseCurrentAutoReply()
+          : message.type === 'BRIDGE_ARM_CURRENT_AUTO_REPLY_TEST'
+            ? armCurrentAutoReplyTest()
+          : message.type === 'BRIDGE_CANCEL_CURRENT_AUTO_REPLY_TEST'
+            ? cancelCurrentAutoReplyTest('CANCELLED')
+          : message.type === 'BRIDGE_PREPARE_APPROVED_DRAFT_FILL'
+            ? prepareApprovedDraftFill()
+            : message.type === 'BRIDGE_FILL_APPROVED_DRAFT' ? fillApprovedDraft(message.payload) : collectAndPublish(true);
     task.then((result) => sendResponse(result || { ok: true })).catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   });
 
-  const observer = new MutationObserver(() => scheduleCollect(1_200));
+  const observer = new MutationObserver(() => { scheduleCollect(1_200); scheduleAutoReplyCheck(700); });
   observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'data-id'] });
   window.addEventListener('focus', () => scheduleCollect(500), { passive: true });
   document.addEventListener('visibilitychange', () => { if (!document.hidden) scheduleCollect(500); }, { passive: true });
@@ -40,8 +66,130 @@
     collectTimer = setTimeout(() => void collectAndPublish(false), delay);
   }
 
+  function scheduleAutoReplyCheck(delay) {
+    if (!autoReplyArm) return;
+    // BOSS 页面会持续产生 DOM 变化。这里必须节流而不能防抖，
+    // 否则高频变化会不断重置计时器，导致已武装触发器永远不执行。
+    if (autoReplyTimer) return;
+    autoReplyTimer = setTimeout(() => {
+      autoReplyTimer = null;
+      void checkArmedAutoReply();
+    }, delay);
+  }
+
+  async function armCurrentAutoReplyTest() {
+    if (!await waitForCollectionIdle(4_000)) return { ok: false, error: '页面只读快照持续占用，未开启触发测试。' };
+    const selected = await collectSelectedConversation();
+    if (!selected.ok) return { ok: false, error: selected.reason };
+    if (selected.selectedUnread) return { ok: false, error: '当前会话必须先处于已读状态。' };
+    const controls = findReplyControls();
+    if (!controls.editor || readEditorText(controls.editor).trim()) return { ok: false, error: '当前回复输入框必须为空。' };
+    autoReplyArm = { chatDigest: selected.chatDigest, baselineMessageDigest: selected.messageDigest, armedAt: Date.now(), expiresAt: Date.now() + 10 * 60_000, transientFailures: 0 };
+    scheduleAutoReplyCheck(1_000);
+    return { ok: true, context: { actionType: 'CURRENT_AUTO_REPLY_TEST_ARMED', chatDigest: selected.chatDigest, baselineMessageDigest: selected.messageDigest, expiresAt: new Date(autoReplyArm.expiresAt).toISOString(), oneShot: true } };
+  }
+
+  async function cancelCurrentAutoReplyTest(reason) {
+    clearTimeout(autoReplyTimer);
+    autoReplyTimer = null;
+    const previous = autoReplyArm;
+    autoReplyArm = null;
+    return { ok: true, cancelled: Boolean(previous), reason };
+  }
+
+  async function checkArmedAutoReply() {
+    if (!autoReplyArm) return;
+    if (autoReplyBusy) return scheduleAutoReplyCheck(300);
+    if (Date.now() >= autoReplyArm.expiresAt) return void finishAutoReplyTest('EXPIRED', '10 分钟内没有检测到新的候选人来信，触发测试已自动结束。');
+    if (collecting) return scheduleAutoReplyCheck(500);
+    autoReplyBusy = true;
+    try {
+      const armed = autoReplyArm;
+      const first = await collectSelectedConversation();
+      if (!first.ok) {
+        armed.transientFailures += 1;
+        if (armed.transientFailures <= 5) return scheduleAutoReplyCheck(800);
+        return void finishAutoReplyTest('BLOCKED', `连续 5 次无法稳定读取当前会话：${first.reason || first.code || '未知原因'}；未发送。`);
+      }
+      if (first.chatDigest !== armed.chatDigest) return void finishAutoReplyTest('CANCELLED', '当前选中会话发生变化，触发测试已停止。');
+      armed.transientFailures = 0;
+      await reportAutoReplyProgress(first.direction, first.messageDigest !== armed.baselineMessageDigest);
+      // The HR explicitly arms the currently open read conversation. If its
+      // latest stable message is already inbound, handle it immediately; a
+      // post-arm message change is no longer required.
+      if (first.messageDigest === armed.baselineMessageDigest && first.direction !== 'INBOUND') return scheduleAutoReplyCheck(1_000);
+      if (first.direction !== 'INBOUND') return void finishAutoReplyTest('CANCELLED', '检测到的最新变化不是候选人来信，触发测试已停止。');
+      await delay(900);
+      const second = await collectSelectedConversation();
+      if (!second.ok || second.chatDigest !== armed.chatDigest || second.signature !== first.signature || second.direction !== 'INBOUND') {
+        if (autoReplyArm) { autoReplyArm.transientFailures += 1; if (autoReplyArm.transientFailures <= 5) return scheduleAutoReplyCheck(800); }
+        return void finishAutoReplyTest('BLOCKED', '候选人新消息连续 5 次未能稳定确认；未发送。');
+      }
+      const controls = findReplyControls();
+      if (!controls.editor || readEditorText(controls.editor).trim()) return void finishAutoReplyTest('BLOCKED', '回复输入框不可用或已有内容，未发送。');
+      writeEditorText(controls.editor, TEST_DRAFT_TEXT);
+      await delay(300);
+      if (readEditorText(controls.editor).trim() !== TEST_DRAFT_TEXT) return void finishAutoReplyTest('BLOCKED', '测试草稿未稳定写入，未发送。');
+      let filledControls = findReplyControls();
+      for (let attempt = 0; attempt < 5 && (!filledControls.sendButton || filledControls.sendButtonCount !== 1); attempt++) {
+        await delay(200);
+        filledControls = findReplyControls();
+      }
+      if (filledControls.editor !== controls.editor || !filledControls.sendButton || filledControls.sendButtonCount !== 1) {
+        writeEditorText(controls.editor, '');
+        return void finishAutoReplyTest('BLOCKED', '测试草稿写入后仍未出现唯一可用发送按钮；已清除测试草稿，未发送。');
+      }
+      const beforeSend = await collectSelectedConversation();
+      if (!beforeSend.ok || beforeSend.chatDigest !== armed.chatDigest || beforeSend.messageDigest !== second.messageDigest || beforeSend.direction !== 'INBOUND') {
+        writeEditorText(controls.editor, '');
+        return void finishAutoReplyTest('BLOCKED', '发送前会话状态发生变化；已清除测试草稿，未发送。');
+      }
+      autoReplyArm = null;
+      clearTimeout(autoReplyTimer);
+      filledControls.sendButton.click();
+      let confirmed = false;
+      for (let attempt = 0; attempt < 8; attempt++) {
+        await delay(500);
+        const current = await collectSelectedConversation();
+        if (!current.ok || current.chatDigest !== armed.chatDigest) break;
+        const currentControls = findReplyControls();
+        const active = [...document.querySelectorAll(SELECTORS.activeConversation)].find(visible);
+        const last = active ? [...active.querySelectorAll(SELECTORS.message)].filter(visible).filter((item) => directionOf(item)).at(-1) : null;
+        if (currentControls.editor && !readEditorText(currentControls.editor).trim() && directionOf(last) === 'OUTBOUND' && compact(last?.textContent).includes(compact(TEST_DRAFT_TEXT))) { confirmed = true; break; }
+      }
+      await finishAutoReplyTest(confirmed ? 'SUCCEEDED' : 'UNKNOWN', confirmed ? '检测到候选人新消息后，固定测试草稿已自动发送一次。' : '已点击一次发送，但页面结果无法确认；不会重试。', armed.chatDigest);
+    } finally {
+      autoReplyBusy = false;
+      if (autoReplyArm) scheduleAutoReplyCheck(1_000);
+    }
+  }
+
+  async function diagnoseCurrentAutoReply() {
+    if (!await waitForCollectionIdle(4_000)) return { ok: false, error: '页面只读快照持续占用，暂时无法诊断。' };
+    const selected = await collectSelectedConversation();
+    if (!selected.ok) return { ok: true, diagnostic: { actionType: 'CURRENT_AUTO_REPLY_DIAGNOSTIC', selectedConversation: false, code: selected.code || 'UNKNOWN', reason: selected.reason || '当前会话不可识别', checkedAt: new Date().toISOString() } };
+    const controls = findReplyControls();
+    return { ok: true, diagnostic: { actionType: 'CURRENT_AUTO_REPLY_DIAGNOSTIC', selectedConversation: true, chatDigest: selected.chatDigest, direction: selected.direction, selectedUnread: selected.selectedUnread, editorReady: Boolean(controls.editor), editorEmpty: Boolean(controls.editor) && !readEditorText(controls.editor).trim(), sendButtonCount: controls.sendButtonCount || 0, sendButtonReady: Boolean(controls.sendButton) && controls.sendButtonCount === 1, sendButtonCheckedAfterDraft: false, code: 'CHECKED', reason: '空输入框阶段只读诊断完成；发送按钮将在写入测试草稿后再次复核。', checkedAt: new Date().toISOString() } };
+  }
+
+  async function finishAutoReplyTest(outcome, reason, chatDigest = autoReplyArm?.chatDigest) {
+    clearTimeout(autoReplyTimer);
+    autoReplyTimer = null;
+    autoReplyArm = null;
+    await send({ type: 'BRIDGE_AUTO_REPLY_TEST_RESULT', payload: { actionType: 'CURRENT_AUTO_REPLY_TEST_RESULT', outcome, reason, chatDigest: chatDigest || null, occurredAt: new Date().toISOString(), retryTriggered: false } });
+  }
+
+  async function reportAutoReplyProgress(direction, messageChanged) {
+    const now = Date.now();
+    if (!autoReplyArm || now - Number(autoReplyArm.lastProgressAt || 0) < 1_500) return;
+    autoReplyArm.lastProgressAt = now;
+    await send({ type: 'BRIDGE_AUTO_REPLY_TEST_PROGRESS', payload: { actionType: 'CURRENT_AUTO_REPLY_TEST_PROGRESS', chatDigest: autoReplyArm.chatDigest, direction, messageChanged: Boolean(messageChanged), checkedAt: new Date(now).toISOString() } });
+  }
+
   async function collectAndPublish(reportNonChat) {
     if (collecting) return;
+    if (autoReplyArm) return;
+    if (autoReplyBusy) { scheduleCollect(800); return; }
     collecting = true;
     try {
       const page = classifyPage();
@@ -105,13 +253,7 @@
         if (!page.ok) return { ok: false, error: page.reason };
         const selected = await collectSelectedConversation();
         if (!selected.ok) return { ok: false, error: selected.reason };
-        const active = [...document.querySelectorAll(SELECTORS.activeConversation)].find(visible);
-        const replyRoot = active?.closest('[class*="conversation"], [class*="chat"]') || active?.parentElement?.parentElement || active;
-        const editor = (replyRoot?.querySelector('#boss-chat-editor-input') || document.querySelector('#boss-chat-editor-input'))
-          || (replyRoot && [...replyRoot.querySelectorAll('textarea, [contenteditable="true"], [role="textbox"]')]
-          .find((node) => visible(node) && !node.disabled && node.getAttribute('aria-disabled') !== 'true'));
-        const sendButton = replyRoot && [...replyRoot.querySelectorAll('button, [role="button"]')]
-          .find((node) => visible(node) && !node.disabled && node.getAttribute('aria-disabled') !== 'true' && /^发送(?:消息)?$/.test(compact(node.textContent)));
+        const { editor, sendButton } = findReplyControls();
         if (!editor || !visible(editor) || editor.disabled || editor.getAttribute('aria-disabled') === 'true') return { ok: false, error: '当前会话未找到可见的 BOSS 回复编辑器（#boss-chat-editor-input），已停止验收。' };
         const controlShape = [editor.id || 'fallback-editor', editor.tagName, editor.getAttribute('role') || '', editor.getAttribute('contenteditable') || '', sendButton ? `${sendButton.tagName}:发送` : 'ENTER_TO_SEND'].join('|');
         samples.push({ chatDigest: selected.chatDigest, controlDigest: await digest(controlShape) });
@@ -122,6 +264,500 @@
       }
       return { ok: true, readiness: { actionType: 'SEND_MESSAGE', chatDigest: samples[0].chatDigest, controlDigest: samples[0].controlDigest, pageState: 'CHAT_PAGE_READY', selectedConversationVerified: true, hasRiskOrVerification: false, stableCycles: 3 } };
     } finally { collecting = false; }
+  }
+
+  async function fillTestDraft() {
+    if (collecting) return { ok: false, error: '页面正在生成只读快照，请稍后重试。' };
+    collecting = true;
+    try {
+      const page = classifyPage();
+      if (!page.ok) return { ok: false, error: page.reason };
+      const first = await collectSelectedConversation();
+      if (!first.ok) return { ok: false, error: first.reason };
+      if (first.selectedUnread) return { ok: false, error: '当前会话仍标记为未读；草稿测试只允许已读会话。' };
+      const firstControls = findReplyControls();
+      if (!firstControls.editor) return { ok: false, error: '当前会话未找到可见且可编辑的回复输入框。' };
+      if (readEditorText(firstControls.editor).trim()) return { ok: false, error: '当前输入框已有内容，为避免覆盖 HR 草稿已停止写入。' };
+      const firstControlDigest = await digest(replyControlShape(firstControls));
+
+      await delay(400);
+      const second = await collectSelectedConversation();
+      if (!second.ok || second.signature !== first.signature || second.selectedUnread) {
+        return { ok: false, error: '当前会话状态在检查期间发生变化，已停止草稿写入。' };
+      }
+      const secondControls = findReplyControls();
+      if (!secondControls.editor || readEditorText(secondControls.editor).trim()) {
+        return { ok: false, error: '回复输入框在检查期间发生变化或已有内容，已停止草稿写入。' };
+      }
+      const secondControlDigest = await digest(replyControlShape(secondControls));
+      if (firstControlDigest !== secondControlDigest) return { ok: false, error: '回复入口结构仍在变化，已停止草稿写入。' };
+
+      writeEditorText(secondControls.editor, TEST_DRAFT_TEXT);
+      await delay(250);
+      const filledText = readEditorText(secondControls.editor).trim();
+      if (filledText !== TEST_DRAFT_TEXT) return { ok: false, error: '页面未稳定保留测试草稿；未触发发送。' };
+      const after = await collectSelectedConversation();
+      if (!after.ok || after.chatDigest !== second.chatDigest || after.selectedUnread) {
+        return { ok: false, error: '草稿写入后会话状态发生变化；未触发发送，请由 HR 检查页面。' };
+      }
+      return {
+        ok: true,
+        draftTest: {
+          actionType: 'DRAFT_FILL_TEST', chatDigest: second.chatDigest, controlDigest: secondControlDigest,
+          draftDigest: await digest(TEST_DRAFT_TEXT), filledLength: TEST_DRAFT_TEXT.length,
+          selectedUnread: false, stableCycles: 2, sendTriggered: false,
+        },
+      };
+    } finally { collecting = false; }
+  }
+
+  async function prepareCurrentSendTest() {
+    if (!await waitForCollectionIdle(4_000)) return { ok: false, error: '页面只读快照持续占用超过 4 秒，未准备新的发送测试。' };
+    collecting = true;
+    try {
+      const samples = [];
+      for (let cycle = 0; cycle < 2; cycle++) {
+        const page = classifyPage();
+        if (!page.ok) return { ok: false, error: page.reason };
+        const selected = await collectSelectedConversation();
+        if (!selected.ok) return { ok: false, error: selected.reason };
+        if (selected.selectedUnread) return { ok: false, error: '当前会话仍标记为未读；发送测试只允许已读会话。' };
+        const controls = findReplyControls();
+        if (!controls.editor || readEditorText(controls.editor).trim()) return { ok: false, error: '当前会话输入框不是空白状态，禁止准备新的发送测试。' };
+        samples.push({ chatDigest: selected.chatDigest, signature: selected.signature, controlDigest: await digest(replyControlShape(controls)) });
+        if (cycle === 0) await delay(400);
+      }
+      if (!samples.every((sample) => sample.chatDigest === samples[0].chatDigest && sample.signature === samples[0].signature && sample.controlDigest === samples[0].controlDigest)) {
+        return { ok: false, error: '当前会话或回复入口在准备期间发生变化，未开放发送测试。' };
+      }
+      return { ok: true, context: { actionType: 'CURRENT_SEND_TEST_PREPARATION', chatDigest: samples[0].chatDigest, controlDigest: samples[0].controlDigest, selectedUnread: false, editorEmpty: true, repeatManuallyAuthorized: true, stableCycles: 2 } };
+    } finally { collecting = false; }
+  }
+
+  async function sendCurrentTestDraft(expectedChatDigest) {
+    // Opening the extension while the page observer is finishing its regular
+    // read-only snapshot must not make the one-shot test fail spuriously.
+    // This wait happens strictly before any send checks or click; it is not a
+    // retry after a send attempt.
+    if (!await waitForCollectionIdle(4_000)) {
+      return { ok: false, error: '页面只读快照持续占用超过 4 秒，已停止发送测试；未点击发送。' };
+    }
+    collecting = true;
+    let clickTriggered = false;
+    let evidence = null;
+    try {
+      const samples = [];
+      for (let cycle = 0; cycle < 3; cycle++) {
+        const page = classifyPage();
+        if (!page.ok) return { ok: false, error: page.reason };
+        const selected = await collectSelectedConversation();
+        if (!selected.ok) return { ok: false, error: selected.reason };
+        if (!/^[a-f0-9]{64}$/.test(expectedChatDigest || '') || selected.chatDigest !== expectedChatDigest) return { ok: false, error: '当前会话与本次准备授权不一致，已停止发送测试。' };
+        if (selected.selectedUnread) return { ok: false, error: '当前会话仍标记为未读；单次发送测试只允许已读会话。' };
+        const controls = findReplyControls();
+        if (!controls.editor || !controls.sendButton || controls.sendButtonCount !== 1) return { ok: false, error: `当前会话没有唯一、可见且可用的“发送”按钮，已停止测试。${controls.actionLabels.length ? ` 当前会话可识别操作：${controls.actionLabels.join('、')}` : ' 当前未找到带可访问标签的操作按钮。'}` };
+        if (readEditorText(controls.editor).trim() !== TEST_DRAFT_TEXT) return { ok: false, error: '当前输入框不是固定测试草稿，禁止发送其他内容。' };
+        samples.push({ selected, controls, controlDigest: await digest(replyControlShape(controls)) });
+        if (cycle < 2) await delay(400);
+      }
+      const first = samples[0];
+      if (!samples.every((sample) => sample.selected.chatDigest === first.selected.chatDigest
+        && sample.selected.signature === first.selected.signature
+        && sample.controlDigest === first.controlDigest
+        && sample.controls.editor === first.controls.editor
+        && sample.controls.sendButton === first.controls.sendButton)) {
+        return { ok: false, error: '当前会话或发送控件在确认期间发生变化，已停止测试。' };
+      }
+      const draftDigest = await digest(TEST_DRAFT_TEXT);
+      const beforeStateDigest = await digest(`${first.selected.chatDigest}|${first.controlDigest}|${draftDigest}|READY`);
+      evidence = { chatDigest: first.selected.chatDigest, controlDigest: first.controlDigest, draftDigest, beforeStateDigest };
+      first.controls.sendButton.click();
+      clickTriggered = true;
+
+      let confirmed = false;
+      for (let attempt = 0; attempt < 8; attempt++) {
+        await delay(500);
+        const selected = await collectSelectedConversation();
+        if (!selected.ok || selected.chatDigest !== first.selected.chatDigest) break;
+        const controls = findReplyControls();
+        const editorEmpty = Boolean(controls.editor) && !readEditorText(controls.editor).trim();
+        const active = [...document.querySelectorAll(SELECTORS.activeConversation)].find(visible);
+        const messages = active ? [...active.querySelectorAll(SELECTORS.message)].filter(visible) : [];
+        const last = messages.filter((item) => directionOf(item)).at(-1);
+        const outboundTextMatches = directionOf(last) === 'OUTBOUND' && compact(last?.textContent).includes(compact(TEST_DRAFT_TEXT));
+        if (editorEmpty && outboundTextMatches) { confirmed = true; break; }
+      }
+      const outcome = confirmed ? 'SUCCEEDED' : 'UNKNOWN';
+      return { ok: true, sendTest: { actionType: 'CURRENT_TEST_DRAFT_SEND', outcome, ...evidence,
+        afterStateDigest: await digest(`${first.selected.chatDigest}|${first.controlDigest}|${outcome}`),
+        clickTriggered: true, retryTriggered: false } };
+    } catch (error) {
+      if (!clickTriggered) throw error;
+      const fallback = evidence || { chatDigest: '0'.repeat(64), controlDigest: '0'.repeat(64), draftDigest: await digest(TEST_DRAFT_TEXT), beforeStateDigest: '0'.repeat(64) };
+      return { ok: true, sendTest: { actionType: 'CURRENT_TEST_DRAFT_SEND', outcome: 'UNKNOWN', ...fallback,
+        afterStateDigest: await digest(`${fallback.chatDigest}|UNKNOWN`), clickTriggered: true, retryTriggered: false } };
+    } finally { collecting = false; }
+  }
+
+  async function waitForCollectionIdle(timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    while (collecting && Date.now() < deadline) await delay(100);
+    return !collecting;
+  }
+
+  async function prepareApprovedDraftFill() {
+    if (collecting) return { ok: false, error: '页面正在生成只读快照，请稍后重试。' };
+    collecting = true;
+    try {
+      const first = await collectDraftFillContext();
+      if (!first.ok) return first;
+      await delay(400);
+      const second = await collectDraftFillContext();
+      if (!second.ok) return second;
+      if (first.chatDigest !== second.chatDigest || first.controlDigest !== second.controlDigest) {
+        return { ok: false, error: '当前会话或回复入口仍在变化，已停止读取后台草稿。' };
+      }
+      return { ok: true, context: { actionType: 'APPROVED_DRAFT_FILL', chatDigest: second.chatDigest, controlDigest: second.controlDigest, latestDirection: second.latestDirection, editorEmpty: true, stableCycles: 2 } };
+    } finally { collecting = false; }
+  }
+
+  async function fillApprovedDraft(payload) {
+    if (collecting) return { ok: false, error: '页面正在生成只读快照，请稍后重试。' };
+    collecting = true;
+    try {
+      const content = String(payload?.content || '').trim();
+      if (!/^[a-f0-9]{64}$/.test(payload?.chatDigest || '') || !/^[a-f0-9]{64}$/.test(payload?.controlDigest || '') || !/^[a-f0-9]{64}$/.test(payload?.draftDigest || '')) return { ok: false, error: '后台草稿摘要无效。' };
+      if (!content || content.length > 2000 || await digest(content) !== payload.draftDigest) return { ok: false, error: '后台草稿正文与审核摘要不一致。' };
+      const context = await collectDraftFillContext();
+      if (!context.ok) return context;
+      if (context.chatDigest !== payload.chatDigest || context.controlDigest !== payload.controlDigest) return { ok: false, error: '当前会话或回复入口与后台填入凭据不一致。' };
+      const beforeStateDigest = await digest(`${context.chatDigest}|${context.controlDigest}|EMPTY`);
+      writeEditorText(context.editor, content);
+      await delay(250);
+      if (readEditorText(context.editor).trim() !== content) return { ok: false, error: '页面未稳定保留已审核草稿；未触发发送。' };
+      const selectedAfter = await collectSelectedConversation();
+      if (!selectedAfter.ok || selectedAfter.chatDigest !== context.chatDigest || selectedAfter.direction !== 'INBOUND') return { ok: false, error: '草稿填入后会话状态发生变化；未触发发送。' };
+      const afterStateDigest = await digest(`${context.chatDigest}|${context.controlDigest}|${payload.draftDigest}`);
+      return { ok: true, result: { actionType: 'APPROVED_DRAFT_FILL', chatDigest: context.chatDigest, controlDigest: context.controlDigest, draftDigest: payload.draftDigest, beforeStateDigest, afterStateDigest, receiptDigest: await digest(`${beforeStateDigest}|${afterStateDigest}|FILLED`), outcome: 'FILLED', sendTriggered: false } };
+    } finally { collecting = false; }
+  }
+
+  async function collectDraftFillContext() {
+    const page = classifyPage();
+    if (!page.ok) return { ok: false, error: page.reason };
+    const selected = await collectSelectedConversation();
+    if (!selected.ok) return { ok: false, error: selected.reason };
+    if (selected.direction !== 'INBOUND') return { ok: false, error: '当前会话最后一条消息不是候选人来信，已停止填入。' };
+    const controls = findReplyControls();
+    if (!controls.editor) return { ok: false, error: '当前会话未找到可见且可编辑的回复输入框。' };
+    if (readEditorText(controls.editor).trim()) return { ok: false, error: '当前输入框已有内容，为避免覆盖 HR 草稿已停止填入。' };
+    return { ok: true, chatDigest: selected.chatDigest, latestDirection: selected.direction, controlDigest: await digest(replyControlShape(controls)), editor: controls.editor };
+  }
+
+  function findReplyControls() {
+    const active = [...document.querySelectorAll(SELECTORS.activeConversation)].find(visible);
+    const replyRoot = active?.closest('[class*="conversation"], [class*="chat"]') || active?.parentElement?.parentElement || active;
+    const editor = (replyRoot?.querySelector('#boss-chat-editor-input') || document.querySelector('#boss-chat-editor-input'))
+      || (replyRoot && [...replyRoot.querySelectorAll('textarea, [contenteditable="true"], [role="textbox"]')]
+        .find((node) => visible(node) && !node.disabled && node.getAttribute('aria-disabled') !== 'true'));
+    let sendButtons = [];
+    const editorContainer = editor?.closest('.conversation-editor');
+    const verifiedBossSendButtons = [...(editorContainer?.querySelectorAll('.submit-content > .submit.active') || [])]
+      .filter((node) => visible(node)
+        && getComputedStyle(node).cursor === 'pointer'
+        && !node.classList.contains('disabled')
+        && !node.closest('[aria-disabled="true"], .disabled')
+        && /^发送(?:消息)?$/.test(controlLabel(node)));
+    if (verifiedBossSendButtons.length > 0) sendButtons = verifiedBossSendButtons;
+    let buttonScope = editor?.parentElement || null;
+    let matchedButtonScope = null;
+    for (let depth = 0; sendButtons.length === 0 && buttonScope && depth < 8; depth++, buttonScope = buttonScope.parentElement) {
+      const matches = [...buttonScope.querySelectorAll('button, [role="button"]')]
+        .filter((node) => visible(node) && !node.disabled && node.getAttribute('aria-disabled') !== 'true' && /^发送(?:消息)?$/.test(controlLabel(node)));
+      if (matches.length > 0) { sendButtons = matches; matchedButtonScope = buttonScope; break; }
+    }
+    const diagnosticScope = editorContainer?.closest('.conversation-operate') || matchedButtonScope || findControlScope(editor);
+    const actionLabels = [...(diagnosticScope?.querySelectorAll('button, [role="button"], a, [tabindex], .operate-btn, .submit') || [])]
+      .map(controlLabel).filter((label) => /^(?:发送(?:消息)?|求简历|接收简历|换电话|换微信|约面试|不合适)$/.test(label));
+    return { editor, sendButton: sendButtons.length === 1 ? sendButtons[0] : null, sendButtonCount: sendButtons.length, actionLabels: [...new Set(actionLabels)].slice(0, 20) };
+  }
+
+  async function inspectCurrentConversationControls() {
+    const page = classifyPage();
+    if (!page.ok) return { ok: false, error: page.reason };
+    const selected = await collectSelectedConversation();
+    if (!selected.ok) return { ok: false, error: selected.reason };
+    const { editor } = findReplyControls();
+    if (!editor || !visible(editor)) return { ok: false, error: '当前会话未找到可见回复输入框，无法限定功能键扫描范围。' };
+    const scope = findControlScope(editor);
+    if (!scope) return { ok: false, error: '当前会话未找到稳定的回复工具栏作用域。' };
+    const selector = 'button, [role="button"], a, input, textarea, [tabindex], [class*="btn"], [class*="button"], [class*="send"], [class*="submit"], [class*="confirm"], [class*="toolbar"], [class*="action"], [class*="operate"]';
+    const structural = [...scope.querySelectorAll(selector)];
+    const pointerControls = [...scope.querySelectorAll('*')].filter((node) => node instanceof HTMLElement && getComputedStyle(node).cursor === 'pointer');
+    const dialogs = visibleDialogs();
+    const interviewOverlaySelector = '.datepicker-pannel .cell, .datepicker-pannel .picker-header > *, .time-select-container [class*="option"], .time-select-container [class*="item"], .selectjob [class*="option"], .selectjob [class*="item"], .interview-contact [class*="option"], .interview-contact [class*="item"]';
+    const dialogControls = dialogs.flatMap((dialog) => [dialog, ...dialog.querySelectorAll(selector),
+      ...(dialog.matches('.interview-invite-dialog-ui') ? dialog.querySelectorAll(interviewOverlaySelector) : []),
+      ...[...dialog.querySelectorAll('*')].filter((node) => node instanceof HTMLElement && getComputedStyle(node).cursor === 'pointer')]);
+    const candidates = [...new Set([scope, ...structural, ...pointerControls, ...dialogControls])].filter((node) => node instanceof HTMLElement && visible(node)).slice(0, 120);
+    const editorReport = await describeControl(editor);
+    const controls = await Promise.all(candidates.map(describeControl));
+    const observedAt = new Date().toISOString();
+    const reportDigest = await digest(JSON.stringify([selected.chatDigest, editorReport.fingerprint, ...controls.map((item) => item.fingerprint)]));
+    return { ok: true, diagnostic: { actionType: 'CURRENT_CONTROL_DOM_DIAGNOSTIC', pageState: 'CHAT_PAGE_READY', chatDigest: selected.chatDigest,
+      observedAt, rawContentIncluded: false, truncated: candidates.length >= 120, editor: editorReport, controls, reportDigest } };
+  }
+
+  async function testCurrentActionEntry(action) {
+    const labels = { REQUEST_RESUME: '求简历', EXCHANGE_PHONE: '换电话', EXCHANGE_WECHAT: '换微信', INTERVIEW: '约面试' };
+    const label = labels[action];
+    if (!label) return { ok: false, error: '不支持的当前会话操作入口。' };
+    if (collecting) return { ok: false, error: '页面正在生成其他稳定快照，请稍后重试。' };
+    collecting = true;
+    let clickTriggered = false;
+    let evidence = null;
+    try {
+      const samples = [];
+      for (let cycle = 0; cycle < 3; cycle++) {
+        const page = classifyPage();
+        if (!page.ok) return { ok: false, error: page.reason };
+        const selected = await collectSelectedConversation();
+        if (!selected.ok) return { ok: false, error: selected.reason };
+        if (selected.selectedUnread) return { ok: false, error: `当前会话仍标记为未读；${label}入口测试只允许已读测试会话。` };
+        const target = findCurrentActionControl(label);
+        if (!target.ok) return { ok: false, error: target.error };
+        const controlDigest = await digest(actionControlShape(target.node, label));
+        samples.push({ selected, node: target.node, controlDigest });
+        if (cycle < 2) await delay(400);
+      }
+      const first = samples[0];
+      if (!samples.every((sample) => sample.selected.chatDigest === first.selected.chatDigest && sample.selected.signature === first.selected.signature && sample.node === first.node && sample.controlDigest === first.controlDigest)) {
+        return { ok: false, error: `当前会话或“${label}”入口在确认期间发生变化，已停止测试。` };
+      }
+      const beforeDialogs = visibleDialogs().map(dialogShape).join('|');
+      const beforeStateDigest = await digest(`${first.selected.chatDigest}|${action}|${first.controlDigest}|${beforeDialogs}`);
+      evidence = { action, chatDigest: first.selected.chatDigest, controlDigest: first.controlDigest, beforeStateDigest };
+      first.node.click();
+      clickTriggered = true;
+      let outcome = 'UNKNOWN';
+      let afterShape = '';
+      for (let attempt = 0; attempt < 6; attempt++) {
+        await delay(400);
+        const dialogs = visibleDialogs().map(dialogShape).join('|');
+        const current = findCurrentActionControl(label, true);
+        afterShape = `${dialogs}|${current.ok ? actionControlShape(current.node, label) : current.error}`;
+        if (dialogs && dialogs !== beforeDialogs) { outcome = 'DIALOG_OPENED'; break; }
+        const currentDigest = current.ok ? await digest(actionControlShape(current.node, label)) : null;
+        if (!current.ok || current.node !== first.node || currentDigest !== first.controlDigest || current.unavailable) { outcome = 'STATE_CHANGED'; break; }
+      }
+      return { ok: true, actionTest: { actionType: 'CURRENT_ACTION_ENTRY_TEST', outcome, ...evidence,
+        afterStateDigest: await digest(`${evidence.chatDigest}|${action}|${outcome}|${afterShape}`), clickTriggered: true, retryTriggered: false } };
+    } catch (error) {
+      if (!clickTriggered) throw error;
+      const fallback = evidence || { action, chatDigest: '0'.repeat(64), controlDigest: '0'.repeat(64), beforeStateDigest: '0'.repeat(64) };
+      return { ok: true, actionTest: { actionType: 'CURRENT_ACTION_ENTRY_TEST', outcome: 'UNKNOWN', ...fallback,
+        afterStateDigest: await digest(`${fallback.chatDigest}|${action}|UNKNOWN`), clickTriggered: true, retryTriggered: false } };
+    } finally { collecting = false; }
+  }
+
+  async function confirmCurrentExchange(action) {
+    const labels = { EXCHANGE_PHONE: '换电话', EXCHANGE_WECHAT: '换微信' };
+    const label = labels[action];
+    if (!label) return { ok: false, error: '不支持的联系方式二级确认测试。' };
+    if (collecting) return { ok: false, error: '页面正在生成其他稳定快照，请稍后重试。' };
+    collecting = true;
+    let clickTriggered = false;
+    let evidence = null;
+    try {
+      const samples = [];
+      for (let cycle = 0; cycle < 3; cycle++) {
+        const page = classifyPage();
+        if (!page.ok) return { ok: false, error: page.reason };
+        const selected = await collectSelectedConversation();
+        if (!selected.ok || selected.selectedUnread) return { ok: false, error: `当前会话不满足“${label}”二级确认测试条件。` };
+        const controls = findExchangeConfirmation(label);
+        if (!controls.ok) return { ok: false, error: controls.error };
+        const controlDigest = await digest(exchangeConfirmationShape(controls, label));
+        samples.push({ selected, ...controls, controlDigest });
+        if (cycle < 2) await delay(400);
+      }
+      const first = samples[0];
+      if (!samples.every((sample) => sample.selected.chatDigest === first.selected.chatDigest && sample.selected.signature === first.selected.signature
+        && sample.confirm === first.confirm && sample.cancel === first.cancel && sample.controlDigest === first.controlDigest)) {
+        return { ok: false, error: `当前会话或“${label}”二级确认层发生变化，已停止测试。` };
+      }
+      const beforeStateDigest = await digest(`${first.selected.chatDigest}|${action}|${first.controlDigest}|CONFIRM_READY`);
+      evidence = { action, chatDigest: first.selected.chatDigest, controlDigest: first.controlDigest, beforeStateDigest };
+      first.confirm.click();
+      clickTriggered = true;
+      let outcome = 'UNKNOWN';
+      let afterShape = '';
+      for (let attempt = 0; attempt < 8; attempt++) {
+        await delay(400);
+        const current = findExchangeConfirmation(label, true);
+        afterShape = current.ok ? exchangeConfirmationShape(current, label) : current.error;
+        if (!current.ok || current.confirm !== first.confirm || current.unavailable) { outcome = 'STATE_CHANGED'; break; }
+      }
+      return { ok: true, exchangeConfirm: { actionType: 'CURRENT_EXCHANGE_CONFIRMATION_TEST', outcome, ...evidence,
+        afterStateDigest: await digest(`${evidence.chatDigest}|${action}|${outcome}|${afterShape}`), clickTriggered: true, retryTriggered: false } };
+    } catch (error) {
+      if (!clickTriggered) throw error;
+      const fallback = evidence || { action, chatDigest: '0'.repeat(64), controlDigest: '0'.repeat(64), beforeStateDigest: '0'.repeat(64) };
+      return { ok: true, exchangeConfirm: { actionType: 'CURRENT_EXCHANGE_CONFIRMATION_TEST', outcome: 'UNKNOWN', ...fallback,
+        afterStateDigest: await digest(`${fallback.chatDigest}|${action}|UNKNOWN`), clickTriggered: true, retryTriggered: false } };
+    } finally { collecting = false; }
+  }
+
+  function findExchangeConfirmation(label, allowUnavailable = false) {
+    const { editor } = findReplyControls();
+    const scope = editor?.closest('.conversation-operate');
+    if (!scope) return { ok: false, error: '当前回复框不属于已验证的会话功能区。' };
+    const owners = [...scope.querySelectorAll('.toolbar-box-right .operate-exchange-left .operate-icon-item')]
+      .filter((node) => knownActionLabel(node.querySelector(':scope > .operate-btn'), controlLabel(node.querySelector(':scope > .operate-btn'))) === label);
+    if (owners.length !== 1) return { ok: false, error: `当前会话没有唯一属于“${label}”的操作容器。` };
+    const confirms = [...owners[0].querySelectorAll('.exchange-tooltip .btn-box > .boss-btn-primary.boss-btn')].filter(visible);
+    const cancels = [...owners[0].querySelectorAll('.exchange-tooltip .btn-box > .boss-btn-outline.boss-btn')].filter(visible);
+    if (confirms.length !== 1 || cancels.length !== 1 || !['确定', '确认'].includes(knownActionLabel(confirms[0], controlLabel(confirms[0]))) || knownActionLabel(cancels[0], controlLabel(cancels[0])) !== '取消') {
+      return { ok: false, error: `“${label}”二级确认层没有唯一且语义明确的确定/取消按钮。` };
+    }
+    const confirm = confirms[0]; const cancel = cancels[0];
+    const unavailable = getComputedStyle(confirm).cursor !== 'pointer' || confirm.classList.contains('disabled') || Boolean(confirm.closest('[aria-disabled="true"], .disabled'));
+    if (unavailable && !allowUnavailable) return { ok: false, error: `“${label}”二级确定按钮不可用。` };
+    return { ok: true, owner: owners[0], confirm, cancel, unavailable };
+  }
+
+  function exchangeConfirmationShape(controls, label) {
+    return [label, controls.owner.tagName, safeClassTokens(controls.confirm).join('.'), safeClassTokens(controls.cancel).join('.'), '确定', '取消'].join('|');
+  }
+
+  function findCurrentActionControl(label, allowUnavailable = false) {
+    const { editor } = findReplyControls();
+    const scope = editor?.closest('.conversation-operate');
+    if (!scope) return { ok: false, error: '当前回复框不属于已验证的会话功能区。' };
+    const matches = [...scope.querySelectorAll('.toolbar-box-right .operate-exchange-left .operate-btn')]
+      .filter((node) => visible(node) && knownActionLabel(node, controlLabel(node)) === label);
+    if (matches.length !== 1) return { ok: false, error: `当前会话没有唯一的“${label}”入口。` };
+    let node = matches[0];
+    if (label === '约面试') {
+      const interviewTargets = [...node.querySelectorAll(':scope > .interview')]
+        .filter((candidate) => visible(candidate) && getComputedStyle(candidate).cursor === 'pointer');
+      if (interviewTargets.length !== 1) return { ok: false, error: '当前会话没有唯一、可见且可点击的“约面试”内部入口。' };
+      node = interviewTargets[0];
+    }
+    const unavailable = node.classList.contains('disabled') || Boolean(node.closest('[aria-disabled="true"], .disabled')) || getComputedStyle(node).cursor !== 'pointer';
+    if (unavailable && !allowUnavailable) return { ok: false, error: `当前会话的“${label}”入口不可用，已停止测试。` };
+    return { ok: true, node, unavailable };
+  }
+
+  function actionControlShape(node, label) {
+    return [node.tagName, safeClassTokens(node).join('.'), label, node.closest('.operate-btn')?.tagName || '', node.closest('.operate-icon-item')?.tagName || '', node.getAttribute('data-v-9c639358') !== null ? 'phone-scope' : 'generic-scope'].join('|');
+  }
+
+  function visibleDialogs() {
+    return [...document.querySelectorAll('[role="dialog"], .boss-dialog, .dialog-container, .modal, .modal-container')].filter((node) => node instanceof HTMLElement && visible(node));
+  }
+
+  function dialogShape(node) {
+    const rect = node.getBoundingClientRect();
+    return `${node.tagName}:${safeClassTokens(node).join('.')}:${Math.round(rect.width)}x${Math.round(rect.height)}`;
+  }
+
+  function findControlScope(editor) {
+    let node = editor?.parentElement || null;
+    let fallback = node;
+    for (let depth = 0; node && depth < 8; depth++, node = node.parentElement) {
+      fallback = node;
+      const count = node.querySelectorAll('button, [role="button"], [tabindex], [class*="btn"], [class*="send"], [class*="toolbar"], [class*="operate"]').length;
+      if (count >= 3) return node;
+    }
+    return fallback;
+  }
+
+  async function describeControl(node) {
+    const rawLabel = controlLabel(node).slice(0, 160);
+    const known = knownActionLabel(node, rawLabel);
+    const ownerButton = node.closest('.operate-icon-item')?.querySelector(':scope > .operate-btn');
+    const ownerAction = ownerButton && ownerButton !== node ? knownActionLabel(ownerButton, controlLabel(ownerButton).slice(0, 160)) : null;
+    const rect = node.getBoundingClientRect();
+    const classes = safeClassTokens(node);
+    const interviewField = classifyInterviewField(node);
+    const iconNode = node.querySelector?.('svg, i, [class*="icon"]');
+    const ancestors = [];
+    let parent = node.parentElement;
+    for (let depth = 0; parent && depth < 4; depth++, parent = parent.parentElement) ancestors.push(`${parent.tagName.toLowerCase()}${safeClassTokens(parent).map((item) => `.${item}`).join('')}`.slice(0, 240));
+    const shape = [node.tagName, classes.join('.'), node.getAttribute('role') || '', node.getAttribute('type') || '', node.getAttribute('aria-label') || '', node.getAttribute('title') || '', known || '', Math.round(rect.width), Math.round(rect.height), ancestors.join('>')].join('|');
+    return { fingerprint: await digest(shape), tag: node.tagName, classes, role: safeAttribute(node, 'role'), type: safeAttribute(node, 'type'),
+      ariaLabel: safeKnownLabel(node.getAttribute('aria-label')), title: safeKnownLabel(node.getAttribute('title')), tabIndex: node.tabIndex,
+      disabled: Boolean(node.disabled || node.getAttribute('aria-disabled') === 'true' || node.classList.contains('disabled') || node.closest('[aria-disabled="true"], .disabled')), visible: visible(node), width: Math.round(rect.width), height: Math.round(rect.height),
+      cursor: getComputedStyle(node).cursor.slice(0, 30), knownAction: known === '发送消息' ? '发送' : known, labelDigest: rawLabel ? await digest(rawLabel) : null,
+      ownerAction: ['求简历', '换电话', '换微信', '约面试'].includes(ownerAction) ? ownerAction : null,
+      interviewField: interviewField?.role || null, selected: interviewField?.selected ?? null,
+      dataAttributeNames: [...node.attributes].map((item) => item.name).filter((name) => name.startsWith('data-')).slice(0, 20),
+      icon: iconNode ? `${iconNode.tagName.toLowerCase()}${safeClassTokens(iconNode).map((item) => `.${item}`).join('')}`.slice(0, 160) : null, ancestors };
+  }
+
+  function classifyInterviewField(node) {
+    const dialog = node.closest('.interview-invite-dialog-ui');
+    if (!dialog) return null;
+    if (node.matches('.selectjob .ui-select-selection')) return { role: 'JOB', selected: null };
+    if (node.matches('.interview-address input')) return { role: 'ADDRESS', selected: null };
+    if (node.matches('.contact-form-item textarea')) return { role: 'NOTE', selected: null };
+    if (node.matches('.interview-datetime-fields .ui-date-picker-v2 input')) return { role: 'DATE', selected: null };
+    if (node.matches('.interview-datetime-fields .time-select')) return { role: 'TIME', selected: null };
+    if (node.matches('.radio-group-v2 > .radio-item')) return { role: 'MODE_OPTION', selected: node.classList.contains('radio-checked') };
+    if (node.matches('.interview-contact > .ui-dropmenu-label')) return { role: 'CONTACT', selected: null };
+    if (node.matches('.interview-btns > .btn-outline-v2')) return { role: 'CANCEL', selected: null };
+    if (node.matches('.interview-btns > .btn-sure-v2')) return { role: 'SEND', selected: null };
+    return null;
+  }
+
+  function safeClassTokens(node) {
+    return [...(node?.classList || [])].filter((item) => /^[a-zA-Z0-9_-]{1,80}$/.test(item)).slice(0, 12);
+  }
+
+  function safeAttribute(node, name) {
+    const value = compact(node?.getAttribute?.(name));
+    return /^[a-zA-Z0-9_-]{1,40}$/.test(value) ? value : null;
+  }
+
+  function safeKnownLabel(value) {
+    const label = compact(value);
+    return /^(?:发送(?:消息)?|求简历|接收简历|换电话|换微信|约面试|不合适|确认|确定|取消|暂不)$/.test(label) ? label : null;
+  }
+
+  function knownActionLabel(node, rawLabel) {
+    if (!node) return null;
+    const exact = rawLabel.match(/^(发送(?:消息)?|求简历|接收简历|换电话|换微信|约面试|不合适)$/)?.[1];
+    if (exact) return exact === '发送消息' ? '发送' : exact;
+    if (!node.matches('.operate-btn, .submit, .boss-btn, .card-btn, button, [role="button"]') || rawLabel.length > 40) return null;
+    return ['求简历', '接收简历', '换电话', '换微信', '约面试', '不合适', '发送', '确认', '确定', '取消', '暂不'].find((label) => rawLabel.includes(label)) || null;
+  }
+
+  function replyControlShape({ editor, sendButton }) {
+    return [editor?.id || 'fallback-editor', editor?.tagName || '', editor?.getAttribute('role') || '',
+      editor?.getAttribute('contenteditable') || '', sendButton ? `${sendButton.tagName}:${safeClassTokens(sendButton).join('.')}:发送` : 'ENTER_TO_SEND'].join('|');
+  }
+
+  function controlLabel(node) {
+    return compact(node?.textContent) || compact(node?.getAttribute?.('aria-label')) || compact(node?.getAttribute?.('title')) || compact(node?.getAttribute?.('data-tooltip'));
+  }
+
+  function readEditorText(editor) {
+    if (!editor) return '';
+    if ('value' in editor && typeof editor.value === 'string') return editor.value;
+    return editor.innerText || editor.textContent || '';
+  }
+
+  function writeEditorText(editor, text) {
+    if ('value' in editor && typeof editor.value === 'string') {
+      const prototype = editor.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+      if (setter) setter.call(editor, text); else editor.value = text;
+    } else {
+      editor.replaceChildren(document.createTextNode(text));
+    }
+    editor.focus({ preventScroll: true });
+    editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
   }
 
   function isJobDetailPage() {

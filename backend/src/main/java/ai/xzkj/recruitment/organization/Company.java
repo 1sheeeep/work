@@ -14,6 +14,7 @@ import jakarta.persistence.Version;
 
 import java.time.Instant;
 import java.util.UUID;
+import ai.xzkj.recruitment.auth.SystemUser;
 
 @Entity
 @Table(name = "companies")
@@ -59,6 +60,16 @@ public class Company {
     @Column(name = "knowledge_approved_at")
     private Instant knowledgeApprovedAt;
 
+    @Column(name = "ai_auto_analysis_enabled", nullable = false)
+    private boolean aiAutoAnalysisEnabled;
+
+    @Column(name = "ai_auto_analysis_authorized_at")
+    private Instant aiAutoAnalysisAuthorizedAt;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "ai_auto_analysis_authorized_by")
+    private SystemUser aiAutoAnalysisAuthorizedBy;
+
     @Version
     private long version;
 
@@ -101,6 +112,12 @@ public class Company {
         this.knowledgeVersion++;
     }
 
+    public void configureAiAutoAnalysis(boolean enabled, SystemUser user) {
+        this.aiAutoAnalysisEnabled = enabled;
+        this.aiAutoAnalysisAuthorizedAt = enabled ? Instant.now() : null;
+        this.aiAutoAnalysisAuthorizedBy = enabled ? user : null;
+    }
+
     @PreUpdate
     void preUpdate() { this.updatedAt = Instant.now(); }
 
@@ -116,6 +133,9 @@ public class Company {
     public boolean isKnowledgeApproved() { return knowledgeApproved; }
     public int getKnowledgeVersion() { return knowledgeVersion; }
     public Instant getKnowledgeApprovedAt() { return knowledgeApprovedAt; }
+    public boolean isAiAutoAnalysisEnabled() { return aiAutoAnalysisEnabled; }
+    public Instant getAiAutoAnalysisAuthorizedAt() { return aiAutoAnalysisAuthorizedAt; }
+    public SystemUser getAiAutoAnalysisAuthorizedBy() { return aiAutoAnalysisAuthorizedBy; }
     public long getVersion() { return version; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }

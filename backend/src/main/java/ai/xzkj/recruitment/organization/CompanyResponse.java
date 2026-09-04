@@ -16,6 +16,9 @@ public record CompanyResponse(
         boolean knowledgeApproved,
         int knowledgeVersion,
         Instant knowledgeApprovedAt,
+        boolean aiAutoAnalysisEnabled,
+        Instant aiAutoAnalysisAuthorizedAt,
+        String aiAutoAnalysisAuthorizedBy,
         long version,
         Instant createdAt,
         Instant updatedAt
@@ -25,7 +28,8 @@ public record CompanyResponse(
                 company.getId(), company.getName(), company.getCode(), company.getStatus(),
                 company.getLocation(), company.getNotes(), company.getKnowledgeIndustry(), company.getKnowledgeScale(),
                 company.getKnowledgeSummary(), company.isKnowledgeApproved(), company.getKnowledgeVersion(),
-                company.getKnowledgeApprovedAt(), company.getVersion(),
+                company.getKnowledgeApprovedAt(), company.isAiAutoAnalysisEnabled(), company.getAiAutoAnalysisAuthorizedAt(),
+                company.getAiAutoAnalysisAuthorizedBy() == null ? null : company.getAiAutoAnalysisAuthorizedBy().getDisplayName(), company.getVersion(),
                 company.getCreatedAt(), company.getUpdatedAt()
         );
     }
