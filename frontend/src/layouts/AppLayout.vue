@@ -27,10 +27,6 @@ const workspaceLabel = computed(() => ({ dashboard: '今日总览', 'boss-accoun
 
 function navigate(path: string) {
   mobileNavOpen.value = false
-  if (path === '/candidates') {
-    void router.push({ path: '/dashboard', hash: '#attention-panel' })
-    return
-  }
   void router.push(path)
 }
 
