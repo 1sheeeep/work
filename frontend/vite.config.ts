@@ -14,8 +14,10 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api': 'http://localhost:8080',
-      '/actuator': 'http://localhost:8080',
+      // Docker does not expose the backend's internal :8080 port to macOS.
+      // Reuse Caddy on :8088 so Vite HMR and the production build call the same API gateway.
+      '/api': { target: 'http://localhost:8088', changeOrigin: true },
+      '/actuator': { target: 'http://localhost:8088', changeOrigin: true },
     },
   },
   test: {
