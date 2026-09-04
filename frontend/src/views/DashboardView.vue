@@ -1,173 +1,30 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ChatDotRound, Connection, DocumentChecked, Refresh, Right, Warning } from '@element-plus/icons-vue'
+import { Clock, Refresh } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, apiErrorMessage, ensureCsrf } from '../services/api'
-import { authStore } from '../stores/auth'
-import type { AutoReplyAttempt, AutoReplyPolicy, BossAccount, BrowserDevice, CandidateContact, Company, JobPosition } from '../types'
+import type { AutoReplyPolicy, BrowserDevice, BrowserUnreadObservation, UnmatchedJobGroup } from '../types'
 
-const router = useRouter()
-const loading = ref(true)
-const actionId = ref('')
-const updatedAt = ref<Date | null>(null)
-const accounts = ref<BossAccount[]>([])
-const candidates = ref<CandidateContact[]>([])
-const policies = ref<AutoReplyPolicy[]>([])
-const devices = ref<BrowserDevice[]>([])
-const attempts = ref<AutoReplyAttempt[]>([])
-const companies = ref<Company[]>([])
-const jobs = ref<JobPosition[]>([])
-const displayName = computed(() => authStore.state.user?.displayName || 'HR')
-const activePolicies = computed(() => policies.value.filter(x => x.awayActive))
-const followUps = computed(() => candidates.value.filter(x => x.needsHrFollowUp))
-const sentToday = computed(() => policies.value.reduce((n, x) => n + x.sentToday, 0))
-function isSafeMonitoringDevice(device?: BrowserDevice) { return device?.runtimeState === 'PAUSED' && /^只监测：/.test(device.stopReason || '') }
-const connectionIssues = computed(() => policies.value.filter(x => {
-  const device = devices.value.find(d => d.accountId === x.accountId && d.status === 'ACTIVE')
-  return x.accountStatus !== 'ACTIVE' || !x.messageSendCapable || !device || (device.runtimeState !== 'RUNNING' && !isSafeMonitoringDevice(device))
-}))
-const recentAttempts = computed(() => attempts.value.slice(0, 5))
-const formalAccounts = computed(() => accounts.value.filter(x => x.gatewayType === 'LOCAL_CDP_CONNECTOR' && x.status === 'ACTIVE'))
-const linkedFormalAccounts = computed(() => formalAccounts.value.filter(x => devices.value.some(d => d.accountId === x.id && d.status === 'ACTIVE')))
-const formalCompanyIds = computed(() => new Set(formalAccounts.value.map(x => x.company.id)))
-const activeFormalJobs = computed(() => jobs.value.filter(x => x.status === 'ACTIVE' && formalAccounts.value.some(a => a.id === x.bossAccount.id)))
-const draftFormalJobs = computed(() => jobs.value.filter(x => x.status === 'DRAFT' && formalAccounts.value.some(a => a.id === x.bossAccount.id)))
-const readyFormalJobs = computed(() => activeFormalJobs.value.filter(x => x.safeReplyReady))
-const replyCompanies = computed(() => companies.value.filter(x => formalCompanyIds.value.has(x.id)))
-const readinessSteps = computed(() => [
-  { key: 'account', title: '连接账号与浏览器', done: linkedFormalAccounts.value.length > 0, detail: linkedFormalAccounts.value.length ? `${linkedFormalAccounts.value.length} 个账号已连接本机 Chrome` : '真实 BOSS 账号到位后，从这里开始连接。', action: '账号与浏览器', path: '/boss-accounts', icon: Connection },
-  { key: 'company', title: '审核企业公开资料', done: replyCompanies.value.length > 0 && replyCompanies.value.every(x => x.knowledgeApproved), detail: replyCompanies.value.length ? `${replyCompanies.value.filter(x => x.knowledgeApproved).length}/${replyCompanies.value.length} 家企业资料已审核；只填写真实、可对候选人公开的信息。` : '先确认企业主体，再填写可公开的行业和公司介绍。', action: '企业与集团', path: '/organization', icon: ChatDotRound },
-  { key: 'job', title: '逐个核对真实岗位', done: activeFormalJobs.value.length > 0 && draftFormalJobs.value.length === 0, detail: draftFormalJobs.value.length ? `${draftFormalJobs.value.length} 个 BOSS 同步岗位等待人工核对` : activeFormalJobs.value.length ? `${activeFormalJobs.value.length} 个岗位已核对启用` : '等待真实岗位页面同步。', action: '岗位资料', path: '/job-positions', icon: DocumentChecked },
-  { key: 'reply', title: '开启安全草稿', done: activeFormalJobs.value.length > 0 && readyFormalJobs.value.length === activeFormalJobs.value.length, detail: activeFormalJobs.value.length ? `${readyFormalJobs.value.length}/${activeFormalJobs.value.length} 个岗位可生成草稿` : '资料完整后自动解锁；当前不会发送消息。', action: '值守规则', path: '/auto-replies', icon: ChatDotRound },
-])
-const nextReadinessStep = computed(() => readinessSteps.value.find(x => !x.done) || null)
-const overallState = computed(() => activePolicies.value.length ? `${activePolicies.value.length} 个账号正在托管` : '你当前在岗')
-const subtitle = computed(() => activePolicies.value.length ? '系统正在观察已连接账号。候选人消息只会进入安全草稿与人工处理链路。' : '尚未开启离开托管。你离开前可为指定账号设定时长，系统会先安全观察。')
-const statusHint = computed(() => activePolicies.value.length ? '离开托管中' : '等待你开启值守')
-
-async function load() {
-  loading.value = true
-  const results = await Promise.allSettled([
-    api.get<BossAccount[]>('/boss-accounts'), api.get<CandidateContact[]>('/candidate-contacts'), api.get<AutoReplyPolicy[]>('/auto-replies/policies'), api.get<BrowserDevice[]>('/local-connector/devices'), api.get<AutoReplyAttempt[]>('/auto-replies/attempts'), api.get<Company[]>('/organization/companies'), api.get<JobPosition[]>('/job-positions'),
-  ])
-  const targets = [accounts, candidates, policies, devices, attempts, companies, jobs]
-  results.forEach((result, index) => { if (result.status === 'fulfilled' && result.value?.data) targets[index]!.value = (index === 6 ? (result.value.data as JobPosition[]).filter(job => job.captureSource === 'VISIBLE_PAGE') : result.value.data) as never })
-  updatedAt.value = new Date()
-  loading.value = false
-}
-async function setAway(policy: AutoReplyPolicy, mode: 'IN_OFFICE' | 'TEMPORARY' | 'AFTER_HOURS', hours = 0) {
-  if (!policy.configured) { ElMessage.warning('请先由管理员配置该账号的托管策略'); return }
-  actionId.value = policy.accountId
-  try {
-    await ensureCsrf()
-    await api.put(`/auto-replies/policies/${policy.accountId}/away-mode`, { mode, endsAt: mode === 'IN_OFFICE' ? null : new Date(Date.now() + hours * 3600000).toISOString() })
-    ElMessage.success(mode === 'IN_OFFICE' ? '已结束该账号托管' : '离开托管已开启')
-    await load()
-  } catch (error) {
-    ElMessage.error(apiErrorMessage(error, '托管状态更新失败'))
-  } finally { actionId.value = '' }
-}
-async function endAll() {
-  if (!activePolicies.value.length) return
-  try {
-    await ElMessageBox.confirm(`确认结束 ${activePolicies.value.length} 个账号的离开托管？`, '我已返回', { confirmButtonText: '结束全部托管' })
-    for (const policy of activePolicies.value) await setAway(policy, 'IN_OFFICE')
-    ElMessage.success('全部托管已结束，欢迎回来')
-  } catch (error) { if (error !== 'cancel' && error !== 'close') ElMessage.error('结束全部托管失败，请检查账号状态') }
-}
-function open(path: string) {
-  const anchors: Record<string, string> = {
-    '/candidates': '#attention-panel',
-    '/auto-replies': '#away-panel',
-  }
-  const anchor = anchors[path]
-  if (anchor) {
-    document.querySelector(anchor)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    return
-  }
-  void router.push(path)
-}
-function formatTime(value?: string) { return value ? new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', month: 'numeric', day: 'numeric' }).format(new Date(value)) : '—' }
-function statusLabel(status: string) { return { SENT: '已接待', FAILED: '发送失败', SKIPPED: '已跳过', PENDING_REVIEW: '待审核', CLAIMED: '处理中' }[status] || status }
-onMounted(load)
+const router = useRouter(); const loading = ref(true); const switching = ref(false)
+const policies = ref<AutoReplyPolicy[]>([]); const devices = ref<BrowserDevice[]>([]); const observations = ref<BrowserUnreadObservation[]>([]); const groups = ref<UnmatchedJobGroup[]>([])
+const startOpen = ref(false); const hours = ref(2); const tab = ref<'UNREAD'|'DONE'>('UNREAD'); const page = ref(1); const pageInput = ref(1); const selected = ref<BrowserUnreadObservation | null>(null); const jobId = ref('')
+const active = computed(() => policies.value.filter(x => x.awayActive)); const watchable = computed(() => policies.value.filter(x => x.accountStatus === 'ACTIVE' && ['CONNECTED','DEGRADED'].includes(x.connectionStatus)))
+const currentId = computed(() => observations.value.filter(x => x.unread && x.detailVerifiedAt).sort((a,b) => +new Date(b.detailVerifiedAt!) - +new Date(a.detailVerifiedAt!))[0]?.id)
+const ordered = (items: BrowserUnreadObservation[]) => [...items].sort((a,b) => a.id === currentId.value ? -1 : b.id === currentId.value ? 1 : +new Date(b.latestMessageAt || b.lastSeenAt) - +new Date(a.latestMessageAt || a.lastSeenAt))
+const unread = computed(() => ordered(observations.value.filter(x => x.unread && x.resolutionStatus === 'UNRESOLVED'))); const done = computed(() => ordered(observations.value.filter(x => !x.unread || x.resolutionStatus !== 'UNRESOLVED'))); const items = computed(() => tab.value === 'UNREAD' ? unread.value : done.value)
+const pages = computed(() => Math.max(1, Math.ceil(items.value.length / 6))); const visible = computed(() => items.value.slice((page.value - 1) * 6, page.value * 6)); const online = computed(() => devices.value.filter(x => x.status === 'ACTIVE' && x.runtimeState === 'RUNNING').length); const drafts = computed(() => unread.value.filter(x => x.draftQualification === 'KNOWLEDGE_READY').length); const issues = computed(() => new Set(devices.value.filter(x => x.status === 'ACTIVE' && x.runtimeState !== 'RUNNING').map(x => x.accountId)).size)
+const selectedGroup = computed(() => selected.value ? groups.value.find(x => x.observationIds.includes(selected.value!.id)) : undefined); const candidates = computed(() => selectedGroup.value?.candidates.filter(x => x.knowledgeReady) ?? [])
+const labels: Record<BrowserUnreadObservation['eligibilityStatus'],string> = { OBSERVING:'观察中',AWAY_INACTIVE:'未挂机',SNAPSHOT_CONFIRMATION_REQUIRED:'等待确认',DETAIL_REQUIRED:'等待详情',READY_FOR_REVIEW:'待处理',HR_REPLIED:'HR 已回复',HR_HANDLED:'已处理',APPROVED_DRAFT:'草稿已审核',REJECTED:'已忽略',HUMAN_TAKEOVER:'人工接管' }
+const fill: Record<BrowserUnreadObservation['fillStatus'],string> = { NONE:'尚未批准填入',READY:'待填入 BOSS',CLAIMED:'填入中',FILLED:'已填入未发送',UNKNOWN:'结果待人工确认' }
+async function load(){ loading.value=true; try { const [p,d,o,g] = await Promise.all([api.get<AutoReplyPolicy[]>('/auto-replies/policies'),api.get<BrowserDevice[]>('/local-connector/devices'),api.get<BrowserUnreadObservation[]>('/local-connector/observations'),api.get<UnmatchedJobGroup[]>('/local-connector/observations/unmatched-job-groups')]); policies.value=p.data;devices.value=d.data;observations.value=o.data;groups.value=g.data } catch(e){ElMessage.error(apiErrorMessage(e,'值守状态加载失败'))} finally{loading.value=false} }
+function select(item:BrowserUnreadObservation){selected.value=item;jobId.value=''}; function move(value:number){page.value=Math.min(Math.max(1,value),pages.value);pageInput.value=page.value}; function age(value:string){const n=Math.max(0,Math.floor((Date.now()- +new Date(value))/60000));return n<60?`${n} 分钟`:n<1440?`${Math.floor(n/60)} 小时`:`${Math.floor(n/1440)} 天`}
+function toggle(value:boolean|string|number){if(Boolean(value)){if(!watchable.value.length)return ElMessage.warning('请先连接至少一个招聘账号');startOpen.value=true}else void stop()}
+async function start(){switching.value=true;try{await ensureCsrf();const endsAt=new Date(Date.now()+hours.value*3600000).toISOString();await Promise.all(watchable.value.map(x=>api.put(`/auto-replies/policies/${x.accountId}/away-mode`,{mode:hours.value>=12?'AFTER_HOURS':'TEMPORARY',endsAt})));startOpen.value=false;ElMessage.success('挂机值守已开启');await load()}catch(e){ElMessage.error(apiErrorMessage(e,'挂机值守开启失败'))}finally{switching.value=false}}
+async function stop(){try{await ElMessageBox.confirm('确认结束全部招聘账号的挂机值守？','结束挂机');switching.value=true;await ensureCsrf();await Promise.all(active.value.map(x=>api.put(`/auto-replies/policies/${x.accountId}/away-mode`,{mode:'IN_OFFICE',endsAt:null})));await load()}catch(e){if(e!=='cancel'&&e!=='close')ElMessage.error(apiErrorMessage(e,'挂机值守结束失败'))}finally{switching.value=false}}
+async function review(decision:'APPROVED'|'HUMAN_TAKEOVER'){if(!selected.value)return;try{let content:string|null=null,note='';if(decision==='APPROVED'){if(selected.value.draftQualification!=='KNOWLEDGE_READY')return ElMessage.warning('岗位回复资料尚未就绪');content=(await ElMessageBox.prompt('核对本次回复草稿','审核回复草稿',{inputValue:selected.value.reviewedContent||selected.value.draftContent||'',inputType:'textarea'})).value}else note=(await ElMessageBox.prompt('填写接管备注','人工接管')).value;await ensureCsrf();await api.put(`/local-connector/observations/${selected.value.id}/review`,{decision,content,note});selected.value=null;await load()}catch(e){if(e!=='cancel'&&e!=='close')ElMessage.error(apiErrorMessage(e,'会话处理失败'))}}
+async function match(){const group=selectedGroup.value,job=candidates.value.find(x=>x.id===jobId.value);if(!group||!job)return ElMessage.warning('请选择一个已就绪的真实岗位');try{await ensureCsrf();await api.put('/local-connector/observations/manual-job-match',{observationIds:group.observationIds,jobPositionId:job.id,observedTitle:group.observedTitle,confirmedJobTitle:job.title,confirmed:true});selected.value=null;await load()}catch(e){ElMessage.error(apiErrorMessage(e,'岗位关联失败'))}}
+watch([tab,items],()=>move(1));onMounted(load)
 </script>
-
-<template>
-  <div class="page-shell dashboard-page">
-    <header class="command-hero" :class="{ active: activePolicies.length }">
-      <div class="hero-copy">
-        <span class="stage-chip"><i></i>{{ activePolicies.length ? '离开托管中' : '测试阶段 · 只读值守' }}</span>
-        <h1>今天的招聘值守</h1>
-        <p>{{ subtitle }}</p>
-        <div class="hero-facts"><span><b>{{ linkedFormalAccounts.length }}</b> 已连接账号</span><span><b>{{ followUps.length }}</b> 待 HR 跟进</span><span><b>{{ sentToday }}</b> 今日接待记录</span></div>
-      </div>
-      <aside class="hero-status">
-        <span>当前状态</span><strong>{{ overallState }}</strong><small>{{ statusHint }} · {{ updatedAt ? `更新于 ${formatTime(updatedAt.toISOString())}` : '正在读取状态' }}</small>
-        <div class="hero-actions"><el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button><el-button v-if="activePolicies.length" type="success" @click="endAll">我已返回</el-button></div>
-      </aside>
-    </header>
-
-    <el-alert class="test-mode-alert" type="warning" :closable="false" show-icon title="当前处于安全测试阶段：只同步状态和生成草稿，不会向 BOSS 发送消息。" />
-
-    <div v-if="loading" class="surface-panel skeleton-stack"><el-skeleton :rows="9" animated /></div>
-    <template v-else>
-      <section class="metric-grid" aria-label="今日状态">
-        <button class="metric-card metric-card--teal" @click="open('/auto-replies')"><i>托</i><span>正在托管</span><strong>{{ activePolicies.length }}</strong><small>共 {{ policies.length }} 个账号</small><b>查看规则 <Right /></b></button>
-        <button class="metric-card metric-card--orange" @click="open('/candidates')"><i>待</i><span>待 HR 跟进</span><strong>{{ followUps.length }}</strong><small>返回后优先处理</small><b>进入消息 <Right /></b></button>
-        <button class="metric-card metric-card--blue" @click="open('/auto-replies')"><i>记</i><span>今日接待记录</span><strong>{{ sentToday }}</strong><small>成功、失败与跳过均可追溯</small><b>查看记录 <Right /></b></button>
-        <button class="metric-card metric-card--red" @click="open('/boss-accounts')"><i>连</i><span>连接需要检查</span><strong :class="{ danger: connectionIssues.length }">{{ connectionIssues.length }}</strong><small>异常账号会保持暂停</small><b>检查连接 <Right /></b></button>
-      </section>
-
-      <section class="workbench-grid">
-        <article class="surface-panel priority-panel">
-          <header class="section-title-row"><div><span class="section-kicker">START HERE</span><h2>现在优先完成</h2><p>按安全门禁顺序完成当前阻断项；每一步通过后自动进入下一步。</p></div><el-button text @click="open(nextReadinessStep?.path || '/boss-accounts')">查看详情</el-button></header>
-          <div v-if="nextReadinessStep" class="next-step">
-            <span class="next-step__number">{{ readinessSteps.findIndex(x => x.key === nextReadinessStep?.key) + 1 }}</span>
-            <div><small>当前下一步</small><strong>{{ nextReadinessStep.title }}</strong><p>{{ nextReadinessStep.detail }}</p></div>
-            <el-button type="primary" @click="open(nextReadinessStep.path)">前往{{ nextReadinessStep.action }}</el-button>
-          </div>
-          <details class="readiness-details">
-            <summary>查看完整准备清单 <span>{{ readinessSteps.filter(x => x.done).length }} / {{ readinessSteps.length }} 已完成</span></summary>
-            <div class="readiness-list">
-              <button v-for="(step, index) in readinessSteps" :key="step.key" :class="{ done: step.done, current: nextReadinessStep?.key === step.key }" @click="open(step.path)"><span>{{ step.done ? '✓' : index + 1 }}</span><div><strong>{{ step.title }}</strong><small>{{ step.done ? '已完成' : step.detail }}</small></div><Right /></button>
-            </div>
-          </details>
-        </article>
-
-        <aside class="surface-panel safety-panel">
-          <header class="section-title-row"><div><span class="section-kicker">SAFE MODE</span><h2>运行安全边界</h2></div></header>
-          <ul><li><b>不保存</b><span>账号密码、Cookie 与聊天正文</span></li><li><b>不自动发送</b><span>真实页面验证前，所有回复仅为草稿</span></li><li><b>异常即暂停</b><span>掉线、验证、风控或页面变化时停止运行</span></li></ul>
-          <footer><span>需要查看本机连接器状态？</span><el-button link type="primary" @click="open('/operations')">运行保障</el-button></footer>
-        </aside>
-      </section>
-
-      <section id="away-panel" class="surface-panel away-panel">
-        <header class="section-title-row"><div><span class="section-kicker">AWAY MODE</span><h2>离开托管</h2><p>为每个账号选择离开时长；到期会停止，HR 返回后可随时接管。</p></div><small>你好，{{ displayName }}</small></header>
-        <div v-if="!policies.length" class="compact-empty"><span>暂未配置可托管账号</span><small>真实账号到位后，在“账号与浏览器”完成连接，再回到这里设定离开时段。</small><el-button type="primary" @click="open('/boss-accounts')">查看连接准备</el-button></div>
-        <div v-else class="account-list">
-          <article v-for="policy in policies" :key="policy.accountId">
-            <div class="account-status" :class="{ active: policy.awayActive }"><i></i><div><strong>{{ policy.accountName }}</strong><small v-if="policy.awayActive">{{ policy.awayMode === 'AFTER_HOURS' ? '下班托管' : '临时离开' }} · 至 {{ formatTime(policy.awayEndsAt) }}</small><small v-else>当前在岗，不会自动接待</small></div></div>
-            <div class="account-actions"><el-button v-if="policy.awayActive" type="success" plain :loading="actionId === policy.accountId" @click="setAway(policy, 'IN_OFFICE')">我已返回</el-button><template v-else><el-button :loading="actionId === policy.accountId" @click="setAway(policy, 'TEMPORARY', 1)">离开 1 小时</el-button><el-button type="primary" :loading="actionId === policy.accountId" @click="setAway(policy, 'TEMPORARY', 2)">离开 2 小时</el-button><el-button @click="setAway(policy, 'AFTER_HOURS', 12)">下班托管</el-button></template></div>
-          </article>
-        </div>
-      </section>
-
-      <section class="lower-grid">
-        <article id="attention-panel" class="surface-panel attention-panel"><header class="section-title-row"><div><span class="section-kicker">ATTENTION</span><h2>需要处理</h2><p>先检查异常账号，再处理候选人跟进。</p></div></header><div v-if="!connectionIssues.length && !followUps.length" class="all-clear"><span>✓</span><strong>当前没有阻断事项</strong><small>账号连接和待跟进队列状态正常</small></div><button v-for="policy in connectionIssues" :key="`issue-${policy.accountId}`" @click="open('/boss-accounts')"><Warning/><span><strong>{{ policy.accountName }} 连接需要检查</strong><small>登录、页面识别或设备心跳异常</small></span><Right/></button><button v-if="followUps.length" @click="open('/candidates')"><ChatDotRound/><span><strong>{{ followUps.length }} 个会话等待 HR 跟进</strong><small>自动接待不代表沟通已完成</small></span><Right/></button></article>
-        <article class="surface-panel recent-panel"><header class="section-title-row"><div><span class="section-kicker">ACTIVITY</span><h2>最近自动接待</h2><p>快速确认离开期间发生了什么。</p></div><el-button text @click="open('/auto-replies')">查看全部</el-button></header><div v-if="!recentAttempts.length" class="recent-empty"><span>暂未产生接待记录</span><small>真实账号接入并开启值守后，会在这里展示每次处理结果。</small></div><div v-else class="attempt-list"><article v-for="attempt in recentAttempts" :key="attempt.id"><span class="avatar">{{ attempt.candidateName.slice(0, 1) }}</span><div><strong>{{ attempt.candidateName }}</strong><small>{{ attempt.jobTitle }} · {{ attempt.accountName }}</small></div><el-tag :type="attempt.status === 'SENT' ? 'success' : attempt.status === 'FAILED' ? 'danger' : 'info'">{{ statusLabel(attempt.status) }}</el-tag><time>{{ formatTime(attempt.completedAt || attempt.createdAt) }}</time></article></div></article>
-      </section>
-    </template>
-  </div>
-</template>
-
-<style scoped>
-.dashboard-page{padding-top:32px}.command-hero{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:28px;align-items:stretch;margin-bottom:18px;padding:30px;border:1px solid #cfe4df;border-radius:22px;background:radial-gradient(circle at 94% 0,rgba(168,243,232,.72),transparent 38%),linear-gradient(130deg,#fff 0%,#effaf7 100%);box-shadow:var(--shadow-sm)}.command-hero.active{border-color:#93d7c9;background:radial-gradient(circle at 94% 0,rgba(167,243,208,.72),transparent 38%),linear-gradient(130deg,#fff 0%,#edfcf4 100%)}.stage-chip,.section-kicker{display:inline-flex;align-items:center;gap:7px;color:var(--brand-700);font-size:10px;font-weight:800;letter-spacing:.12em}.stage-chip{padding:7px 10px;border-radius:999px;background:#dff6f1;letter-spacing:.06em}.stage-chip i{width:7px;height:7px;border-radius:50%;background:#e79b25;box-shadow:0 0 0 4px rgba(231,155,37,.12)}.command-hero.active .stage-chip{background:#d9f8e7;color:#087f5b}.command-hero.active .stage-chip i{background:#12b76a}.hero-copy h1{margin:15px 0 9px;font-size:clamp(30px,3vw,42px);letter-spacing:-.045em;line-height:1.08}.hero-copy>p{max-width:710px;margin:0;color:var(--text-secondary);line-height:1.7}.hero-facts{display:flex;flex-wrap:wrap;gap:22px;margin-top:22px}.hero-facts span{color:var(--text-secondary);font-size:12px}.hero-facts b{margin-right:5px;color:var(--text);font-size:18px}.hero-status{display:flex;flex-direction:column;justify-content:center;padding:22px;border:1px solid rgba(158,204,195,.76);border-radius:16px;background:rgba(255,255,255,.76)}.hero-status>span{color:var(--text-secondary);font-size:11px}.hero-status strong{margin:8px 0 5px;font-size:19px}.hero-status small{color:var(--text-secondary);font-size:11px;line-height:1.55}.hero-actions{display:flex;gap:8px;margin-top:18px}.hero-actions .el-button{flex:1}.test-mode-alert{margin-bottom:18px}.metric-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}.metric-card{position:relative;display:grid;grid-template-columns:42px 1fr;column-gap:12px;align-items:start;min-height:166px;padding:18px;border:1px solid var(--border);border-radius:16px;background:#fff;color:var(--text);text-align:left;cursor:pointer;box-shadow:var(--shadow-sm);overflow:hidden;transition:transform .18s,border-color .18s,box-shadow .18s}.metric-card:hover{transform:translateY(-2px);border-color:#9fccc4;box-shadow:var(--shadow-md)}.metric-card>i{display:grid;width:42px;height:42px;place-items:center;border-radius:12px;background:#e8f6f3;color:#087f5b;font-style:normal;font-weight:800}.metric-card>span{padding-top:2px;color:var(--text-secondary);font-size:12px}.metric-card>strong{grid-column:2;margin-top:-16px;font-size:30px;letter-spacing:-.04em}.metric-card>small{grid-column:2;color:var(--text-secondary);font-size:11px;line-height:1.45}.metric-card>b{position:absolute;bottom:16px;left:18px;display:flex;align-items:center;gap:3px;color:var(--brand-700);font-size:11px}.metric-card b :deep(svg){width:14px}.metric-card--orange>i{background:#fff3df;color:#b54708}.metric-card--blue>i{background:#ebf2ff;color:#3538cd}.metric-card--red>i{background:#fff0ee;color:#b42318}.metric-card .danger{color:var(--danger)}.workbench-grid,.lower-grid{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(300px,.8fr);gap:18px;margin-bottom:18px}.priority-panel,.safety-panel,.away-panel,.attention-panel,.recent-panel{overflow:hidden}.section-title-row{padding:20px 22px 16px}.section-kicker{display:block;margin-bottom:5px}.next-step{display:grid;grid-template-columns:42px minmax(0,1fr) auto;align-items:center;gap:13px;margin:0 22px 10px;padding:16px;border:1px solid #b9ded6;border-radius:13px;background:linear-gradient(90deg,#effaf7,#fbfefd)}.next-step__number{display:grid;width:38px;height:38px;place-items:center;border-radius:11px;background:var(--brand-700);color:#fff;font-weight:800}.next-step small{color:var(--brand-700);font-size:11px;font-weight:700}.next-step strong{display:block;margin-top:4px}.next-step p{margin:5px 0 0;color:var(--text-secondary);font-size:12px;line-height:1.45}.readiness-details{margin-top:2px;border-top:1px solid #edf2f0}.readiness-details summary{display:flex;align-items:center;justify-content:space-between;padding:14px 22px;color:var(--brand-700);cursor:pointer;font-size:12px;font-weight:700;list-style:none}.readiness-details summary::-webkit-details-marker{display:none}.readiness-details summary span{color:var(--text-secondary);font-weight:500}.readiness-list{padding:0 22px 18px}.readiness-list button{display:grid;width:100%;grid-template-columns:28px minmax(0,1fr) auto;align-items:center;gap:10px;padding:12px 0;border:0;border-top:1px solid #edf2f0;background:transparent;color:var(--text);text-align:left;cursor:pointer}.readiness-list button:first-child{border-top:0}.readiness-list button>span{display:grid;width:25px;height:25px;place-items:center;border-radius:8px;background:#eef2f4;color:#667085;font-size:11px;font-weight:700}.readiness-list button.done>span{background:#d9f8e7;color:#087f5b}.readiness-list button.current>span{background:#dff6f1;color:var(--brand-700)}.readiness-list strong,.readiness-list small{display:block}.readiness-list small{margin-top:3px;color:var(--text-secondary);font-size:11px;line-height:1.4}.readiness-list :deep(svg){width:15px;color:#98a2b3}.safety-panel{background:linear-gradient(180deg,#102f2c 0%,#082725 100%);border-color:#183f3b;color:#fff}.safety-panel .section-title-row{border-color:rgba(255,255,255,.1)}.safety-panel .section-title-row h2{color:#fff}.safety-panel .section-kicker{color:#76d8ca}.safety-panel ul{display:grid;gap:16px;margin:0;padding:18px 22px 20px;list-style:none}.safety-panel li{display:grid;gap:4px;padding-left:14px;border-left:2px solid #35bba8}.safety-panel b{font-size:13px}.safety-panel li span{color:#abc9c4;font-size:11px;line-height:1.5}.safety-panel footer{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:13px 22px;border-top:1px solid rgba(255,255,255,.1);color:#95b8b2;font-size:11px}.safety-panel :deep(.el-button){color:#81e6d6}.away-panel{margin-bottom:18px}.compact-empty{display:grid;justify-items:start;gap:8px;padding:30px 22px 26px}.compact-empty span{font-weight:700}.compact-empty small{color:var(--text-secondary);line-height:1.5}.account-list{padding:0 22px 20px}.account-list article{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-top:10px;padding:16px;border:1px solid #e6edeb;border-radius:13px;background:#fbfcfc}.account-status{display:flex;align-items:center;gap:12px}.account-status>i{width:10px;height:10px;border-radius:50%;background:#98a2b3}.account-status.active>i{background:#12b76a;box-shadow:0 0 0 5px #d1fadf}.account-status small{display:block;margin-top:5px;color:var(--text-secondary);font-size:12px}.account-actions{display:flex;gap:8px}.attention-panel>button{display:grid;width:100%;grid-template-columns:25px 1fr auto;align-items:center;gap:10px;padding:16px 22px;border:0;border-top:1px solid var(--border);background:#fff;color:var(--text);text-align:left;cursor:pointer}.attention-panel>button:hover{background:#fffaf5}.attention-panel>button>svg{width:19px;color:var(--warning)}.attention-panel button small{display:block;margin-top:4px;color:var(--text-secondary);font-size:12px}.all-clear{display:grid;justify-items:center;gap:6px;padding:38px 20px}.all-clear>span{display:grid;width:42px;height:42px;place-items:center;border-radius:50%;background:#ecfdf3;color:var(--success);font-size:22px}.all-clear small,.recent-empty small{color:var(--text-secondary);font-size:12px}.recent-empty{display:grid;gap:6px;padding:38px 22px}.recent-empty span{font-weight:700}.attempt-list{padding:0 22px 8px}.attempt-list article{display:grid;grid-template-columns:38px minmax(0,1fr) auto auto;align-items:center;gap:11px;padding:13px 0;border-top:1px solid #edf1f0}.avatar{display:grid;width:36px;height:36px;place-items:center;border-radius:11px;background:var(--brand-100);color:var(--brand-700);font-weight:700}.attempt-list strong,.attempt-list small{display:block}.attempt-list small{margin-top:4px;color:var(--text-secondary);font-size:11px}.attempt-list time{color:var(--text-secondary);font-size:11px;text-align:right}@media(max-width:1100px){.metric-grid{grid-template-columns:repeat(2,1fr)}.workbench-grid,.lower-grid{grid-template-columns:1fr}.safety-panel{min-height:0}}@media(max-width:700px){.dashboard-page{padding-top:20px}.command-hero{grid-template-columns:1fr;padding:22px}.hero-copy h1{font-size:31px}.hero-status{padding:18px}.metric-grid{grid-template-columns:1fr 1fr}.next-step{grid-template-columns:38px 1fr}.next-step .el-button{grid-column:1/-1}.account-list article{align-items:flex-start;flex-direction:column}.account-actions{flex-wrap:wrap}.attempt-list article{grid-template-columns:36px 1fr auto}.attempt-list time{grid-column:2/4;text-align:left}.lower-grid{margin-bottom:0}}@media(max-width:430px){.metric-grid{grid-template-columns:1fr}.hero-facts{gap:11px}.hero-actions{flex-direction:column}.readiness-list{padding-right:16px;padding-left:16px}.next-step{margin-right:16px;margin-left:16px}.section-title-row{padding-right:16px;padding-left:16px}}
-/* 左右工作区保持同一视觉基线；窄屏回到单列自然高度。 */
-.workbench-grid { align-items: stretch; }
-.workbench-grid > .surface-panel { height: 100%; box-sizing: border-box; }
-.workbench-grid > .workbench-side { min-height: 100%; grid-template-rows: auto auto minmax(0, 1fr); }
-.workbench-grid > .workbench-side .trend-panel { min-height: 0; height: 100%; box-sizing: border-box; }
-@media (max-width: 1100px) { .workbench-grid > .surface-panel { height: auto; } }
-@media (max-width: 1100px) { .workbench-grid > .workbench-side { min-height: 0; grid-template-rows: none; } .workbench-grid > .workbench-side .trend-panel { height: auto; } }
-</style>
+<template><div class="page-shell duty-page"><header class="page-heading"><div><h1>今天的招聘值守</h1><p>挂机期间仅监测未读并生成安全草稿，发送仍由 HR 人工确认。</p></div><el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button></header><div v-if="loading" class="card-panel"><el-skeleton :rows="8" animated/></div><template v-else><section class="overview"><article class="duty" :class="{active:active.length}"><el-icon><Clock/></el-icon><div><span>{{active.length?'挂机值守进行中':'当前在岗'}}</span><strong>挂机值守</strong><small>{{active.length?`${active.length} 个账号正在监测`:`${watchable.length} 个账号可用`}}</small></div><el-switch :model-value="!!active.length" :loading="switching" aria-label="挂机值守开关" @change="toggle"/></article><article class="card-indicator"><span>桥接在线</span><strong>{{online}}</strong><small>个账号可用</small></article><article class="card-indicator"><span>当前未读</span><strong>{{unread.length}}</strong><small>匿名会话待处理</small></article><article class="card-indicator"><span>草稿就绪</span><strong>{{drafts}}</strong><small>可人工审核</small></article></section><section id="attention-panel" class="workspace"><article id="message-queue" class="card-panel queue"><header><div><h2>消息队列</h2><p>仅展示岗位、账号与匿名定位码；每页 6 条。</p></div><div class="tabs"><button :class="{active:tab==='UNREAD'}" :aria-pressed="tab==='UNREAD'" @click="tab='UNREAD'">未读 {{unread.length}}</button><button :class="{active:tab==='DONE'}" :aria-pressed="tab==='DONE'" @click="tab='DONE'">最近处理</button></div></header><div v-if="!visible.length" class="empty-state">当前没有{{tab==='UNREAD'?'未读':'已处理'}}消息</div><div v-else class="message-list"><article v-for="item in visible" :key="item.id" class="card-entity" :class="{current:item.id===currentId}" tabindex="0" @click="select(item)" @keydown.enter="select(item)"><b>{{(item.observedJobTitle||'待').slice(0,1)}}</b><div><strong>{{item.observedJobTitle||'岗位待识别'}}</strong><small>{{item.accountName}} · 定位码 {{item.anonymousKey}}<em v-if="item.id===currentId">当前浏览器会话</em></small></div><span><strong>{{item.unreadCount}}</strong><small>条未读</small></span><span><strong>{{age(item.firstSeenAt)}}</strong><small>持续时间</small></span><el-button @click.stop="select(item)">查看</el-button></article></div><footer><span>共 {{items.length}} 条</span><el-button :disabled="page===1" @click="move(page-1)">上一页</el-button><b>{{page}} / {{pages}}</b><el-button :disabled="page===pages" @click="move(page+1)">下一页</el-button><label>前往 <el-input-number v-model="pageInput" :min="1" :max="pages" controls-position="right" @change="move(Number(pageInput))"/> 页</label></footer></article><aside><article class="card-emphasis"><h2>今日优先事项</h2><p>{{issues?`${issues} 个账号连接需要检查`:'当前没有账号异常'}}</p><el-button link type="primary" @click="router.push('/boss-accounts')">检查账号</el-button></article><article class="card-panel trend"><h2>招聘活动趋势</h2><div><el-icon><Clock/></el-icon><strong>暂未积累足够数据</strong><small>形成连续历史记录后再展示趋势。</small></div></article></aside></section></template><el-dialog v-model="startOpen" title="开启挂机值守" width="440px"><el-radio-group v-model="hours"><el-radio-button :value="2">2 小时</el-radio-button><el-radio-button :value="4">4 小时</el-radio-button><el-radio-button :value="12">到明早</el-radio-button></el-radio-group><template #footer><el-button @click="startOpen=false">取消</el-button><el-button type="primary" :loading="switching" @click="start">开始挂机</el-button></template></el-dialog><el-dialog :model-value="!!selected" title="未读消息" width="620px" @close="selected=null"><template v-if="selected"><h3>{{selected.observedJobTitle||'岗位待识别'}}</h3><p class="meta">{{selected.accountName}} · 匿名会话 {{selected.anonymousKey}}</p><p>状态：{{labels[selected.eligibilityStatus]}} · {{selected.unreadCount}} 条未读 · {{age(selected.firstSeenAt)}}</p><section v-if="selectedGroup" class="match"><strong>关联真实岗位</strong><small>选择同账号已就绪岗位</small><el-select v-model="jobId" placeholder="选择同账号已就绪岗位"><el-option v-for="job in candidates" :key="job.id" :label="job.title" :value="job.id"/></el-select><el-button type="primary" :disabled="!jobId" @click="match">确认关联</el-button></section><section v-if="selected.draftContent" class="draft"><header>回复草稿 <el-tag v-if="selected.reviewStatus==='APPROVED'">{{fill[selected.fillStatus]}}</el-tag></header><p>{{selected.reviewedContent||selected.draftContent}}</p><small v-if="selected.fillStatus==='FILLED'">已填入未发送，需人工确认。</small></section></template><template #footer><el-button @click="selected=null">关闭</el-button><el-button v-if="selected?.eligibilityStatus==='READY_FOR_REVIEW'" @click="review('HUMAN_TAKEOVER')">人工接管</el-button><el-button v-if="selected?.eligibilityStatus==='READY_FOR_REVIEW'" type="primary" @click="review('APPROVED')">审核草稿</el-button></template></el-dialog></div></template>
+<style scoped>.duty-page{max-width:1240px}.overview{display:grid;grid-template-columns:1.5fr repeat(3,1fr);gap:14px;margin-bottom:16px}.duty{display:grid;grid-template-columns:44px 1fr auto;gap:13px;align-items:center;padding:20px;border-radius:16px;background:#fff;box-shadow:var(--shadow-rest)}.duty.active{background:linear-gradient(120deg,#0f766e,#159d90);color:#fff}.duty div>*{display:block}.duty strong{margin:3px 0;font-size:20px}.duty span,.duty small,.card-indicator span,.card-indicator small{color:var(--text-secondary);font-size:12px}.duty.active span,.duty.active small{color:#d9fffa}.card-indicator{padding:18px;border-left:3px solid var(--brand-600)}.card-indicator strong{display:block;margin:5px 0;font-size:29px}.workspace{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(280px,.72fr);gap:16px}.queue{padding:0;overflow:hidden}.queue>header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 20px;border-bottom:1px solid var(--border)}h2{margin:0;font-size:17px}.queue p,.meta{margin:5px 0 0;color:var(--text-secondary);font-size:12px}.tabs{display:flex;padding:4px;border-radius:10px;background:var(--surface-soft)}.tabs button{padding:7px 10px;border:0;border-radius:7px;background:transparent;color:var(--text-secondary);cursor:pointer}.tabs button.active{background:#fff;color:var(--text);box-shadow:var(--shadow-rest)}.message-list article{display:grid;grid-template-columns:40px minmax(0,1fr) 68px 92px auto;gap:12px;align-items:center;padding:13px 20px;border:0;border-top:1px solid var(--border-subtle);border-radius:0;box-shadow:none}.message-list article:hover{transform:none;background:#f5fbf9}.message-list article.current{box-shadow:inset 3px 0 0 var(--brand-600);background:#eefaf7}.message-list b{display:grid;width:38px;height:38px;place-items:center;border-radius:50%;background:var(--brand-100);color:var(--brand-700)}.message-list strong,.message-list small{display:block}.message-list small{margin-top:3px;color:var(--text-secondary);font-size:11px}.message-list em{margin-left:5px;color:var(--brand-700);font-size:10px;font-style:normal}.queue>footer{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:14px 20px;border-top:1px solid var(--border)}.queue>footer>span{margin-right:auto;color:var(--text-secondary);font-size:12px}.queue label{display:flex;align-items:center;gap:5px;font-size:12px}.queue :deep(.el-input-number){width:74px}.workspace>aside{display:grid;align-content:start;gap:16px}.card-emphasis h2{margin-bottom:10px}.card-emphasis p{margin:0;color:var(--text-secondary);font-size:13px}.trend{min-height:280px}.trend>h2{padding-bottom:16px;border-bottom:1px solid var(--border)}.trend>div{display:grid;place-items:center;gap:8px;min-height:200px;color:var(--text-secondary)}.trend small,.match small,.draft small{color:var(--text-secondary);font-size:11px}.match,.draft{display:grid;gap:9px;margin-top:16px;padding:14px;border-radius:12px;background:var(--surface-soft)}.draft header{display:flex;justify-content:space-between}.draft p{margin:0;line-height:1.65}.empty-state{display:grid;min-height:240px;place-items:center;color:var(--text-secondary)}@media(max-width:900px){.overview{grid-template-columns:repeat(2,1fr)}.workspace{grid-template-columns:1fr}}@media(max-width:650px){.overview{grid-template-columns:1fr}.queue>header{align-items:flex-start;flex-direction:column}.message-list article{grid-template-columns:38px minmax(0,1fr) auto}.message-list article>span{display:none}.queue>footer{flex-wrap:wrap}.queue>footer>span{flex-basis:100%}}</style>
