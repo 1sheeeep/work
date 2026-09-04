@@ -1,7 +1,7 @@
 import { expect, type Page, test } from '@playwright/test'
 
 const currentPages = [
-  { path: '/dashboard', navigation: '今日值守', heading: '今天的招聘工作' },
+  { path: '/dashboard', navigation: '今日值守', heading: '今天的招聘值守' },
   { path: '/boss-accounts', navigation: '招聘账号', heading: '多账号运营中心' },
   { path: '/job-positions', navigation: '岗位资料', heading: '岗位资料 · 运营面板' },
   { path: '/resume-intakes', navigation: '简历分析', heading: '候选人决策面板' },
@@ -10,9 +10,9 @@ const currentPages = [
 
 const legacyRedirects = [
   { from: '/organization', to: '/job-positions', heading: '岗位资料 · 运营面板' },
-  { from: '/candidates', to: '/dashboard', heading: '今天的招聘工作' },
-  { from: '/auto-replies', to: '/dashboard', heading: '今天的招聘工作' },
-  { from: '/hr-users', to: '/dashboard', heading: '今天的招聘工作' },
+  { from: '/candidates', to: '/dashboard#attention-panel', heading: '今天的招聘值守' },
+  { from: '/auto-replies', to: '/dashboard', heading: '今天的招聘值守' },
+  { from: '/hr-users', to: '/boss-accounts', heading: '多账号运营中心' },
   { from: '/ai-settings', to: '/resume-intakes', heading: '候选人决策面板' },
   { from: '/audit-logs', to: '/system-logs', heading: '项目运行日志' },
   { from: '/operations', to: '/system-logs', heading: '项目运行日志' },
