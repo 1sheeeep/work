@@ -1,4 +1,4 @@
-import { flushPromises, mount } from '@vue/test-utils'
+import { DOMWrapper, flushPromises, mount } from '@vue/test-utils'
 import { api } from '../services/api'
 import BossAccountsView from './BossAccountsView.vue'
 
@@ -27,7 +27,7 @@ describe('BossAccountsView', () => {
 
     await wrapper.findAll('button').find(button => button.text().includes('新增账号'))?.trigger('click')
     await flushPromises()
-    const dialog = wrapper.get('.el-dialog')
+    const dialog = new DOMWrapper(document.body).get('.el-dialog')
     await dialog.findAll('button').find(button => button.text() === '保存')?.trigger('click')
     await flushPromises()
 

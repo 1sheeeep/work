@@ -26,6 +26,12 @@ const baseIntake = {
 }
 
 describe('ResumeIntakesView', () => {
+  beforeEach(() => {
+    vi.mocked(api.get).mockReset()
+    vi.mocked(api.post).mockReset()
+    vi.mocked(api.put).mockReset()
+  })
+
   it('lets HR drag a BOSS resume into the analysis workspace without submitting it', async () => {
     vi.mocked(api.get)
       .mockResolvedValueOnce({ data: [
@@ -84,5 +90,32 @@ describe('ResumeIntakesView', () => {
     expect(wrapper.text()).toContain('等待 HR 核对来源')
     expect(wrapper.text()).toContain('确认来源')
     expect(api.post).not.toHaveBeenCalled()
+  })
+
+  it('uploads a dropped external PDF directly for AI job matching', async () => {
+    vi.mocked(api.get).mockImplementation(async (url: string) => {
+      if (url === '/resume-intakes') return { data: [] }
+      if (url === '/candidate-contacts') return { data: [] }
+      if (url === '/ai-configuration/status') return { data: { ready: true, model: 'qwen-plus' } }
+      if (url === '/organization/companies') return { data: [] }
+      return { data: [] }
+    })
+    vi.mocked(api.post).mockResolvedValue({ data: {
+      intake: { ...baseIntake, id: 'external-1', source: 'MANUAL', candidateName: '张三', jobTitle: 'Node.js 全栈开发工程师' },
+      analysis: { id: 'run-external-1' },
+      comparedJobCount: 7,
+    } })
+
+    const wrapper = mount(ResumeIntakesView)
+    await flushPromises()
+    const file = new File(['%PDF-1.4 test'], 'resume.pdf', { type: 'application/pdf' })
+    await wrapper.find('.external-pdf-drop').trigger('drop', { dataTransfer: { files: [file] } })
+    await flushPromises()
+
+    expect(api.post).toHaveBeenCalledWith(
+      '/resume-intakes/external-pdf-analysis',
+      expect.any(FormData),
+      { timeout: 120_000 },
+    )
   })
 })

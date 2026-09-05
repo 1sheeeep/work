@@ -22,7 +22,7 @@ const router = createRouter({
         { path: 'resume-intakes', name: 'resume-intakes', component: () => import('./views/ResumeIntakesView.vue') },
         { path: 'system-logs', name: 'system-logs', component: () => import('./views/SystemLogsView.vue'), meta: { role: 'SYSTEM_ADMIN' } },
         { path: 'auto-replies', redirect: '/dashboard' },
-        { path: 'hr-users', redirect: '/boss-accounts' },
+        { path: 'hr-users', redirect: '/dashboard' },
         { path: 'audit-logs', redirect: '/system-logs' },
         { path: 'operations', redirect: '/system-logs' },
         { path: 'ai-settings', redirect: '/resume-intakes' },

@@ -45,7 +45,7 @@ public class ResumeImageOcrClient {
             }
             if (response.statusCode() < 200 || response.statusCode() >= 300) throw unavailable();
             JsonNode body = mapper.readTree(response.body());
-            String text = body.path("text").asText("").replace("\u0000", "").trim();
+            String text = body.path("text").stringValueOpt().orElse("").replace("\u0000", "").trim();
             if (text.isBlank()) {
                 throw new ApiException(HttpStatus.BAD_REQUEST, "RESUME_OCR_TEXT_EMPTY", "未能从扫描件识别可读文本，请上传更清晰的图片或手工粘贴必要内容");
             }

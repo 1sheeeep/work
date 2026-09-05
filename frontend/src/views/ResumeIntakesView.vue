@@ -1,7 +1,10 @@
 <script setup lang="ts">
+import PageHeader from '../components/PageHeader.vue'
+import AsyncState from '../components/AsyncState.vue'
+import MetricCard from '../components/MetricCard.vue'
 import { computed, onMounted, reactive, ref } from 'vue'
-import { Check, Cpu, Refresh, UploadFilled, Warning } from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { Check, Cpu, InfoFilled, Refresh, UploadFilled, Warning } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import { api, apiErrorMessage, ensureCsrf } from '../services/api'
 import { authStore } from '../stores/auth'
 import type {
@@ -28,6 +31,9 @@ const loading = ref(true)
 const saving = ref(false)
 const feedbackSaving = ref(false)
 const fileSubmitting = ref(false)
+const externalSubmitting = ref(false)
+const externalDragOver = ref(false)
+const externalFileInput = ref<HTMLInputElement>()
 const errorMessage = ref('')
 const intakes = ref<ResumeIntake[]>([])
 const contacts = ref<CandidateContact[]>([])
@@ -50,6 +56,7 @@ const form = reactive({ contactId: '', displayLabel: '候选人已提供附件�
 const feedbackForm = reactive({ runId: '', feedbackType: 'ADOPTED' as ResumeAnalysisFeedbackType, note: '' })
 const fileForm = reactive({ intakeId: '', file: null as File | null })
 const analysisForm = reactive({ intakeId: '', resumeText: '', consent: false, source: '' })
+type ExternalResumeAnalysisResponse = { intake: ResumeIntake; analysis: ResumeAnalysisRun; comparedJobCount: number }
 
 const pending = computed(() => intakes.value.filter((item) => item.status === 'PENDING_REVIEW'))
 const processing = computed(() => intakes.value.filter((item) => item.processingStatus === 'PROCESSING' || item.analysisStatus === 'ANALYZING'))
@@ -340,6 +347,41 @@ async function previewFile() {
   }
 }
 
+function validateExternalPdf(file?: File | null) {
+  if (!file) return '请选择 PDF 简历'
+  if (!file.name.toLowerCase().endsWith('.pdf') && file.type !== 'application/pdf') return '外部简历分析当前仅支持 PDF 文件'
+  if (file.size > 8 * 1024 * 1024) return 'PDF 文件不能超过 8MB'
+  if (!file.size) return 'PDF 文件为空'
+  return ''
+}
+
+async function submitExternalPdf(file?: File | null) {
+  const validation = validateExternalPdf(file)
+  if (validation) { ElMessage.warning(validation); return }
+  if (!aiStatus.value?.ready) { ElMessage.warning('当前 AI 服务未就绪，暂时无法分析外部 PDF'); return }
+  externalSubmitting.value = true
+  externalDragOver.value = false
+  try {
+    const payload = new FormData()
+    payload.append('file', file as File)
+    payload.append('externalProcessingConfirmed', 'true')
+    await ensureCsrf()
+    const { data } = await api.post<ExternalResumeAnalysisResponse>('/resume-intakes/external-pdf-analysis', payload, { timeout: 120_000 })
+    await load()
+    selectedIntakeId.value = data.intake.id
+    ElMessage.success(`已识别 ${data.intake.candidateName}，并与 ${data.comparedJobCount} 个已启用岗位完成匹配`)
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error, '外部 PDF 分析未完成'))
+  } finally {
+    externalSubmitting.value = false
+    if (externalFileInput.value) externalFileInput.value.value = ''
+  }
+}
+
+function chooseExternalPdf() { if (!externalSubmitting.value) externalFileInput.value?.click() }
+function handleExternalFileChange(event: Event) { void submitExternalPdf((event.target as HTMLInputElement).files?.[0]) }
+function dropExternalPdf(event: DragEvent) { externalDragOver.value = false; void submitExternalPdf(event.dataTransfer?.files?.[0]) }
+
 function openFeedback(run: ResumeAnalysisRun) {
   feedbackForm.runId = run.id
   feedbackForm.feedbackType = 'ADOPTED'
@@ -370,46 +412,77 @@ async function saveFeedback() {
 }
 
 onMounted(load)
+
+function showPageHelp() {
+  ElNotification({
+    title: '决策面板说明',
+    message: '候选人决策面板提供从简历接收到AI辅助结论的完整工作流程。左侧队列展示所有简历，右侧工作区用于查看分析结果和进行HR复核。BOSS来源的简历支持拖拽到分析区。',
+    duration: 5000,
+    type: 'info',
+  })
+}
+
+function showQueueHelp() {
+  ElNotification({
+    title: '简历队列说明',
+    message: '简历队列按接收时间排序，BOSS来源的简历可以拖拽到右侧分析工作区。点击卡片可以查看简历的处理状态和分析结果。',
+    duration: 5000,
+    type: 'info',
+  })
+}
+
+function showAnalysisHelp() {
+  ElNotification({
+    title: 'AI分析说明',
+    message: 'AI分析结果包含推荐建议、证据覆盖度和建议追问。HR需要根据实际情况进行复核，可以选择采纳、修正或不采用AI结论。',
+    duration: 5000,
+    type: 'info',
+  })
+}
 </script>
 
 <template>
   <div class="page-shell resume-page">
-    <header class="page-heading">
+    <PageHeader>
       <div>
         <span class="page-kicker">简历处理与人工复核</span>
         <h1>候选人决策面板</h1>
-        <p>从简历接收到 AI 辅助结论，在同一工作区完成核对与复核。</p>
+        <p>从简历接收到 AI 辅助结论，在同一工作区完成核对与复核。<el-button :icon="InfoFilled" size="small" type="text" @click="showPageHelp">查看说明</el-button></p>
       </div>
       <div class="heading-actions">
         <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
         <el-button type="primary" :icon="UploadFilled" @click="openCreate">人工补录</el-button>
       </div>
-    </header>
+    </PageHeader>
     <div class="sr-only" aria-live="polite" aria-atomic="true">当前 {{ pending.length }} 份简历待 HR 处理，{{ processing.length }} 份分析中，{{ exceptionCount }} 份需要关注。</div>
 
-    <div v-if="loading" class="surface-panel skeleton"><el-skeleton :rows="7" animated /></div>
-    <div v-else-if="errorMessage" class="surface-panel error">
-      <el-icon><Warning /></el-icon>
-      <strong>简历分析暂时无法加载</strong>
-      <span>{{ errorMessage }}</span>
-      <el-button @click="load">重试</el-button>
-    </div>
+    <section class="external-pdf-drop card-entity" :class="{ 'external-pdf-drop--active': externalDragOver, 'external-pdf-drop--loading': externalSubmitting }" role="button" tabindex="0" :aria-busy="externalSubmitting" aria-label="拖入或选择外部 PDF 简历并立即进行 AI 岗位匹配" @click="chooseExternalPdf" @keydown.enter="chooseExternalPdf" @keydown.space.prevent="chooseExternalPdf" @dragenter.prevent="externalDragOver = true" @dragover.prevent="externalDragOver = true" @dragleave.self="externalDragOver = false" @drop.prevent="dropExternalPdf">
+      <input ref="externalFileInput" class="external-pdf-input" type="file" accept=".pdf,application/pdf" tabindex="-1" @change="handleExternalFileChange" />
+      <span class="external-pdf-drop__icon"><el-icon><UploadFilled /></el-icon></span>
+      <div><strong>{{ externalSubmitting ? '正在识别姓名并匹配岗位…' : externalDragOver ? '松开后立即开始 AI 分析' : '拖入外部 PDF 简历' }}</strong><small>从 PDF 识别姓名，并与当前权限内的已启用岗位匹配；不长期保存原文件。</small></div>
+      <el-button type="primary" :loading="externalSubmitting" @click.stop="chooseExternalPdf">{{ externalSubmitting ? '分析中' : '选择 PDF' }}</el-button>
+    </section>
+
+    <AsyncState v-if="loading" state="loading" aria-label="正在加载简历分析" />
+    <AsyncState v-else-if="errorMessage" state="error" title="简历分析暂时无法加载" :message="errorMessage" @retry="load">
+      <template #icon><el-icon><Warning /></el-icon></template>
+    </AsyncState>
 
     <template v-else>
       <section class="metrics analysis-pipeline" aria-label="简历处理流程概览">
-        <article class="static-card card-indicator metric-card metric-card--teal"><el-icon><UploadFilled /></el-icon><div><span>BOSS 已接收</span><strong>{{ bossIntakes }}</strong><small>可拖入右侧分析区</small></div></article>
-        <article class="static-card card-indicator metric-card metric-card--blue"><el-icon><Check /></el-icon><div><span>待 HR 处理</span><strong>{{ pending.length }}</strong><small>待复核或待授权</small></div></article>
-        <article class="static-card card-indicator metric-card metric-card--violet"><el-icon><Cpu /></el-icon><div><span>分析处理中</span><strong>{{ processing.length }}</strong><small>提取与 AI 任务</small></div></article>
-        <article class="static-card card-indicator metric-card" :class="[exceptionCount ? 'metric-card--red' : 'metric-card--green', { 'metric-card--active': !exceptionCount && analyzed > 0 }]">
-          <el-icon><Warning v-if="exceptionCount" /><Check v-else /></el-icon><div><span>{{ exceptionCount ? '需要关注' : '已完成分析' }}</span><strong>{{ exceptionCount || analyzed }}</strong><small>{{ exceptionCount ? '提取或分析异常' : '等待 HR 复核' }}</small></div>
-        </article>
+        <MetricCard class="metric-card metric-card--teal" label="BOSS 已接收" :value="bossIntakes" description="可拖入右侧分析区" tone="teal"><template #icon><el-icon><UploadFilled /></el-icon></template></MetricCard>
+        <MetricCard class="metric-card metric-card--blue" label="待 HR 处理" :value="pending.length" description="待复核或待授权" tone="blue"><template #icon><el-icon><Check /></el-icon></template></MetricCard>
+        <MetricCard class="metric-card metric-card--violet" label="分析处理中" :value="processing.length" description="提取与 AI 任务" tone="violet"><template #icon><el-icon><Cpu /></el-icon></template></MetricCard>
+        <MetricCard class="metric-card" :class="[exceptionCount ? 'metric-card--red' : 'metric-card--green', { 'metric-card--active': !exceptionCount && analyzed > 0 }]" :label="exceptionCount ? '需要关注' : '已完成分析'" :value="exceptionCount || analyzed" :description="exceptionCount ? '提取或分析异常' : '等待 HR 复核'" :tone="exceptionCount ? 'rose' : 'green'">
+          <template #icon><el-icon><Warning v-if="exceptionCount" /><Check v-else /></el-icon></template>
+        </MetricCard>
       </section>
 
-      <div v-if="!intakes.length" class="surface-panel empty-state"><el-empty :image-size="82" description="尚未收到简历" /></div>
+      <AsyncState v-if="!intakes.length" state="empty" title="尚未收到简历" message="收到 BOSS 简历或完成人工补录后，将在这里进入分析队列。"><template #icon><el-icon><UploadFilled /></el-icon></template><el-button type="primary" @click="openCreate">人工补录</el-button></AsyncState>
 
       <section v-else class="analysis-workspace">
         <aside class="surface-panel section-card card-panel resume-queue-panel">
-          <div class="section-title-row queue-heading"><div><span class="section-kicker">待选择</span><h2>简历队列</h2><p>{{ intakes.length }} 份简历 · BOSS 简历可拖拽</p></div></div>
+          <div class="section-title-row queue-heading"><div><span class="section-kicker">待选择</span><h2>简历队列</h2><p>{{ intakes.length }} 份简历 · BOSS 简历可拖拽<el-button :icon="InfoFilled" size="small" type="text" @click="showQueueHelp">查看说明</el-button></p></div></div>
           <div class="ai-service-inline" :class="{ 'ai-service-inline--ready': aiStatus?.ready }" aria-label="AI 分析服务状态">
             <span class="ai-service-inline__mark"><el-icon><Cpu /></el-icon></span>
             <div>
@@ -443,7 +516,7 @@ onMounted(load)
             >
               <div class="ticket-topline">
                 <span class="source-badge" :class="item.source === 'BOSS_VISIBLE' ? 'source-badge--boss' : 'source-badge--manual'">
-                  {{ item.source === 'BOSS_VISIBLE' ? 'BOSS 收到' : '人工补录' }}
+                  {{ item.source === 'BOSS_VISIBLE' ? 'BOSS 收到' : item.displayLabel.startsWith('外部 PDF') ? '外部 PDF' : '人工补录' }}
                 </span>
                 <span v-if="item.source === 'BOSS_VISIBLE'" class="drag-hint">拖到右侧 ···</span>
               </div>
@@ -470,8 +543,7 @@ onMounted(load)
         >
           <div class="analysis-dropzone" :class="{ 'analysis-dropzone--active': dragOver }">
             <div>
-              <strong>{{ dragOver ? '松开即可放入分析工作区' : '简历分析工作区' }}</strong>
-              <small>拖拽只会切换当前简历，不会自动向 AI 发送数据</small>
+              <strong>{{ dragOver ? '松开即可放入分析工作区' : '简历分析工作区' }}</strong><el-button :icon="InfoFilled" size="small" type="text" @click="showAnalysisHelp">查看说明</el-button>
             </div>
             <el-tag v-if="selectedIntake" type="success" effect="light">已选择 1 份</el-tag>
           </div>
@@ -486,7 +558,7 @@ onMounted(load)
             <header class="candidate-header">
               <div class="candidate-avatar candidate-avatar--large">{{ selectedIntake.candidateName.slice(0, 1) }}</div>
               <div class="candidate-title">
-                <span>{{ selectedIntake.source === 'BOSS_VISIBLE' ? 'BOSS 简历' : '人工补录' }}</span>
+                <span>{{ selectedIntake.source === 'BOSS_VISIBLE' ? 'BOSS 简历' : selectedIntake.displayLabel.startsWith('外部 PDF') ? '外部 PDF' : '人工补录' }}</span>
                 <h2>{{ selectedIntake.candidateName }}</h2>
                 <p>{{ selectedIntake.jobTitle }} · {{ selectedIntake.accountName }}</p>
               </div>
@@ -507,10 +579,10 @@ onMounted(load)
             </section>
 
             <section v-else-if="selectedAnalysis?.status === 'SUCCEEDED' && selectedAnalysis.result" class="analysis-content">
-              <div class="decision-card decision-card--success card-emphasis card-emphasis--success recommendation-card">
+              <div class="decision-card card-emphasis recommendation-card">
                 <div><span>AI 辅助结论</span><h3>{{ recommendationMeta[selectedAnalysis.result.recommendation].label }}</h3></div>
                 <div class="evidence-coverage"><span>证据覆盖度 {{ evidenceCoverage(selectedAnalysis.result) }}%</span><el-progress :percentage="evidenceCoverage(selectedAnalysis.result)" :show-text="false" :stroke-width="7" /></div>
-                <el-tag :type="recommendationMeta[selectedAnalysis.result.recommendation].type" effect="dark">{{ recommendationMeta[selectedAnalysis.result.recommendation].label }}</el-tag>
+
               </div>
               <div class="summary-card">
                 <span>分析摘要</span>
@@ -594,7 +666,7 @@ onMounted(load)
       </section>
     </template>
 
-    <el-dialog v-model="dialogOpen" title="登记简历事件" width="560px">
+    <el-dialog append-to-body v-model="dialogOpen" title="登记简历事件" width="560px">
       <el-alert type="info" :closable="false" title="这里只登记候选人已提供简历的事件；简历原文仅会在 HR 后续主动提交分析时处理。" />
       <el-form label-position="top" class="intake-form">
         <el-form-item label="候选人和岗位" required>
@@ -617,7 +689,7 @@ onMounted(load)
       <template #footer><el-button @click="dialogOpen = false">取消</el-button><el-button type="primary" :loading="saving" @click="save">确认登记</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="autoAnalysisDialogOpen" title="BOSS 简历自动分析" width="560px">
+    <el-dialog append-to-body v-model="autoAnalysisDialogOpen" title="BOSS 简历自动分析" width="560px">
       <el-form label-position="top" class="intake-form">
         <el-form-item label="自动分析">
           <el-switch v-model="autoAnalysisForm.enabled" inline-prompt active-text="开" inactive-text="关" />
@@ -631,7 +703,7 @@ onMounted(load)
       <template #footer><el-button @click="autoAnalysisDialogOpen = false">取消</el-button><el-button type="primary" :loading="autoAnalysisSaving" @click="saveAutoAnalysisAuthorization">保存</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="feedbackDialogOpen" title="记录 HR 复核" width="520px">
+    <el-dialog append-to-body v-model="feedbackDialogOpen" title="记录 HR 复核" width="520px">
       <el-alert type="info" :closable="false" title="复核不会自动改变候选人状态，也不会发送招聘消息。" />
       <el-form label-position="top" class="intake-form">
         <el-form-item label="复核结论" required>
@@ -646,7 +718,7 @@ onMounted(load)
       <template #footer><el-button @click="feedbackDialogOpen = false">取消</el-button><el-button type="primary" :loading="feedbackSaving" @click="saveFeedback">保存复核</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="fileDialogOpen" title="提取简历文本" width="560px">
+    <el-dialog append-to-body v-model="fileDialogOpen" title="提取简历文本" width="560px">
       <el-alert type="warning" :closable="false" title="文件仅在本机临时处理。支持 PDF、DOCX、PNG、JPG/JPEG（最大 8MB），提取后不会自动发送给 AI。" />
       <el-form label-position="top" class="intake-form">
         <el-form-item label="已审核的简历文件" required>
@@ -659,7 +731,7 @@ onMounted(load)
       <template #footer><el-button @click="fileDialogOpen = false">取消</el-button><el-button type="primary" :loading="fileSubmitting" @click="previewFile">提取文本并核对</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="textDialogOpen" title="核对文本并提交 AI 分析" width="680px">
+    <el-dialog append-to-body v-model="textDialogOpen" title="核对文本并提交 AI 分析" width="680px">
       <el-alert type="warning" :closable="false" title="只有点击确认后，当前文本才会发送给 AI 服务；AI 不会自动淘汰、录用或发送消息。" />
       <el-form label-position="top" class="intake-form">
         <el-form-item label="文本来源"><el-tag type="info">{{ analysisForm.source }}</el-tag></el-form-item>
@@ -677,40 +749,47 @@ onMounted(load)
 .resume-page .page-heading h1 { margin-top: 6px; }
 .heading-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .skeleton, .error { margin-top: 20px; }
+.external-pdf-input { display: none; }
+.external-pdf-drop { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 14px; margin: 16px 0 18px; padding: 16px 18px; border: 1px dashed #b9d5d0; background: rgba(255,255,255,.86); cursor: pointer; }
+.external-pdf-drop__icon { display: grid; width: 44px; height: 44px; place-items: center; border-radius: 13px; background: #e8f7f4; color: var(--color-primary); font-size: 22px; }
+.external-pdf-drop strong, .external-pdf-drop small { display: block; }
+.external-pdf-drop strong { color: var(--text-main); font-size: 14px; }
+.external-pdf-drop small { margin-top: 4px; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.external-pdf-drop--active { border-color: var(--color-primary); background: #f0fbf8; box-shadow: 0 0 0 4px rgba(13,148,136,.1); }
+.external-pdf-drop--loading { cursor: wait; opacity: .82; }
 .skeleton { padding: 26px; }
 .error { display: grid; justify-items: center; gap: 10px; padding: 48px; color: var(--text-secondary); }
 .error svg { font-size: 28px; color: var(--danger); }
-.metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-bottom: 18px; }
-.metric-card { position: relative; min-width: 0; overflow: hidden; padding: 18px 20px; border: 1px solid var(--border); border-radius: 16px; background: linear-gradient(145deg, #fff 35%, #f8fbfa 100%); box-shadow: var(--shadow-sm); transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease; }
-.metric-card::after { position: absolute; top: -24px; right: -20px; width: 76px; height: 76px; border-radius: 50%; background: var(--metric-accent, #d9eeeb); content: ''; opacity: .52; }
-.metric-card:hover { transform: translateY(-2px); border-color: var(--border-strong); box-shadow: var(--shadow-card-hover); }
-.metric-card--teal { --metric-accent: #b9eee7; }
-.metric-card--blue { --metric-accent: #cde4ff; }
-.metric-card--violet { --metric-accent: #e2d8ff; }
-.metric-card--green { --metric-accent: #ccefdc; }
-.metric-card--red { --metric-accent: #ffd8d4; }
+
+
+
+.metrics .metric-card--teal { --metric-accent:#168b7f; --indicator-accent:#168b7f; --indicator-surface:var(--surface-teal); --indicator-border:var(--border-teal); }
+.metrics .metric-card--blue { --metric-accent:#326fc1; --indicator-accent:#326fc1; --indicator-surface:var(--surface-blue); --indicator-border:var(--border-blue); }
+.metrics .metric-card--violet { --metric-accent:#7253a6; --indicator-accent:#7253a6; --indicator-surface:var(--surface-violet); --indicator-border:var(--border-violet); }
+.metrics .metric-card--green { --metric-accent:var(--success); --indicator-accent:var(--success); --indicator-surface:#eff9f3; --indicator-border:#d1eadb; }
+.metrics .metric-card--red { --metric-accent:var(--danger); --indicator-accent:var(--danger); --indicator-surface:var(--surface-rose); --indicator-border:var(--border-rose); }
 .metric-card span, .metric-card small { position: relative; z-index: 1; display: block; color: var(--text-secondary); font-size: 12px; }
 .metric-card strong { position: relative; z-index: 1; display: block; margin: 7px 0 4px; font-size: 29px; line-height: 1; }
-.analysis-workspace { display: grid; grid-template-columns: minmax(300px, 370px) minmax(0, 1fr); gap: 18px; align-items: start; }
+.analysis-workspace { display:grid; grid-template-columns:320px minmax(0,1fr); gap:18px; align-items:stretch; }
 .analysis-workspace > * { min-width: 0; }
 .resume-queue-panel, .analysis-board { overflow: hidden; }
 .queue-heading { padding: 18px 20px; }
-.ai-service-inline { display: flex; align-items: center; gap: 11px; margin: 14px 14px 0; padding: 12px; border: 1px solid #e6ecea; border-radius: 12px; background: #f7f9f8; }
+.ai-service-inline { display:grid; grid-template-columns:32px minmax(0,1fr); align-items:center; gap:10px; margin:0; padding:16px 20px; border-bottom:1px solid var(--border); background:var(--surface-soft); }
 .ai-service-inline > div { min-width: 0; margin-right: auto; }
-.ai-service-inline--ready { border-color: #c7e8df; background: linear-gradient(115deg, #effbf7, #f7fbfa); }
+.ai-service-inline--ready { background:var(--surface-soft); }
 .ai-service-inline__mark { display: grid; width: 32px; height: 32px; flex: 0 0 auto; place-items: center; border-radius: 10px; background: #e9efed; color: #63736f; }
 .ai-service-inline--ready .ai-service-inline__mark { background: #d6f5ec; color: var(--success); }
 .ai-service-inline strong, .ai-service-inline small { display: block; }
 .ai-service-inline strong { font-size: 12px; }
 .ai-service-inline small { margin-top: 3px; color: var(--text-secondary); font-size: 11px; line-height: 1.4; }
-.ai-service-inline__actions { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; }
+.ai-service-inline__actions { grid-column:1/-1; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:6px; }
 .authorization-checks { display: grid; gap: 12px; padding: 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-muted); }
 .authorization-checks .el-checkbox { height: auto; margin: 0; white-space: normal; }
-.resume-queue { display: grid; gap: 11px; max-height: 760px; overflow: auto; padding: 14px; background: #f7faf9; scrollbar-width: thin; }
-.resume-ticket { min-width: 0; padding: 15px; border: 1px solid #e2e9e7; border-radius: 14px; background: #fff; box-shadow: 0 2px 10px rgba(16,48,43,.035); cursor: pointer; transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease, opacity .18s ease; }
+.resume-queue { display:grid; align-content:start; max-height:760px; overflow:auto; padding:0; scrollbar-width:thin; }
+.resume-ticket { min-width:0; padding:18px 20px; border:0; border-bottom:1px solid var(--border-subtle); border-radius:0; background:var(--surface); cursor:pointer; transition:background 180ms ease; }
 .resume-ticket--boss { cursor: grab; }
-.resume-ticket:hover, .resume-ticket--selected { transform: translateY(-2px); border-color: #7cc4bd; box-shadow: 0 12px 28px rgba(15,118,110,.12); }
-.resume-ticket--selected { background: linear-gradient(145deg, #fff 40%, #effaf8 100%); box-shadow: inset 3px 0 0 var(--primary), 0 12px 28px rgba(15,118,110,.1); }
+.resume-ticket:hover { background:var(--surface-soft); transform:none; box-shadow:none; }
+.resume-ticket--selected { background:var(--brand-50); box-shadow:inset 3px 0 0 var(--primary); }
 .resume-ticket--dragging { opacity: .5; cursor: grabbing; }
 .ticket-topline, .ticket-person, .ticket-tags, .resume-ticket footer, .candidate-header, .candidate-status, .recommendation-card, .insight-card header, .feedback-heading { display: flex; align-items: center; }
 .ticket-topline, .resume-ticket footer, .recommendation-card, .insight-card header, .feedback-heading { justify-content: space-between; }
@@ -744,7 +823,7 @@ onMounted(load)
 .board-empty h2 { margin: 17px 0 7px; font-size: 20px; }
 .board-empty p { max-width: 460px; margin: 0; color: var(--text-secondary); line-height: 1.7; }
 .empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 9px; margin-top: 20px; }
-.candidate-header { align-items: flex-start; gap: 14px; padding: 22px; border-bottom: 1px solid var(--border); }
+.candidate-header { align-items:center; flex-wrap:wrap; gap:14px; padding:22px; border-bottom:1px solid var(--border); }
 .candidate-title { flex: 1; }
 .candidate-title > span { color: var(--primary); font-size: 11px; font-weight: 800; }
 .candidate-title h2 { margin: 4px 0 3px; font-size: 21px; }
@@ -753,11 +832,11 @@ onMounted(load)
 .status-alert { display: grid; gap: 4px; margin: 18px 22px 0; padding: 13px 15px; border-radius: 12px; font-size: 13px; }
 .status-alert--danger { border: 1px solid #ffd3cf; background: #fff4f2; color: #8f221a; }
 .analysis-content { display: grid; gap: 16px; padding: 22px; }
-.recommendation-card { gap: 14px; padding: 18px 20px; border: 1px solid #bfe7df; border-radius: 15px; background: linear-gradient(120deg, #ecfaf7, #f7fbff); }
+.recommendation-card { gap: 14px; padding: 18px 20px; border: 1px solid var(--border-violet); border-radius: 15px; background:linear-gradient(120deg,var(--surface-violet),var(--surface-blue)); }
 .recommendation-card span, .summary-card > span { color: var(--text-secondary); font-size: 12px; font-weight: 700; }
 .recommendation-card h3 { margin: 5px 0 0; font-size: 21px; }
-.summary-card, .insight-card, .feedback-section { min-width: 0; border: 1px solid #e1e9e7; border-radius: 15px; background: #fff; }
-.summary-card { padding: 18px 20px; }
+.summary-card, .insight-card, .feedback-section { padding:18px 0 0; border-top:1px solid var(--border); }
+.summary-card { padding:0; }
 .summary-card p { margin: 8px 0 0; line-height: 1.75; overflow-wrap: anywhere; }
 .summary-flags { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 13px; }
 .flag { display: inline-flex; max-width: 100%; padding: 6px 9px; border-radius: 8px; font-size: 12px; overflow-wrap: anywhere; }
@@ -765,9 +844,9 @@ onMounted(load)
 .flag--danger { background: #fff0ee; color: #a03329; }
 .insight-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, .8fr); gap: 14px; }
 .insight-card { overflow: hidden; }
-.insight-card header { gap: 12px; padding: 14px 16px; border-bottom: 1px solid #e9efed; background: #f8faf9; }
+.insight-card header { gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--border-blue); background:var(--surface-blue); }
 .insight-card header span { font-weight: 750; }
-.insight-card header strong { display: grid; width: 27px; height: 27px; place-items: center; border-radius: 9px; background: #e1f3ef; color: var(--primary); font-size: 12px; }
+.insight-card header strong { display: grid; width: 27px; height: 27px; place-items: center; border-radius: 9px; background:#dce9f9; color:#315f9b; font-size: 12px; }
 .insight-card ul, .insight-card ol { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
 .insight-card li { min-width: 0; padding: 13px 16px; border-bottom: 1px solid #eef2f1; color: var(--text-secondary); font-size: 12px; line-height: 1.55; }
 .insight-card li:last-child { border-bottom: 0; }
@@ -789,7 +868,7 @@ onMounted(load)
 .analysis-footnote { color: var(--text-secondary); font-size: 11px; line-height: 1.6; }
 .intake-details { display: flex; flex-wrap: wrap; gap: 8px 16px; padding: 14px 22px; border-top: 1px solid var(--border); background: #fafcfb; color: var(--text-secondary); font-size: 11px; }
 .intake-details span { max-width: 100%; overflow-wrap: anywhere; }
-.analysis-actionbar { position: sticky; z-index: 5; bottom: 0; display: flex; min-height: 72px; align-items: center; justify-content: space-between; gap: 18px; padding: 13px 22px; border-top: 1px solid var(--border); background: rgba(255,255,255,.96); box-shadow: 0 -8px 22px rgba(15,23,42,.055); backdrop-filter: blur(12px); }
+.analysis-actionbar { position: sticky; z-index: 5; bottom: 0; display: flex; min-height: 72px; align-items: center; justify-content: space-between; gap: 18px; padding: 13px 22px; border-top: 1px solid var(--border); background:var(--surface); box-shadow: 0 -8px 22px rgba(15,23,42,.055);  }
 .analysis-actionbar > div:first-child { min-width: 0; }
 .analysis-actionbar strong, .analysis-actionbar span { display: block; }
 .analysis-actionbar strong { color: var(--text-main); font-size: 12px; }
@@ -798,162 +877,14 @@ onMounted(load)
 .intake-form { margin-top: 18px; }
 .intake-form .el-select { width: 100%; }
 .intake-form small { display: block; margin-top: 5px; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
-@media (max-width: 1180px) {
-  .analysis-workspace { grid-template-columns: 1fr; }
-  .resume-queue { grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: 520px; }
-  .insight-grid { grid-template-columns: 1fr; }
-}
-@media (max-width: 900px) {
-  .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-@media (max-width: 640px) {
-  .heading-actions, .heading-actions .el-button { width: 100%; }
-  .metrics, .resume-queue { grid-template-columns: 1fr; }
-  .analysis-dropzone, .candidate-header, .recommendation-card, .feedback-heading { align-items: flex-start; flex-direction: column; }
-  .candidate-status { justify-content: flex-start; }
-  .analysis-content, .candidate-header { padding: 17px; }
-  .board-empty { min-height: 390px; padding: 28px 18px; }
-  .insight-card:not(.insight-card--questions) li { flex-direction: column; }
-  .analysis-actionbar { align-items: stretch; flex-direction: column; }
-  .analysis-actionbar__buttons, .analysis-actionbar__buttons .el-button { width: 100%; }
-  .analysis-actionbar__buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .analysis-actionbar__buttons .el-button { margin: 0; }
-}
 
-/* 简历概览静止，队列实体可选择，AI 结论独占强调层级。 */
-.metrics .metric-card.static-card { min-height: 104px; padding: 18px 20px; border: 1px solid var(--border); border-left: 3px solid var(--metric-accent, var(--brand-600)); border-radius: var(--card-radius); background: #fff; box-shadow: var(--shadow-card); transform: none; }
-.metrics .metric-card.static-card strong { font-size: 30px; line-height: 1; }
-.metrics .metric-card.static-card:hover { border-color: var(--border); box-shadow: var(--shadow-card); transform: none; }
-.resume-ticket.entity-card { border: 0; border-top: 1px solid var(--border-subtle); border-radius: 0; background: #fff; box-shadow: none; }
-.resume-ticket.entity-card:first-child { border-top: 0; }
-.resume-ticket.entity-card:hover { border-color: var(--border-subtle); background: var(--surface-soft); box-shadow: inset 3px 0 0 #b9d9d4; transform: none; }
-.resume-ticket.entity-card.resume-ticket--selected { border-color: var(--border-subtle); background: #eefaf7; box-shadow: inset 3px 0 0 var(--brand-600); transform: none; }
-.resume-ticket.entity-card:focus-visible { outline: 3px solid rgba(15,118,110,.22); outline-offset: 2px; }
-.recommendation-card.decision-card { border: 0; border-left: 3px solid var(--success); background: #f0faf5; box-shadow: none; }
-.status-alert.decision-card { border: 0; border-left: 3px solid var(--danger); background: #fff3f1; }
-
-/* 分析页让候选人队列保持紧凑，把阅读空间留给 HR 需要判断的 AI 结果。 */
-.resume-page { width: min(100%, 1360px); }
-.metric-card { border-radius: var(--card-radius); background: var(--surface-raised); }
-.metric-card::after { display: none; }
-.metric-card { border-left: 3px solid var(--metric-accent, var(--brand-600)); }
-.metric-card--teal { --metric-accent: #0f8b80; }
-.metric-card--blue { --metric-accent: #5a82ba; }
-.metric-card--violet { --metric-accent: #8066ae; }
-.metric-card--green { --metric-accent: #14855f; }
-.metric-card--red { --metric-accent: #c64c42; }
-.metric-card strong { font-size: 27px; }
-.metrics { grid-template-columns: 1.25fr repeat(3, minmax(0, 1fr)); }
-.metric-card { min-height: 112px; padding: 22px; border-radius: var(--radius-lg); box-shadow: var(--shadow-card); transform: none; }
-.metric-card:hover { border-color: var(--border); box-shadow: var(--shadow-card); transform: none; }
-.metric-card:first-child { background: linear-gradient(135deg, #fff 55%, #eefaf7); }
-.analysis-workspace { gap: 16px; }
-.resume-queue { gap: 0; padding: 0; background: #fff; }
-.resume-ticket { padding: 15px 16px; border-radius: 0; box-shadow: none; }
-.resume-ticket:hover, .resume-ticket--selected { box-shadow: inset 3px 0 0 var(--brand-600); }
-.analysis-dropzone { min-height: 78px; padding: 16px 20px; border-bottom-color: #c9ddd8; }
-.resume-queue-panel, .analysis-board { border-radius: var(--radius-lg); }
-.analysis-board { background: var(--surface-raised); }
-.ai-service-inline, .ai-service-inline--ready { margin: 0 14px; padding: 12px 0; border-width: 1px 0; border-color: var(--border-subtle); border-radius: 0; background: transparent; }
-.candidate-header { padding: 20px 22px; background: linear-gradient(110deg, #fbfefd, #fff); }
-.status-alert--danger { border-color: #f3c8c3; }
-.recommendation-card { border-color: #bcded7; }
-.evidence-coverage { width: min(220px, 32%); margin-left: auto; }
-.evidence-coverage > span { display: block; margin-bottom: 6px; color: var(--text-secondary); font-size: 10px; text-align: right; }
-.summary-card, .insight-card, .feedback-section { border-color: var(--border-subtle); box-shadow: none; }
-.insight-card header { background: #f8faf9; }
-.insight-card li { border-color: var(--border-subtle); }
-.intake-details { background: #fafcfb; }
-@media (max-width: 1180px) { .resume-page { width: min(100%, 1180px); } }
-@media (max-width: 900px) { .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 640px) { .evidence-coverage { width: 100%; margin-left: 0; } .evidence-coverage > span { text-align: left; } }
-
-/* V80 候选人决策面板：左侧队列、中央结论、右侧证据保持稳定三栏。 */
-.resume-page { width: min(100%, 1440px); max-width: none; }
-.resume-page .page-heading { margin-bottom: 28px; }.resume-page .page-heading h1 { font-size: clamp(30px, 2.5vw, 38px); letter-spacing: -.035em; }
-.metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; margin-bottom: 20px; }
-.metrics .metric-card.static-card { display: grid; grid-template-columns: 58px minmax(0, 1fr); align-items: center; gap: 17px; min-height: 106px; padding: 20px 22px; border: 1px solid var(--border); border-left: 3px solid var(--metric-accent, var(--brand-600)); border-radius: 15px; background: #fff; box-shadow: 0 8px 22px rgba(23,32,51,.045); }
-.metrics .metric-card.static-card::after { display: none; }.metrics .metric-card.static-card > .el-icon { display: grid; width: 58px; height: 58px; place-items: center; border-radius: 17px; background: color-mix(in srgb, var(--metric-accent, var(--brand-600)) 10%, white); color: var(--metric-accent, var(--brand-600)); font-size: 28px; }
-.metrics .metric-card.static-card > div { position: static; display: block; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; transform: none; }.metrics .metric-card.static-card > div::after { display: none; }.metrics .metric-card.static-card span, .metrics .metric-card.static-card strong, .metrics .metric-card.static-card small { display: block; }.metrics .metric-card.static-card span { color: var(--text-secondary); font-size: 12px; }.metrics .metric-card.static-card strong { margin-top: 4px; font-size: 30px; line-height: 1; }.metrics .metric-card.static-card small { margin-top: 8px; color: var(--text-tertiary); font-size: 11px; }
-.analysis-workspace { grid-template-columns: minmax(260px, .75fr) minmax(430px, 1.28fr) minmax(300px, .92fr); gap: 16px; }.resume-queue-panel { grid-column: 1; }.analysis-board { grid-column: 2 / 4; }
-.resume-queue-panel, .analysis-board { border-radius: 17px; box-shadow: 0 8px 22px rgba(23,32,51,.045); }.queue-heading { min-height: 72px; padding: 18px 20px; }.queue-heading h2 { font-size: 18px; }.ai-service-inline { margin: 0 20px; }.resume-ticket { min-height: 108px; padding: 15px 18px; }.resume-ticket .ticket-person { margin-top: 9px; }.candidate-avatar { width: 42px; height: 42px; border-radius: 13px; }.candidate-avatar--large { width: 54px; height: 54px; border-radius: 16px; font-size: 20px; }.analysis-dropzone { min-height: 76px; padding: 16px 22px; }.candidate-header { min-height: 112px; padding: 22px; }.candidate-title h2 { font-size: 22px; }.analysis-content { padding: 18px 22px 22px; }.recommendation-card { min-height: 92px; padding: 18px; }.recommendation-card h3 { font-size: 21px; }.summary-card { margin-top: 14px; padding: 18px; }.insight-grid { gap: 14px; margin-top: 14px; }.insight-card { border-radius: 13px; }.feedback-section { margin-top: 14px; padding-top: 16px; }.intake-details { min-height: 48px; padding: 13px 22px; }
-@media (max-width: 1180px) { .analysis-workspace { grid-template-columns: minmax(250px, .72fr) minmax(0, 1.28fr); }.analysis-board { grid-column: 2; }.insight-grid { grid-template-columns: 1fr; } }
-@media (max-width: 900px) { .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }.analysis-workspace { grid-template-columns: 1fr; }.resume-queue-panel, .analysis-board { grid-column: auto; }.resume-queue { grid-template-columns: repeat(2, minmax(0, 1fr)); }.resume-ticket { border-left: 1px solid var(--border-subtle); }.resume-ticket:nth-child(odd) { border-left: 0; } }
-@media (max-width: 620px) { .metrics { grid-template-columns: 1fr; gap: 12px; }.metrics .metric-card.static-card { min-height: 88px; padding: 16px; }.metrics .metric-card.static-card > .el-icon { width: 44px; height: 44px; border-radius: 13px; font-size: 21px; }.resume-queue { grid-template-columns: 1fr; }.resume-ticket { border-left: 0; }.candidate-header, .analysis-content, .intake-details { padding-inline: 16px; } }
-
-/* 简历处理步骤在宽屏连续呈现，窄屏仍回退为易读的独立摘要。 */
-@media (min-width: 1040px) {
-  .analysis-pipeline { position: relative; isolation: isolate; }
-  .analysis-pipeline::before {
-    position: absolute;
-    z-index: -1;
-    top: 52px;
-    right: calc(12.5% + 28px);
-    left: calc(12.5% + 28px);
-    height: 2px;
-    background: linear-gradient(90deg, #a9dfd3, #b9cced 35%, #d8c8f1 68%, #b9dfcb);
-    content: '';
-  }
-  .analysis-pipeline .metric-card::before {
-    position: absolute;
-    z-index: 2;
-    top: 45px;
-    right: -12px;
-    width: 0;
-    height: 0;
-    border-top: 6px solid transparent;
-    border-bottom: 6px solid transparent;
-    border-left: 8px solid #b9cced;
-    content: '';
-  }
-  .analysis-pipeline .metric-card:last-child::before { display: none; }
-  .analysis-pipeline .metric-card--active {
-    border-color: #9bd8c5;
-    box-shadow: 0 1px 3px rgba(16,24,40,.06), 0 12px 28px rgba(21,143,106,.12);
-  }
-  .analysis-pipeline .metric-card--active > .el-icon {
-    box-shadow: 0 0 0 5px rgba(22,163,74,.08);
-  }
+.evidence-coverage { flex:0 1 200px; min-width:130px; margin-left:auto; }.evidence-coverage > span { display:block; margin-bottom:8px; font-size:11px; }
+.recommendation-card { flex-wrap:wrap; }
+.sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+@media(min-width:1181px) {
+ .analysis-workspace { height:calc(100dvh - 100px); min-height:620px; }
+ .resume-queue-panel { display:flex; flex-direction:column; min-height:0; }.resume-queue { flex:1; max-height:none; min-height:0; }.analysis-board { overflow-y:auto; overscroll-behavior:contain; }
 }
-
-/* 深度工作区：队列与分析结果共享固定视口，分别独立滚动。 */
-@media (min-width: 1181px) {
-  .analysis-workspace {
-    display: flex;
-    height: calc(100dvh - 120px);
-    min-height: 680px;
-    gap: 20px;
-    align-items: stretch;
-  }
-  .resume-queue-panel {
-    display: flex;
-    width: 320px;
-    min-width: 320px;
-    flex: 0 0 320px;
-    flex-direction: column;
-  }
-  .ai-service-inline {
-    display: grid;
-    grid-template-columns: 32px minmax(0, 1fr);
-    align-items: start;
-  }
-  .ai-service-inline__actions {
-    grid-column: 1 / -1;
-    justify-content: space-between;
-    width: 100%;
-  }
-  .resume-queue {
-    min-height: 0;
-    flex: 1;
-    max-height: none;
-    overflow-y: auto;
-  }
-  .analysis-board {
-    display: block;
-    min-width: 0;
-    flex: 1;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-  }
-}
+@media(max-width:1180px) { .analysis-workspace { grid-template-columns:1fr; }.resume-queue { grid-template-columns:repeat(2,minmax(0,1fr)); max-height:400px; }.insight-grid { grid-template-columns:1fr; }.analysis-actionbar { position:static; flex-wrap:wrap; }.candidate-status { justify-content:flex-start; } }
+@media(max-width:600px) { .external-pdf-drop { grid-template-columns:40px minmax(0,1fr); }.external-pdf-drop > .el-button { grid-column:1/-1; width:100%; }.resume-queue { grid-template-columns:1fr; }.candidate-header,.analysis-content,.analysis-dropzone,.intake-details,.analysis-actionbar { padding:16px; }.candidate-title { flex-basis:calc(100% - 80px); }.candidate-status { flex-basis:100%; }.analysis-actionbar__buttons { flex-wrap:wrap; width:100%; }.analysis-actionbar__buttons .el-button { flex:1; margin:0; }.recommendation-card { padding:16px; }.evidence-coverage { flex-basis:100%; margin:0; }.board-empty { padding:24px 16px; min-height:280px; } }
 </style>

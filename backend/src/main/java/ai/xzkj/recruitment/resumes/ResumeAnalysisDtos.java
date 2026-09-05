@@ -25,6 +25,12 @@ record ResumeDocumentPreviewResponse(
         String reviewMessage
 ) {}
 
+record ExternalResumeAnalysisResponse(
+        ResumeIntakeResponse intake,
+        ResumeAnalysisResponse analysis,
+        int comparedJobCount
+) {}
+
 record ResumeAnalysisFeedbackRequest(
         @NotNull ResumeAnalysisFeedbackType feedbackType,
         @NotBlank @Size(max = 1000) String note

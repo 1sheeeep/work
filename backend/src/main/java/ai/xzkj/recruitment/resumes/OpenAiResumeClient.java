@@ -230,11 +230,12 @@ public class OpenAiResumeClient {
 
     private String outputText(JsonNode response) {
         JsonNode content = response.path("choices").path(0).path("message").path("content");
-        if (content.isTextual() && !content.asText().isBlank()) return content.asText();
+        String textValue = content.stringValueOpt().orElse(null);
+        if (textValue != null && !textValue.isBlank()) return textValue;
         StringBuilder combined = new StringBuilder();
         if (content.isArray()) for (JsonNode part : content) {
-            String text = part.path("text").asText("");
-            if (!text.isBlank()) combined.append(text);
+            String text = part.path("text").stringValueOpt().orElse(null);
+            if (text != null && !text.isBlank()) combined.append(text);
         }
         if (!combined.isEmpty()) return combined.toString();
         throw new ApiException(HttpStatus.BAD_GATEWAY, "OPENAI_OUTPUT_MISSING", "AI 服务未返回可解析的简历分析内容");

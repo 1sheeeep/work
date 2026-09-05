@@ -35,12 +35,12 @@ class OpenAiResumeClientTest {
 
         JsonNode payload = client.createPayload(mock(JobPosition.class), "已核对的简历文本", "anonymous-id");
 
-        assertThat(payload.path("model").asText()).isEqualTo("qwen3.8-flash");
+        assertThat(payload.path("model").stringValue()).isEqualTo("qwen3.8-flash");
         assertThat(payload.path("messages").isArray()).isTrue();
         assertThat(payload.path("messages").size()).isEqualTo(2);
-        assertThat(payload.path("messages").path(0).path("role").asText()).isEqualTo("system");
-        assertThat(payload.path("messages").path(1).path("role").asText()).isEqualTo("user");
-        assertThat(payload.path("response_format").path("type").asText()).isEqualTo("json_schema");
+        assertThat(payload.path("messages").path(0).path("role").stringValue()).isEqualTo("system");
+        assertThat(payload.path("messages").path(1).path("role").stringValue()).isEqualTo("user");
+        assertThat(payload.path("response_format").path("type").stringValue()).isEqualTo("json_schema");
         assertThat(payload.path("response_format").path("json_schema").path("strict").asBoolean()).isTrue();
         JsonNode schema = payload.path("response_format").path("json_schema").path("schema");
         assertThat(schema.path("properties").path("evidence").path("minItems").asInt()).isEqualTo(1);

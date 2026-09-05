@@ -1,4 +1,8 @@
 <script setup lang="ts">
+import PageHeader from '../components/PageHeader.vue'
+import AsyncState from '../components/AsyncState.vue'
+import MetricCard from '../components/MetricCard.vue'
+import StatusBadge from '../components/StatusBadge.vue'
 import { computed, onMounted, ref } from 'vue'
 import { CircleCheck, Clock, DocumentCopy, Refresh, Search, Warning } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
@@ -84,19 +88,19 @@ onMounted(load)
 
 <template>
   <div class="page-shell logs-page">
-    <header class="page-heading logs-heading">
+    <PageHeader>
       <div><span class="page-kicker">运行监测与问题定位</span><h1>项目运行日志</h1><p>查看关键事件、失败影响与对应对象，快速定位运行问题。</p></div>
       <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
-    </header>
+    </PageHeader>
 
-    <div v-if="loading" class="card-panel loading-panel" aria-label="正在加载项目运行日志"><el-skeleton :rows="8" animated /></div>
-    <div v-else-if="errorMessage" class="card-panel error-state"><span class="error-state__icon"><el-icon><Warning /></el-icon></span><strong>日志暂时无法加载</strong><span>{{ errorMessage }}</span><el-button @click="load">重试</el-button></div>
+    <AsyncState v-if="loading" state="loading" :rows="8" aria-label="正在加载项目运行日志" />
+    <AsyncState v-else-if="errorMessage" state="error" title="日志暂时无法加载" :message="errorMessage" @retry="load"><template #icon><el-icon><Warning /></el-icon></template></AsyncState>
     <template v-else>
       <section v-if="summary" class="runtime-strip" aria-label="系统运行摘要">
-        <article class="card-indicator runtime-card runtime-card--healthy"><span>系统状态</span><strong><el-icon><CircleCheck /></el-icon>运行正常</strong><small>核心服务当前可用</small></article>
-        <article class="card-indicator runtime-card runtime-card--bridge"><span>在线桥接</span><strong>{{ summary.activeBrowserDevices }}</strong><small>{{ summary.staleBrowserDevices ? `${summary.staleBrowserDevices} 个桥接已失联` : '浏览器连接无失联' }}</small></article>
-        <article class="card-indicator runtime-card runtime-card--unread"><span>未读会话</span><strong>{{ summary.unreadObservations }}</strong><small>等待值守流程处理</small></article>
-        <article class="card-indicator runtime-card runtime-card--jobs"><span>待核对岗位</span><strong :class="{ warning: summary.unverifiedPageCaptures }">{{ summary.unverifiedPageCaptures }}</strong><small>{{ summary.unverifiedPageCaptures ? '需人工确认页面资料' : '岗位页面均已核对' }}</small></article>
+        <MetricCard class="runtime-card runtime-card--healthy" label="系统状态" description="核心服务当前可用" tone="green"><template #value><el-icon><CircleCheck /></el-icon>运行正常</template></MetricCard>
+        <MetricCard class="runtime-card runtime-card--bridge" label="在线桥接" :value="summary.activeBrowserDevices" :description="summary.staleBrowserDevices ? `${summary.staleBrowserDevices} 个桥接已失联` : '浏览器连接无失联'" tone="teal" />
+        <MetricCard class="runtime-card runtime-card--unread" label="未读会话" :value="summary.unreadObservations" description="等待值守流程处理" tone="blue" />
+        <MetricCard class="runtime-card runtime-card--jobs" label="待核对岗位" :value="summary.unverifiedPageCaptures" :description="summary.unverifiedPageCaptures ? '需人工确认页面资料' : '岗位页面均已核对'" tone="amber" />
       </section>
 
       <section class="card-panel log-panel">
@@ -111,17 +115,17 @@ onMounted(load)
           </div>
         </header>
 
-        <div v-if="!displayedLogs.length" class="empty-state log-empty"><span class="empty-state__icon"><el-icon><Clock /></el-icon></span><strong>{{ resultFilter === 'FAILURE' ? '当前没有失败记录' : '暂无相关运行记录' }}</strong><p>{{ keyword ? '请调整搜索关键词后重试。' : '系统产生关键运行事件后会在这里显示。' }}</p></div>
+        <AsyncState v-if="!displayedLogs.length" state="empty" embedded class="log-empty" :title="resultFilter === 'FAILURE' ? '当前没有失败记录' : '暂无相关运行记录'" :message="keyword ? '请调整搜索关键词后重试。' : '系统产生关键运行事件后会在这里显示。'"><template #icon><el-icon><Clock /></el-icon></template></AsyncState>
         <el-table v-else :data="displayedLogs" size="small" class="log-table" row-key="id">
           <el-table-column label="时间" min-width="142"><template #default="{ row }"><time class="log-time">{{ formatDate(row.occurredAt) }}</time></template></el-table-column>
           <el-table-column label="事件" min-width="180"><template #default="{ row }"><div class="event-cell"><span class="result-dot" :class="`result-dot--${row.result.toLowerCase()}`" aria-hidden="true"></span><strong>{{ actionLabels[row.action] || row.action }}</strong></div></template></el-table-column>
           <el-table-column label="对象" min-width="160"><template #default="{ row }"><span class="target-cell" :title="row.targetLabel || '系统'">{{ row.targetLabel || '系统' }}</span></template></el-table-column>
-          <el-table-column label="结果与影响" min-width="250"><template #default="{ row }"><div class="result-cell" :class="{ 'result-cell--failure': row.result === 'FAILURE' }"><el-tag size="small" :type="row.result === 'SUCCESS' ? 'success' : 'danger'" effect="light">{{ row.result === 'SUCCESS' ? '成功' : '失败' }}</el-tag><span>{{ row.result === 'FAILURE' ? (row.details || '本次操作未完成，请查看详情。') : (row.details || '操作已完成') }}</span></div></template></el-table-column>
+          <el-table-column label="结果与影响" min-width="250"><template #default="{ row }"><div class="result-cell" :class="{ 'result-cell--failure': row.result === 'FAILURE' }"><StatusBadge compact :label="row.result === 'SUCCESS' ? '成功' : '失败'" :tone="row.result === 'SUCCESS' ? 'success' : 'danger'" /><span>{{ row.result === 'FAILURE' ? (row.details || '本次操作未完成，请查看详情。') : (row.details || '操作已完成') }}</span></div></template></el-table-column>
           <el-table-column label="操作" width="76" fixed="right"><template #default="{ row }"><el-button link type="primary" @click="openDetails(row as AuditLog)">详情</el-button></template></el-table-column>
         </el-table>
         <div v-if="displayedLogs.length" class="log-cards" aria-label="运行日志列表">
-          <article v-for="log in displayedLogs" :key="log.id" class="card-entity log-card" :class="{ 'log-card--failure': log.result === 'FAILURE' }" tabindex="0" @click="openDetails(log)" @keydown.enter="openDetails(log)">
-            <header><div class="event-cell"><span class="result-dot" :class="`result-dot--${log.result.toLowerCase()}`" aria-hidden="true"></span><strong>{{ actionLabels[log.action] || log.action }}</strong></div><el-tag size="small" :type="log.result === 'SUCCESS' ? 'success' : 'danger'" effect="light">{{ log.result === 'SUCCESS' ? '成功' : '失败' }}</el-tag></header>
+          <article v-for="log in displayedLogs" :key="log.id" class="card-entity log-card" :class="{ 'log-card--failure': log.result === 'FAILURE' }" tabindex="0" @click="openDetails(log)" @keydown.enter="openDetails(log)" @keydown.space.prevent="openDetails(log)" role="button">
+            <header><div class="event-cell"><span class="result-dot" :class="`result-dot--${log.result.toLowerCase()}`" aria-hidden="true"></span><strong>{{ actionLabels[log.action] || log.action }}</strong></div><StatusBadge compact :label="log.result === 'SUCCESS' ? '成功' : '失败'" :tone="log.result === 'SUCCESS' ? 'success' : 'danger'" /></header>
             <p class="log-card__target">{{ log.targetLabel || '系统' }}</p>
             <p v-if="log.result === 'FAILURE'" class="log-card__impact">{{ log.details || '本次操作未完成，请打开详情检查原因。' }}</p>
             <footer><time>{{ formatDate(log.occurredAt) }}</time><span>查看详情</span></footer>
@@ -141,7 +145,7 @@ onMounted(load)
           <div><dt>事件</dt><dd>{{ actionLabels[selectedLog.action] || selectedLog.action }}</dd></div>
           <div><dt>对象</dt><dd>{{ selectedLog.targetLabel || '系统' }}</dd></div>
           <div><dt>来源</dt><dd>{{ selectedLog.actorName || '系统' }}</dd></div>
-          <div><dt>处理结果</dt><dd><el-tag :type="selectedLog.result === 'SUCCESS' ? 'success' : 'danger'" effect="plain">{{ selectedLog.result === 'SUCCESS' ? '成功' : '失败' }}</el-tag></dd></div>
+          <div><dt>处理结果</dt><dd><StatusBadge :label="selectedLog.result === 'SUCCESS' ? '成功' : '失败'" :tone="selectedLog.result === 'SUCCESS' ? 'success' : 'danger'" /></dd></div>
           <div v-if="selectedLog.requestId"><dt>请求标识</dt><dd class="detail-mono">{{ selectedLog.requestId }}</dd></div>
           <div class="log-detail-list__wide"><dt>详情</dt><dd class="detail-content">{{ selectedLog.details || '—' }}</dd></div>
         </dl>
@@ -152,22 +156,22 @@ onMounted(load)
 </template>
 
 <style scoped>
-.logs-page { width: min(100%, 1360px); }
+.logs-page { width: min(100%, 1480px); }
 .logs-heading { align-items: center; }
 .page-kicker, .section-kicker { display: block; color: var(--color-primary); font-size: 10px; font-weight: 760; letter-spacing: .055em; }
 .logs-heading h1 { margin-top: 6px; }
 .loading-panel { padding: 28px; }
 .runtime-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-bottom: 18px; }
-.runtime-card { min-width: 0; min-height: 112px; padding: 18px 20px; border-left: 3px solid var(--runtime-accent); border-radius: var(--radius-lg); box-shadow: var(--shadow-card); }
-.runtime-card--healthy { --runtime-accent: var(--success); }
-.runtime-card--bridge { --runtime-accent: var(--brand-600); }
-.runtime-card--unread { --runtime-accent: var(--color-info); }
-.runtime-card--jobs { --runtime-accent: var(--warning); }
-.runtime-card > span, .runtime-card > strong, .runtime-card > small { display: block; }
-.runtime-card > span { color: var(--text-secondary); font-size: 12px; }
-.runtime-card > strong { margin: 7px 0 5px; color: var(--text-main); font-size: 28px; line-height: 1; }
-.runtime-card--healthy > strong { display: flex; align-items: center; gap: 7px; color: var(--success); font-size: 18px; }
-.runtime-card > small { color: var(--text-tertiary); font-size: 11px; }
+.runtime-card { min-width:0; min-height:112px; padding:18px 20px; border-color:var(--runtime-border,var(--border)); background:linear-gradient(145deg,var(--runtime-surface,var(--surface)),var(--surface)); border-radius:var(--radius-lg); box-shadow:var(--shadow-card); }
+.runtime-card--healthy { --runtime-accent:var(--success); --runtime-surface:#eff9f3; --runtime-border:#d1eadb; }
+.runtime-card--bridge { --runtime-accent:var(--brand-600); --runtime-surface:var(--surface-teal); --runtime-border:var(--border-teal); }
+.runtime-card--unread { --runtime-accent:var(--color-info); --runtime-surface:var(--surface-blue); --runtime-border:var(--border-blue); }
+.runtime-card--jobs { --runtime-accent:var(--warning); --runtime-surface:var(--surface-amber); --runtime-border:var(--border-amber); }
+.runtime-card { --metric-value-size:28px; }
+.runtime-card :deep(.metric-card-ui__content > span) { color:var(--text-secondary); font-size:12px; }
+.runtime-card :deep(.metric-card-ui__content > strong) { margin:7px 0 5px; color:var(--text-main); line-height:1; }
+.runtime-card--healthy :deep(.metric-card-ui__content > strong) { display:flex; align-items:center; gap:7px; color:var(--success); font-size:18px; }
+.runtime-card :deep(.metric-card-ui__content > small) { color:var(--text-tertiary); font-size:11px; }
 .runtime-card .warning { color: var(--warning); }
 .log-panel { overflow: hidden; padding: 0; border-radius: var(--radius-lg); }
 .log-head { display: flex; min-height: 92px; align-items: center; justify-content: space-between; gap: 20px; padding: 18px 22px; border-bottom: 1px solid var(--border); }
@@ -213,7 +217,7 @@ onMounted(load)
   .log-head { align-items: stretch; flex-direction: column; }
   .log-tools .el-input { width: 100%; }
 }
-@media (max-width: 760px) {
+@media (max-width: 1180px) {
   .log-table { display: none; }
   .log-cards { display: grid; }
   .log-card { padding: 15px 16px; border: 0; border-top: 1px solid var(--border-subtle); border-radius: 0; box-shadow: none; }

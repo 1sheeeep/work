@@ -6,7 +6,6 @@ import ai.xzkj.recruitment.auth.CurrentUserService;
 import ai.xzkj.recruitment.auth.SystemUser;
 import ai.xzkj.recruitment.auth.UserRole;
 import ai.xzkj.recruitment.boss.*;
-import ai.xzkj.recruitment.common.ApiException;
 import ai.xzkj.recruitment.jobs.JobPosition;
 import ai.xzkj.recruitment.jobs.JobPositionStatus;
 import ai.xzkj.recruitment.organization.Company;

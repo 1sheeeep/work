@@ -1,6 +1,8 @@
-import { flushPromises, mount } from '@vue/test-utils'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { api } from '../services/api'
 import DashboardView from './DashboardView.vue'
+
+enableAutoUnmount(afterEach)
 
 vi.mock('../services/api', () => ({
   api: { get: vi.fn(), put: vi.fn() },
@@ -69,8 +71,8 @@ describe('DashboardView', () => {
     await flushPromises()
     await wrapper.get('.message-list article').trigger('click')
 
-    expect(wrapper.text()).toContain('已填入未发送')
-    expect(wrapper.text()).not.toContain('已发送')
+    expect(document.body.textContent).toContain('已填入未发送')
+    expect(document.body.textContent).not.toContain('已发送')
   })
 
   it('pins the recently verified browser conversation and shows its locator', async () => {
@@ -108,7 +110,7 @@ describe('DashboardView', () => {
     await flushPromises()
     await wrapper.get('.message-list article').trigger('click')
 
-    expect(wrapper.text()).toContain('关联真实岗位')
-    expect(wrapper.text()).toContain('选择同账号已就绪岗位')
+    expect(document.body.textContent).toContain('关联真实岗位')
+    expect(document.body.textContent).toContain('选择同账号已就绪岗位')
   })
 })
