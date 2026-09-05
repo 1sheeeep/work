@@ -1,8 +1,11 @@
 <script setup lang="ts">
+import PageHeader from '../components/PageHeader.vue'
+import AsyncState from '../components/AsyncState.vue'
+import MetricCard from '../components/MetricCard.vue'
 import { computed, onMounted, reactive, ref } from "vue";
 import type { FormInstance, FormRules } from "element-plus";
-import { ElMessage, ElMessageBox } from "element-plus";
-import { Briefcase, Connection, DocumentChecked, Refresh, Search, Warning } from "@element-plus/icons-vue";
+import { ElMessage, ElMessageBox, ElNotification } from "element-plus";
+import { Briefcase, Connection, DocumentChecked, InfoFilled, Refresh, Search, Warning } from "@element-plus/icons-vue";
 import { api, apiErrorMessage, ensureCsrf } from "../services/api";
 import { authStore } from "../stores/auth";
 import type { Company, JobPosition, JobPositionStatus } from "../types";
@@ -326,47 +329,72 @@ async function completeImportedReview() {
 }
 
 onMounted(loadData);
+
+function showMetricsHelp() {
+  ElNotification({
+    title: '指标说明',
+    message: '<b>职位总数</b>：当前系统中维护的所有岗位<br/><b>页面同步</b>：从BOSS直聘页面实际采集的岗位数<br/><b>安全草稿就绪</b>：已具备完整资料可自动回复的岗位<br/><b>待完善草稿</b>：需要补充信息才能发布的岗位',
+    duration: 5000,
+    type: 'info',
+    dangerouslyUseHTMLString: true,
+  })
+}
+
+function showCompanyHelp() {
+  ElNotification({
+    title: '公司介绍说明',
+    message: '公司介绍用于候选人在咨询时，系统自动回复公司基本情况。需要填写行业、规模和简介，并经管理员审核后才能生效。',
+    duration: 5000,
+    type: 'info',
+  })
+}
+
+function showReviewHelp() {
+  ElNotification({
+    title: '审核流程说明',
+    message: '真实岗位待办需要完成以下步骤：<br/>1. 岗位资料：补全职位基本信息<br/>2. 页面核对：对照BOSS页面核实资料<br/>3. 回复内容：编写自动回复的岗位介绍<br/>4. 已启用：岗位正式参与招聘值守',
+    duration: 6000,
+    type: 'info',
+    dangerouslyUseHTMLString: true,
+  })
+}
+
+function showJobsHelp() {
+  ElNotification({
+    title: '岗位列表说明',
+    message: '本列表仅显示从真实BOSS页面同步的岗位。资料来源显示岗位信息采集方式，安全草稿显示是否已准备好自动回复。状态变化均需人工确认。',
+    duration: 5000,
+    type: 'info',
+  })
+}
 </script>
 
 <template>
   <div class="page-shell positions-page">
-    <header class="page-heading">
+    <PageHeader>
       <div>
         <h1>岗位资料 · 运营面板</h1>
-        <p>同步、核对并维护当前实际招聘岗位。</p>
+        <p>同步、核对并维护当前实际招聘岗位。<el-button :icon="InfoFilled" size="small" type="text" @click="showMetricsHelp">查看说明</el-button></p>
       </div>
       <el-button :icon="Refresh" :loading="loading" @click="loadData">刷新</el-button>
-    </header>
-    <div v-if="loading" class="surface-panel skeleton-stack">
-      <el-skeleton :rows="7" animated />
-    </div>
-    <div v-else-if="loadError" class="surface-panel error-state" role="alert">
-      <span class="error-state__icon"
-        ><el-icon><Refresh /></el-icon></span
-      ><strong>职位暂时无法加载</strong><span>{{ loadError }}</span
-      ><el-button :icon="Refresh" @click="loadData">重新加载</el-button>
-    </div>
+    </PageHeader>
+    <AsyncState v-if="loading" state="loading" aria-label="正在加载岗位资料" />
+    <AsyncState v-else-if="loadError" state="error" title="职位暂时无法加载" :message="loadError" retry-label="重新加载" @retry="loadData">
+      <template #icon><el-icon><Refresh /></el-icon></template>
+    </AsyncState>
     <template v-else>
       <div class="metrics-strip">
-        <div class="static-card card-indicator">
-          <el-icon><Briefcase /></el-icon><div><span>职位总数</span><strong>{{ stats.total }}</strong><small>当前维护的岗位总数</small></div>
-        </div>
-        <div class="static-card card-indicator">
-          <el-icon><Connection /></el-icon><div><span>页面同步</span><strong>{{ stats.pageCaptured }}</strong><small>已同步的页面数量</small></div>
-        </div>
-        <div class="static-card card-indicator">
-          <el-icon><DocumentChecked /></el-icon><div><span>安全草稿就绪</span><strong>{{ stats.safeReady }}</strong><small>已就绪可发布的草稿</small></div>
-        </div>
-        <div class="static-card card-indicator">
-          <el-icon><Warning /></el-icon><div><span>待完善草稿</span><strong>{{ stats.draft }}</strong><small>需要完善后发布</small></div>
-        </div>
+        <MetricCard label="职位总数" :value="stats.total" description="当前维护的岗位总数" tone="teal"><template #icon><el-icon><Briefcase /></el-icon></template></MetricCard>
+        <MetricCard label="页面同步" :value="stats.pageCaptured" description="已同步的页面数量" tone="blue"><template #icon><el-icon><Connection /></el-icon></template></MetricCard>
+        <MetricCard label="安全草稿就绪" :value="stats.safeReady" description="已就绪可发布的草稿" tone="violet"><template #icon><el-icon><DocumentChecked /></el-icon></template></MetricCard>
+        <MetricCard label="待完善草稿" :value="stats.draft" description="需要完善后发布" tone="amber"><template #icon><el-icon><Warning /></el-icon></template></MetricCard>
       </div>
       <div class="positions-workspace card-panel">
       <section v-if="visibleCompanies.length" class="company-knowledge-panel">
         <div class="section-title-row">
           <div>
             <h2>公司介绍</h2>
-            <p>用于候选人咨询时的公司基本情况回复。</p>
+            <p>用于候选人咨询时的公司基本情况回复。<el-button :icon="InfoFilled" size="small" type="text" @click="showCompanyHelp">查看说明</el-button></p>
           </div>
         </div>
         <div class="company-knowledge-list">
@@ -379,13 +407,13 @@ onMounted(loadData);
             <small v-else-if="!company.knowledgeApproved">需系统管理员完成</small>
           </article>
         </div>
-        <div class="company-ambient" aria-hidden="true"><i></i><i></i><i></i><b></b></div>
+
       </section>
       <section v-if="reviewQueue.length" class="review-queue">
         <div class="section-title-row">
           <div>
             <h2>真实岗位待办</h2>
-            <p>核对同步资料并启用可参与值守的岗位。</p>
+            <p>核对同步资料并启用可参与值守的岗位。<el-button :icon="InfoFilled" size="small" type="text" @click="showReviewHelp">查看说明</el-button></p>
           </div>
           <el-tag type="warning">{{ reviewQueue.length }} 个待处理</el-tag>
         </div>
@@ -431,18 +459,18 @@ onMounted(loadData);
         <div class="section-title-row jobs-title">
           <div>
             <h2>招聘岗位</h2>
-            <p>仅显示从真实 BOSS 页面同步的岗位，状态变化保留人工确认。</p>
+            <p>仅显示从真实 BOSS 页面同步的岗位，状态变化保留人工确认。<el-button :icon="InfoFilled" size="small" type="text" @click="showJobsHelp">查看说明</el-button></p>
           </div>
           <div class="filters">
             <el-input
               v-model="keyword"
               clearable
-              placeholder="搜索职位、地点或 BOSS 账号"
+              placeholder="搜索职位、地点或 BOSS 账号" aria-label="搜索岗位"
               :prefix-icon="Search"
               @keyup.enter="loadData"
             /><el-select
               v-model="statusFilter"
-              placeholder="全部状态"
+              placeholder="全部状态" aria-label="岗位状态"
               @change="loadData"
               ><el-option label="全部状态" value="" /><el-option
                 label="草稿"
@@ -454,12 +482,9 @@ onMounted(loadData);
             ><el-button @click="loadData">查询</el-button>
           </div>
         </div>
-        <div v-if="jobs.length === 0" class="empty-state">
-          <span class="empty-state__icon"
-            ><el-icon><Briefcase /></el-icon></span
-          ><strong>还没有符合条件的职位</strong
-          ><span>真实岗位同步后会显示在这里。</span>
-        </div>
+        <AsyncState v-if="jobs.length === 0" state="empty" embedded title="还没有符合条件的职位" message="真实岗位同步后会显示在这里。">
+          <template #icon><el-icon><Briefcase /></el-icon></template>
+        </AsyncState>
         <template v-else>
           <el-table :data="jobs" class="jobs-table" table-layout="fixed"
             ><el-table-column type="expand" width="44"
@@ -691,13 +716,7 @@ onMounted(loadData);
       width="820px"
       append-to-body
       destroy-on-close
-      ><el-alert
-        title="以下字段名称和顺序与 BOSS 职位详情页保持一致；请只核对真实页面信息。"
-        type="warning"
-        :closable="false"
-        show-icon
-        class="dialog-alert"
-      /><el-form
+      ><div class="review-dialog-header"><span>请对照真实BOSS职位页面信息填写以下字段</span><el-button :icon="InfoFilled" size="small" type="text" @click="showReviewHelp">查看说明</el-button></div><el-form
         ref="reviewFormRef"
         :model="reviewForm"
         :rules="reviewRules"
@@ -792,617 +811,52 @@ onMounted(loadData);
 </template>
 
 <style scoped>
-.metrics-strip {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  margin-bottom: 20px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface);
-  overflow: hidden;
-}
-.metrics-strip div {
-  padding: 18px 24px;
-  border-right: 1px solid var(--border);
-}
-.metrics-strip div:last-child {
-  border: 0;
-}
-.metrics-strip span,
-.metrics-strip strong {
-  display: block;
-}
-.metrics-strip span {
-  color: var(--text-secondary);
-  font-size: 12px;
-}
-.metrics-strip strong {
-  margin-top: 5px;
-  font-size: 24px;
-}
-.jobs-panel {
-  overflow: hidden;
-}
-.jobs-title {
-  align-items: flex-end;
-}
-.filters {
-  display: grid;
-  grid-template-columns: minmax(220px, 280px) 155px auto;
-  gap: 8px;
-}
-.jobs-table {
-  width: 100%;
-}
-.jobs-table :deep(.el-table__row > td) {
-  height: 92px;
-  padding: 0;
-  vertical-align: top;
-}
-.jobs-table :deep(.el-table__row > td > .cell) {
-  padding-top: 16px;
-  padding-bottom: 16px;
-}
-.jobs-table :deep(.cell) {
-  min-width: 0;
-  overflow: hidden;
-}
-.jobs-table :deep(td .cell > strong),
-.jobs-table .muted,
-.jobs-table .readiness-issues {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.jobs-table .job-identity strong {
-  display: -webkit-box;
-  min-height: 40px;
-  overflow: hidden;
-  line-height: 20px;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-.jobs-table .job-identity span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.jobs-table :deep(.job-status-column .cell),
-.jobs-table :deep(.job-actions-column .cell) {
-  overflow: visible;
-  text-overflow: clip;
-  white-space: nowrap;
-}
-.jobs-table :deep(.job-state-stack-column .el-tag),
-.jobs-table :deep(.job-status-column .el-tag) {
-  height: 24px;
-  line-height: 22px;
-  vertical-align: top;
-}
-.job-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  white-space: nowrap;
-}
-.job-actions .el-button + .el-button {
-  margin-left: 0;
-}
-.job-identity strong,
-.job-identity span {
-  display: block;
-}
-.job-identity span,
-.muted {
-  margin-top: 4px;
-  color: var(--text-secondary);
-  font-size: 12px;
-}
-.readiness-issues {
-  margin-top: 5px;
-  color: var(--warning);
-  font-size: 11px;
-  line-height: 1.35;
-}
-.job-cards {
-  display: none;
-}
-.dialog-alert {
-  margin-bottom: 18px;
-}
-.form-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 0 18px;
-}
-.form-grid .el-select,
-.form-grid .el-input-number {
-  width: 100%;
-}
-.form-tip {
-  margin-top: 6px;
-  font-size: 12px;
-  line-height: 1.45;
-}
-.form-tip.warning {
-  color: var(--warning);
-}
-.reply-preview {
-  margin-top: 18px;
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface-muted);
-}
-.reply-preview p {
-  line-height: 1.7;
-}
-.reply-preview small {
-  color: var(--warning);
-}
-.review-queue {
-  margin-bottom: 20px;
-}
-.company-knowledge-panel {
-  margin-bottom: 20px;
-}
-.company-knowledge-list {
-  display: grid;
-  gap: 10px;
-  padding: 0 20px 20px;
-}
-.company-knowledge-list article {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 16px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface-muted);
-}
-.company-knowledge-list strong,
-.company-knowledge-list span {
-  display: block;
-}
-.company-knowledge-list span,
-.company-knowledge-list small {
-  margin-top: 4px;
-  color: var(--text-secondary);
-  font-size: 11px;
-}
-.company-form-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-.review-cards {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  padding: 0 20px 20px;
-}
-.review-cards article {
-  padding: 16px;
-  border: 1px solid #f0d49b;
-  border-radius: 12px;
-  background: #fffaf3;
-}
-.review-cards header,
-.review-cards footer {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-.review-steps {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 5px;
-  margin: 14px 0;
-}
-.review-steps span {
-  padding: 7px 5px;
-  border-radius: 7px;
-  background: #f2f4f7;
-  color: var(--text-secondary);
-  font-size: 10px;
-  text-align: center;
-}
-.review-steps span.done {
-  background: #dcfae6;
-  color: #067647;
-}
-.review-cards article > p {
-  margin: 0 0 13px;
-  color: #b54708;
-  font-size: 12px;
-}
-.internal-blocker{align-self:center;color:var(--warning);font-size:11px}
-.review-confirmations {
-  display: grid;
-  gap: 10px;
-  padding: 14px;
-  border: 1px solid #f0d49b;
-  border-radius: 10px;
-  background: #fffaf3;
-}
-.review-confirmations .el-checkbox {
-  height: auto;
-  white-space: normal;
-}
-.review-confirmations .el-checkbox + .el-checkbox {
-  margin-left: 0;
-}
-.boss-section-title {
-  margin: 4px 0 16px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--border);
-  font-size: 16px;
-}
-.boss-field-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-.captured-job-detail {
-  padding: 8px 36px 22px;
-}
-.captured-job-detail h3 {
-  margin: 0 0 14px;
-}
-.captured-job-detail dl {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-  margin: 0;
-}
-.captured-job-detail dl div {
-  padding: 11px;
-  border-radius: 8px;
-  background: var(--surface-muted);
-}
-.captured-job-detail .job-description-field {
-  grid-column: 1 / -1;
-}
-.captured-job-detail .job-description-field dd {
-  white-space: pre-wrap;
-}
-.captured-job-detail dt {
-  color: var(--text-secondary);
-  font-size: 12px;
-}
-.captured-job-detail dd {
-  margin: 5px 0 0;
-  line-height: 1.5;
-}
-.captured-job-detail section {
-  margin-top: 14px;
-  padding: 14px;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-}
-.captured-job-detail section p {
-  margin: 8px 0 0;
-  white-space: pre-wrap;
-  line-height: 1.7;
-}
-@media (max-width: 1250px) {
-  .jobs-title {
-    display: grid;
-  }
-  .filters {
-    width: 100%;
-    grid-template-columns: minmax(200px, 1fr) 150px auto;
-  }
-}
-@media (max-width: 1360px) {
-  .jobs-table {
-    display: none;
-  }
-  .job-cards {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px;
-    padding: 14px;
-  }
-  .job-cards article {
-    min-width: 0;
-    padding: 16px;
-    border: 1px solid var(--border);
-    background: var(--surface-raised);
-  }
-  .job-cards header {
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-  }
-  .job-cards dl {
-    display: grid;
-    gap: 11px;
-    margin: 17px 0;
-  }
-  .job-cards dl div {
-    display: grid;
-    grid-template-columns: 90px minmax(0, 1fr);
-    gap: 10px;
-  }
-  .job-cards dt {
-    color: var(--text-secondary);
-    font-size: 13px;
-  }
-  .job-cards dd {
-    min-width: 0;
-    margin: 0;
-    overflow-wrap: anywhere;
-    font-size: 13px;
-  }
-  .job-description {
-    display: -webkit-box;
-    margin: 0;
-    overflow: hidden;
-    color: var(--text-secondary);
-    font-size: 13px;
-    line-height: 1.6;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 3;
-  }
-  .job-cards footer {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-top: 18px;
-  }
-  .job-cards footer .el-button {
-    margin: 0;
-  }
-}
-@media (max-width: 720px) {
-  .metrics-strip div {
-    padding: 14px 12px;
-  }
-  .metrics-strip strong {
-    font-size: 21px;
-  }
-  .filters,
-  .review-cards,
-  .company-form-grid {
-    grid-template-columns: 1fr;
-  }
-  .company-knowledge-list article {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-  .company-knowledge-list article .el-button,
-  .company-knowledge-list article > small {
-    grid-column: 1 / -1;
-    justify-self: start;
-  }
-  .jobs-table {
-    display: none;
-  }
-  .job-cards {
-    grid-template-columns: 1fr;
-    gap: 12px;
-    padding: 14px;
-  }
-  .job-cards article {
-    padding: 16px;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-  }
-  .job-cards header {
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-  }
-  .job-cards dl {
-    display: grid;
-    gap: 11px;
-    margin: 17px 0;
-  }
-  .job-cards dl div {
-    display: grid;
-    grid-template-columns: 90px 1fr;
-    gap: 10px;
-  }
-  .job-cards dt {
-    color: var(--text-secondary);
-    font-size: 13px;
-  }
-  .job-cards dd {
-    margin: 0;
-    font-size: 13px;
-  }
-  .job-description {
-    display: -webkit-box;
-    margin: 0;
-    color: var(--text-secondary);
-    font-size: 13px;
-    line-height: 1.6;
-    overflow: hidden;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 3;
-  }
-  .job-cards footer {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 8px;
-    margin-top: 18px;
-  }
-  .job-cards footer .el-button {
-    min-height: 42px;
-    margin: 0;
-  }
-  .job-cards footer .el-button:last-child:nth-child(3) {
-    grid-column: 1/-1;
-  }
-  .form-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-/* 指标静止、待审核项强调、移动岗位卡保留实体反馈。 */
-.metrics-strip .static-card { min-height: 92px; padding: 18px 20px; border: 1px solid var(--border); border-left: 3px solid var(--card-accent, var(--brand-600)); border-radius: var(--card-radius); background: #fff; box-shadow: var(--shadow-card); transform: none; }
-.metrics-strip .static-card:nth-child(2) { --card-accent: var(--color-info); }
-.metrics-strip .static-card:nth-child(3) { --card-accent: var(--success); }
-.metrics-strip .static-card:nth-child(4) { --card-accent: var(--warning); }
-.metrics-strip .static-card strong { font-size: 30px; line-height: 1; }
-.metrics-strip .static-card:hover { border-color: var(--border); box-shadow: var(--shadow-card); transform: none; }
-.review-cards article.decision-card { padding: 16px 14px; border: 0; border-left: 3px solid var(--warning); border-radius: 10px; background: #fff9ed; }
-.job-cards article.entity-card { border: 1px solid var(--border); border-radius: var(--card-radius); background: #fff; box-shadow: var(--shadow-card); }
-.job-cards article.entity-card:hover { border-color: var(--border-strong); background: #fff; box-shadow: var(--shadow-card-hover); transform: translateY(-1px); }
-
-.metrics-strip {
-  gap: 14px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  overflow: visible;
-}
-
-.metrics-strip div {
-  position: relative;
-  min-width: 0;
-  overflow: hidden;
-  padding: 18px 20px;
-  border: 1px solid var(--border);
-  border-radius: var(--card-radius);
-  background: linear-gradient(145deg, #fff 35%, #f8fbfa 100%);
-  box-shadow: var(--shadow-sm);
-  transition: transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
-}
-
-.metrics-strip div::after {
-  position: absolute;
-  top: -24px;
-  right: -20px;
-  width: 70px;
-  height: 70px;
-  border-radius: 50%;
-  background: #d8f4ee;
-  content: '';
-  opacity: .58;
-}
-
-.metrics-strip div:nth-child(2)::after { background: #dceaff; }
-.metrics-strip div:nth-child(3)::after { background: #d7f1dd; }
-.metrics-strip div:nth-child(4)::after { background: #fff0c9; }
-.metrics-strip div > * { position: relative; z-index: 1; }
-.metrics-strip div:hover { transform: translateY(-2px); border-color: var(--border-strong); box-shadow: var(--shadow-card-hover); }
-
-.review-cards article,
-.job-cards article {
-  border-radius: var(--card-radius);
-  transition: transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
-}
-
-.review-cards article:hover,
-.job-cards article:hover {
-  transform: translateY(-2px);
-  border-color: #dcb86b;
-  box-shadow: var(--shadow-card-hover);
-}
-
-.jobs-title { background: linear-gradient(180deg, #fff, #fbfcfc); }
-.filters > * { min-width: 0; }
-.captured-job-detail dl div { border: 1px solid #e6edeb; }
-@media (max-width: 720px) {
-  .metrics-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .metrics-strip div { border-right: 1px solid var(--border); }
-  .job-cards article { border-radius: var(--card-radius); background: linear-gradient(145deg, #fff 35%, #fbfcfc 100%); box-shadow: var(--shadow-sm); }
-}
-@media (max-width: 430px) {
-  .metrics-strip { grid-template-columns: 1fr; }
-}
-
-/* 岗位资料采用“同步情况 → 待办 → 列表”的渐进层级，降低长表单压迫感。 */
-.metrics-strip { gap: 12px; }
-.metrics-strip div { padding: 17px 18px; background: var(--surface-raised); }
-.metrics-strip div::after { display: none; }
-.metrics-strip div:first-child { border-left: 3px solid var(--brand-600); }
-.metrics-strip div:nth-child(2) { border-left: 3px solid #5587bd; }
-.metrics-strip div:nth-child(3) { border-left: 3px solid #15936c; }
-.metrics-strip div:nth-child(4) { border-left: 3px solid #d18a20; }
-.metrics-strip div { min-height: 94px; border-radius: var(--radius-lg); box-shadow: var(--shadow-card); transform: none; }
-.metrics-strip div:hover { border-color: var(--border); box-shadow: var(--shadow-card); transform: none; }
-.company-knowledge-list { padding: 0 22px 22px; }
-.company-knowledge-list article { border-color: var(--border-subtle); background: #f8faf9; }
-.review-cards { padding: 0 22px 22px; }
-.review-cards article { border-color: #efd8a9; background: #fffcf7; }
-.review-steps span { border: 1px solid transparent; }
-.review-steps span.done { border-color: #c5ead9; }
-.jobs-title { align-items: center; background: #fff; }
-.filters .el-input, .filters .el-select { min-width: 0; }
-.jobs-table :deep(.el-table__expanded-cell) { padding-top: 0; padding-bottom: 0; background: #fbfcfc; }
-.captured-job-detail { padding: 18px 30px 24px; }
-.captured-job-detail h3 { color: var(--brand-900); font-size: 15px; }
-.captured-job-detail dl div { border-color: var(--border-subtle); border-radius: 10px; background: #fff; }
-.reply-preview { border-color: #cce5df; background: #f5fbf9; }
-.review-confirmations { border-color: #ead49f; background: #fffcf7; }
-@media (max-width: 720px) { .company-knowledge-list, .review-cards { padding: 0 16px 16px; } .captured-job-detail { padding: 16px; } }
-
-/* 外层面板负责分区，内部资料与待办改用平面行，避免卡片继续嵌套。 */
-.company-knowledge-list { padding-bottom: 10px; }
-.company-knowledge-list article { padding: 14px 2px; border: 0; border-top: 1px solid var(--border-subtle); border-radius: 0; background: transparent; }
-.company-knowledge-list article { grid-template-columns: minmax(0, 1fr) auto; }
-.company-knowledge-list article:first-child { border-top: 0; }
-.company-knowledge-state { display: flex !important; align-items: center; gap: 7px; }
-.company-knowledge-state i { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: var(--warning); }
-.company-knowledge-state.ready i { background: var(--success); }
-.review-cards { gap: 0 20px; padding-bottom: 12px; }
-.review-cards article { padding: 16px 2px; border: 0; border-top: 1px solid var(--border-subtle); border-radius: 0; background: transparent; box-shadow: none; }
-.review-cards article:nth-child(-n + 2) { border-top: 0; }
-.review-cards article:hover { border-color: var(--border-subtle); background: #fbfcfc; box-shadow: none; transform: none; }
-.review-steps { gap: 8px; }
-.review-steps span { padding: 6px 3px; border: 0; border-bottom: 2px solid #dfe6eb; border-radius: 0; background: transparent; }
-.review-steps span.done { border: 0; border-bottom: 2px solid #55b99b; background: transparent; color: #147255; }
-.review-cards article > p { padding: 0; background: transparent; }
-.jobs-title { padding: 24px 26px; }
-.jobs-panel { border-radius: var(--radius-lg); }
-.jobs-table :deep(.el-table__row) { height: 86px; }
-.jobs-table :deep(.el-table__cell) { vertical-align: middle; }
-.jobs-table :deep(.el-tag) { display: inline-flex; align-items: center; min-height: 26px; line-height: 1.2; }
-.job-cards article:hover { border-color: var(--border); box-shadow: var(--shadow-card); transform: none; }
-@media (max-width: 720px) {
-  .review-cards article:nth-child(2) { border-top: 1px solid var(--border-subtle); }
-}
-
-/* V80 岗位运营面板：摘要、公司资料、真实岗位表在同一阅读节奏中。 */
-.page-shell { width: min(100%, 1440px); max-width: none; }
-.page-heading { margin-bottom: 30px; }.page-heading h1 { font-size: clamp(30px, 2.5vw, 38px); letter-spacing: -.035em; }
-.metrics-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; margin-bottom: 26px; }
-.metrics-strip > .static-card { display: grid; grid-template-columns: 58px minmax(0, 1fr); align-items: center; gap: 17px; min-height: 122px; padding: 22px; border: 1px solid var(--border); border-left: 3px solid var(--card-accent, var(--brand-600)); border-radius: 16px; background: #fff; box-shadow: 0 8px 22px rgba(23, 32, 51, .045); }
-.metrics-strip > .static-card:nth-child(2) { --card-accent: #4e8cf7; }.metrics-strip > .static-card:nth-child(3) { --card-accent: #8b6feb; }.metrics-strip > .static-card:nth-child(4) { --card-accent: var(--warning); }
-.metrics-strip > .static-card::after { display: none; }.metrics-strip > .static-card > .el-icon { display: grid; width: 58px; height: 58px; place-items: center; border-radius: 17px; background: color-mix(in srgb, var(--card-accent, var(--brand-600)) 10%, white); color: var(--card-accent, var(--brand-600)); font-size: 27px; }
-.metrics-strip > .static-card > div { position: static; display: block; min-width: 0; overflow: visible; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; transform: none; transition: none; }
-.metrics-strip > .static-card > div::after { display: none; }.metrics-strip > .static-card span, .metrics-strip > .static-card strong, .metrics-strip > .static-card small { display: block; }.metrics-strip > .static-card span { color: var(--text-secondary); font-size: 12px; }.metrics-strip > .static-card strong { margin-top: 4px; font-size: 30px; line-height: 1; }.metrics-strip > .static-card small { margin-top: 8px; color: var(--text-tertiary); font-size: 11px; }
-.company-knowledge-panel { min-height: 162px; overflow: hidden; border-radius: 17px; background: linear-gradient(110deg, #fff 62%, #f3fbf9); }.company-knowledge-panel .section-title-row { padding: 22px 24px 12px; }.company-knowledge-list { padding: 0 24px 18px; }.company-knowledge-list article { min-height: 58px; padding-block: 11px; }
-.review-queue { margin-bottom: 20px; border-radius: 17px; }.review-queue .section-title-row { padding: 21px 24px 12px; }.review-cards { padding: 0 24px 12px; }.review-cards article { min-height: 146px; padding-block: 16px; }.review-steps { grid-template-columns: repeat(4, minmax(0, 1fr)); }.review-steps span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.jobs-panel { overflow: hidden; border-radius: 17px; }.jobs-title { min-height: 96px; padding: 20px 24px; }.jobs-title h2 { font-size: 20px; }.filters { gap: 10px; }.filters .el-input { width: 308px; }.filters .el-select { width: 156px; }.filters .el-button { min-height: 40px; padding-inline: 18px; }
-.jobs-table :deep(.el-table__header-wrapper th) { height: 44px; background: #f8fafc; color: #4d5d68; font-size: 12px; }.jobs-table :deep(.el-table__row) { height: 78px; }.jobs-table :deep(.el-table__cell) { padding-top: 10px; padding-bottom: 10px; }.jobs-table :deep(.cell) { overflow: visible; }.jobs-table :deep(.el-table__row:hover > td) { background: #f7fbfa !important; }.jobs-table :deep(.el-table__body tr:last-child > td) { border-bottom: 0; }
-.job-identity strong { font-size: 14px; }.job-identity span, .jobs-table .muted { font-size: 11px; }.jobs-table :deep(.el-tag) { min-height: 24px; border-radius: 6px; font-size: 11px; }.job-actions { justify-content: flex-end; gap: 10px; }.job-actions .el-button { min-height: 28px; padding-inline: 6px; }
-@media (max-width: 1160px) { .metrics-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }.filters .el-input { width: min(280px, 28vw); } }
-@media (max-width: 760px) { .page-heading { margin-bottom: 22px; }.metrics-strip { gap: 12px; margin-bottom: 18px; }.metrics-strip > .static-card { min-height: 100px; padding: 17px; }.metrics-strip > .static-card > .el-icon { width: 44px; height: 44px; border-radius: 13px; font-size: 21px; }.filters { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 122px auto; }.filters .el-input, .filters .el-select { width: 100%; }.jobs-title { align-items: stretch; }.jobs-title > div:first-child { margin-bottom: 12px; } }
-@media (max-width: 520px) { .metrics-strip { grid-template-columns: 1fr; }.filters { grid-template-columns: 1fr; }.filters .el-button { width: 100%; }.company-knowledge-panel .section-title-row, .company-knowledge-list, .review-queue .section-title-row, .review-cards, .jobs-title { padding-inline: 16px; } }
-
-/* 公司介绍使用低对比度轮廓，仅作为空间层次，不承载信息或操作。 */
-.company-knowledge-panel { position: relative; isolation: isolate; }.company-knowledge-panel .section-title-row, .company-knowledge-panel .company-knowledge-list { position: relative; z-index: 1; }.company-ambient { position: absolute; right: 34px; bottom: 0; z-index: 0; display: flex; align-items: end; gap: 8px; height: 120px; opacity: .36; pointer-events: none; }.company-ambient i { display: block; width: 28px; height: 70px; border: 1px solid #9bddd0; border-bottom: 0; border-radius: 5px 5px 0 0; background: linear-gradient(90deg, rgba(135,220,203,.14) 0 24%, transparent 24% 36%, rgba(135,220,203,.14) 36% 60%, transparent 60% 72%, rgba(135,220,203,.14) 72%); }.company-ambient i:nth-child(2) { width: 38px; height: 104px; }.company-ambient i:nth-child(3) { width: 25px; height: 54px; }.company-ambient b { position: absolute; right: -34px; bottom: 0; width: 230px; height: 54px; border-radius: 100% 0 0; background: radial-gradient(ellipse at bottom, rgba(139,223,207,.3), transparent 68%); }.company-knowledge-list article { padding-right: 260px; }
-@media (max-width: 760px) { .company-ambient { right: 14px; transform: scale(.75); transform-origin: right bottom; }.company-knowledge-list article { padding-right: 160px; } }
-@media (max-width: 520px) { .company-ambient { display: none; }.company-knowledge-list article { padding-right: 0; } }
-
-/* 筛选区按可收缩网格布局，避免搜索框覆盖状态选择器。 */
-.jobs-title { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(0, 650px); align-items: center; gap: 22px; }.jobs-title > div:first-child { min-width: 0; }.filters { display: grid; grid-template-columns: minmax(0, 1fr) 156px auto; width: 100%; min-width: 0; }.filters .el-input, .filters .el-select { width: 100% !important; min-width: 0; }
-@media (max-width: 1120px) { .jobs-title { grid-template-columns: 1fr; }.filters { max-width: none; }.jobs-title > div:first-child { margin-bottom: 0; } }
-@media (max-width: 560px) { .filters { grid-template-columns: 1fr; }.filters .el-button { width: 100%; } }
-
-/* 单一岗位工作区：内部模块依靠分区标题和分隔线组织，不继续叠加卡片。 */
-.positions-workspace { padding: 0; overflow: hidden; }
-.positions-workspace > section {
-  min-width: 0;
-  margin: 0;
-  border: 0;
-  border-bottom: 1px solid var(--border-subtle);
-  border-radius: 0;
-  background: #fff;
-  box-shadow: none;
-}
-.positions-workspace > section:last-child { border-bottom: 0; }
-.positions-workspace .section-title-row { border-bottom: 1px solid var(--border-subtle); }
-.positions-workspace .filters { align-items: center; }
+.positions-workspace { overflow:hidden; container-type:inline-size; }
+.jobs-title { display:grid; grid-template-columns:minmax(200px,1fr) minmax(0,1.15fr); align-items:center; }
+.filters { display:grid; grid-template-columns:minmax(0,1fr) 140px auto; gap:10px; min-width:0; }
+.filters :deep(.el-input),.filters :deep(.el-select) { width:100%; min-width:0; }
+.company-knowledge-panel { border-bottom:1px solid var(--border-teal); background:var(--surface-teal); }
+.company-knowledge-list { position:relative; z-index:1; padding:16px 22px 22px; }
+.company-knowledge-list article { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+.company-knowledge-list strong { display:block; font-size:15px; }
+.company-knowledge-state { display:flex; align-items:center; gap:7px; color:var(--text-secondary); font-size:12px; margin-top:8px; }
+.company-knowledge-state i { width:7px; height:7px; border-radius:50%; background:var(--warning); flex:0 0 auto; }.company-knowledge-state.ready i { background:var(--success); }
+.review-queue { border-bottom:1px solid var(--border); }
+.review-cards { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; padding:20px 22px; }
+.review-cards article { padding:18px; border:1px solid var(--border-amber); border-radius:var(--radius-panel); background:var(--surface-amber); }
+.review-cards header,.review-cards footer { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.review-cards header > .job-identity { flex:1; min-width:0; }
+.review-steps { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; margin:16px 0; }
+.review-steps span { padding:6px 2px; border-bottom:2px solid var(--border-strong); color:var(--text-secondary); font-size:11px; text-align:center; }
+.review-steps span.done { border-color:var(--success); color:var(--success); }
+.review-cards article > p,.internal-blocker { color:var(--warning); font-size:12px; line-height:1.6; }.review-cards article > p { margin:0 0 14px; }
+.jobs-table { width:100%; }.jobs-table :deep(td.el-table__cell) { height:90px; vertical-align:top; padding:16px 0; background:var(--surface); }
+.jobs-table :deep(.el-table__header th) { background:var(--surface-muted); }
+.jobs-table :deep(.el-table__row:nth-child(even) td.el-table__cell) { background:var(--surface-soft); }
+.jobs-table :deep(.el-table__row:hover td.el-table__cell) { background:var(--surface-row); }
+.jobs-table :deep(.cell) { padding-inline:12px; }.jobs-table :deep(.el-tag) { height:24px; max-width:100%; vertical-align:top; }
+.jobs-table :deep(.el-tag__content) { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.job-identity strong { display:-webkit-box; overflow:hidden; -webkit-box-orient:vertical; -webkit-line-clamp:2; line-clamp:2; line-height:20px; font-size:13px; }
+.job-identity span,.muted { display:block; margin-top:5px; color:var(--text-secondary); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.jobs-table :deep(td .cell > strong) { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; }
+.readiness-issues { margin-top:5px; color:var(--warning); font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.job-actions { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; }.job-actions .el-button { margin:0; min-height:24px; }
+.job-cards { display:none; }.job-cards article { padding:20px; border-bottom:1px solid var(--border-subtle); background:var(--surface); transition:background var(--transition-fast); position:relative; }
+.job-cards article:nth-child(even) { background:var(--surface-soft); }
+.job-cards article:hover { background:var(--surface-row); }
+.job-cards article:last-child { border:0; }.job-cards header { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; }.job-cards .job-identity { min-width:0; flex:1; }
+.job-cards dl { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin:16px 0; }.job-cards dt { color:var(--text-secondary); font-size:11px; }.job-cards dd { margin:5px 0 0; font-size:12px; overflow-wrap:anywhere; }
+.job-description { display:-webkit-box; -webkit-line-clamp:3; line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; font-size:12px; color:var(--text-secondary); line-height:1.6; }
+.job-cards footer { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-top:16px; }
+.captured-job-detail { padding:20px; background:var(--surface-soft); }.captured-job-detail h3 { margin:0 0 16px; font-size:15px; }
+.captured-job-detail dl { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; margin:0; }.captured-job-detail dt { font-size:11px; color:var(--text-secondary); }.captured-job-detail dd { margin:5px 0 0; line-height:1.6; overflow-wrap:anywhere; }.job-description-field { grid-column:1/-1; }.job-description-field dd { white-space:pre-wrap; }
+.form-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:0 18px; }.form-grid :deep(.el-select),.form-grid :deep(.el-input-number) { width:100%; }
+.company-form-grid,.boss-field-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+.review-dialog-header,.review-confirmations,.reply-preview { padding:16px; margin-bottom:18px; background:var(--surface-soft); border-radius:var(--radius-control); }
+.review-dialog-header { display:flex; align-items:center; justify-content:space-between; gap:10px; }.review-confirmations { display:grid; gap:12px; background:var(--color-warning-bg); }
+.review-confirmations :deep(.el-checkbox) { height:auto; white-space:normal; margin:0; }.form-tip { margin-top:6px; font-size:12px; line-height:1.6; }.form-tip.warning,.reply-preview small { color:var(--warning); }.reply-preview p { line-height:1.7; }.dialog-alert { margin-bottom:18px; }
+.boss-section-title { font-size:16px; padding-bottom:12px; border-bottom:1px solid var(--border); margin:20px 0 16px; }
+@container (max-width:1100px) { .jobs-table { display:none; }.job-cards { display:block; }.jobs-title { grid-template-columns:1fr; } }
+@media(max-width:760px) { .review-cards { grid-template-columns:1fr; padding:16px; }.company-knowledge-list { padding:16px; }.company-knowledge-list article { align-items:flex-start; flex-direction:column; }.form-grid,.company-form-grid,.boss-field-grid { grid-template-columns:1fr; }.filters { grid-template-columns:minmax(0,1fr) auto; }.filters > :first-child { grid-column:1/-1; }.review-cards footer { flex-wrap:wrap; }.captured-job-detail dl { grid-template-columns:1fr; } }
+@media(max-width:480px) { .job-cards article { padding:14px; }.job-cards dl { gap:8px; }.review-cards article { padding:14px; }.review-steps { gap:4px; }.review-steps span { font-size:10px; } }
 </style>
