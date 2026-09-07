@@ -1,9 +1,34 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { consolePathForContext, isJobManagementUrl, jobSnapshotSignature, pageContextFromUrl, publicStatus, snapshotSignature, validateApprovedDraftFillContext, validateApprovedDraftFillResult, validateBackendUrl, validateControlDomDiagnostic, validateCurrentActionEntryTestResult, validateCurrentTestDraftSendResult, validateDraftFillResult, validateExchangeConfirmationTestResult, validateJobSnapshot, validateSnapshot, validateValidationReadiness } from '../src/bridge-core.mjs';
+import { compactProcessedMessages, consolePathForContext, isJobManagementUrl, isSupportedActionLeaseMode, jobSnapshotSignature, nextConsecutiveFailureCount, pageContextFromUrl, publicStatus, snapshotSignature, validateActionLeaseExecutionResult, validateApprovedDraftFillContext, validateApprovedDraftFillResult, validateBackendUrl, validateControlDomDiagnostic, validateCurrentActionEntryTestResult, validateCurrentTestDraftSendResult, validateDraftFillResult, validateExchangeConfirmationTestResult, validateJobSnapshot, validateSingleAccountBaseline, validateSnapshot, validateValidationReadiness, validateVisibleResumeTextCapture } from '../src/bridge-core.mjs';
 
 const digest = 'a'.repeat(64);
 const digest2 = 'b'.repeat(64);
+const conversationSignals = { requestResumeAvailable: true, resumeReceived: false, exchangeWechatAvailable: true, exchangePhoneAvailable: true, wechatExchanged: false, phoneExchanged: false, scheduleInterviewAvailable: true, interviewScheduled: false };
+
+test('retains every in-flight AI task while bounding terminal history', () => {
+  const terminal = Array.from({ length: 260 }, (_, index) => ({ key: `done-${index}`, outcome: 'SENT' }));
+  const processing = Array.from({ length: 100 }, (_, index) => ({ key: `active-${index}`, outcome: 'PROCESSING' }));
+  const compacted = compactProcessedMessages([...processing.slice(0, 50), ...terminal, ...processing.slice(50)]);
+  assert.equal(compacted.filter((item) => item.outcome === 'PROCESSING').length, 100);
+  assert.equal(compacted.filter((item) => item.outcome !== 'PROCESSING').length, 200);
+  assert.equal(compacted.some((item) => item.key === 'done-0'), false);
+  assert.equal(compacted.some((item) => item.key === 'done-259'), true);
+});
+
+test('accepts only bounded anonymous restart baselines', () => {
+  const baseline = { unread: [[digest, digest2]], selected: [[digest2, digest]] };
+  assert.deepEqual(validateSingleAccountBaseline(baseline), baseline);
+  assert.throws(() => validateSingleAccountBaseline({ unread: [['raw-chat', digest2]], selected: [] }), /基线无效/);
+  assert.throws(() => validateSingleAccountBaseline({ unread: [[digest, digest2], [digest, digest]], selected: [] }), /基线无效/);
+  assert.throws(() => validateSingleAccountBaseline({ unread: Array.from({ length: 501 }, () => [digest, digest2]), selected: [] }), /基线无效/);
+});
+
+test('opens the page automation circuit only for consecutive unknown outcomes', () => {
+  assert.equal(nextConsecutiveFailureCount(0, 'UNKNOWN'), 1);
+  assert.equal(nextConsecutiveFailureCount(2, 'SILENT'), 2);
+  assert.equal(nextConsecutiveFailureCount(2, 'SENT'), 0);
+});
 
 test('only accepts the local recruitment console URL', () => {
   assert.equal(validateBackendUrl('http://localhost:8088/'), 'http://localhost:8088');
@@ -29,14 +54,14 @@ test('maps BOSS page context to one clear console destination', () => {
 });
 
 test('accepts a minimized unread snapshot and selected direction', () => {
-  const payload = { pageState: 'CHAT_PAGE_READY', entries: [{ chatDigest: digest, previewDigest: digest2, jobDigest: null, jobTitle: null, timeDigest: null, unreadCount: 2 }], selected: { chatDigest: digest, messageDigest: digest2, direction: 'INBOUND', messageAt: '2026-08-30T08:00:00.000Z', selectedUnread: true, observedAt: '2026-08-30T08:00:01.000Z' } };
+  const payload = { pageState: 'CHAT_PAGE_READY', entries: [{ chatDigest: digest, previewDigest: digest2, jobDigest: null, jobTitle: null, timeDigest: null, unreadCount: 2 }], selected: { chatDigest: digest, messageDigest: digest2, direction: 'INBOUND', messageAt: '2026-08-30T08:00:00.000Z', selectedUnread: true, conversationSignals, observedAt: '2026-08-30T08:00:01.000Z' } };
   assert.equal(validateSnapshot(payload), payload);
   assert.match(snapshotSignature(payload), /^a{64}:2:/);
 });
 
 test('binds selected detail to the current list and includes it in deduplication', () => {
   const entry = { chatDigest: digest, previewDigest: null, jobDigest: null, jobTitle: null, timeDigest: null, unreadCount: 1 };
-  const selected = { chatDigest: digest, messageDigest: digest2, direction: 'INBOUND', messageAt: '2026-08-30T08:00:00.000Z', selectedUnread: false, observedAt: '2026-08-30T08:00:01.000Z' };
+  const selected = { chatDigest: digest, messageDigest: digest2, direction: 'INBOUND', messageAt: '2026-08-30T08:00:00.000Z', selectedUnread: false, conversationSignals, observedAt: '2026-08-30T08:00:01.000Z' };
   const first = { pageState: 'CHAT_PAGE_READY', entries: [entry], selected };
   const changed = { ...first, selected: { ...selected, direction: 'OUTBOUND' } };
   assert.notEqual(snapshotSignature(first), snapshotSignature(changed));
@@ -59,24 +84,38 @@ test('public status never exposes the local device token and keeps legacy counte
   assert.equal(status.trackedUnread, 5);
   assert.equal(status.detailState, '尚未复核当前会话详情。');
   assert.equal(status.sendTestLocked, false);
+  assert.equal(status.singleAccountAutoReplyEnabled, false);
+  assert.equal(status.singleAccountAutoReplyProcessedCount, 0);
   assert.equal('deviceToken' in status, false);
 });
 
+test('exposes only bounded single-account reply status without message digests', () => {
+  const status = publicStatus({ deviceToken: 'secret-device-token', enabled: true }, {
+    singleAccountAutoReplyEnabled: true,
+    singleAccountAutoReplyState: '正在监测当前账号。',
+    singleAccountProcessedMessages: [{ key: `${digest}:${digest2}`, outcome: 'SENT', at: '2026-09-07T08:00:00.000Z' }],
+    lastSingleAccountAutoReplyAt: '2026-09-07T08:00:00.000Z',
+  });
+  assert.equal(status.singleAccountAutoReplyEnabled, true);
+  assert.equal(status.singleAccountAutoReplyProcessedCount, 1);
+  assert.equal('singleAccountProcessedMessages' in status, false);
+});
+
 test('accepts minimized job snapshots and rejects duplicate or raw source identities', () => {
-  const entry = { sourceDigest: digest, title: 'Java 开发工程师', location: '上海·徐汇', salaryDisplay: '20-30K·13薪', salaryMinK: 20, salaryMaxK: 30, salaryMonths: 13, experienceRequirement: '3-5年', educationRequirement: '本科', description: null, completeness: 5 };
-  const payload = { pageState: 'JOB_MANAGEMENT_READY', entries: [entry], observedAt: '2026-08-30T08:00:00.000Z' };
+  const entry = { sourceDigest: digest, title: 'Java 开发工程师', location: '上海·徐汇', salaryDisplay: '20-30K·13薪', salaryMinK: 20, salaryMaxK: 30, salaryMonths: 13, experienceRequirement: '3-5年', educationRequirement: '本科', description: null, completeness: 5, platformStatus: 'OPEN' };
+  const payload = { pageState: 'JOB_MANAGEMENT_READY', entries: [entry], observedAt: '2026-08-30T08:00:00.000Z', scope: 'OPEN_JOBS', authoritative: true };
   assert.equal(validateJobSnapshot(payload), payload);
-  assert.match(jobSnapshotSignature(payload), /^a{64}:Java 开发工程师:/);
+  assert.match(jobSnapshotSignature(payload), /^OPEN_JOBS:true\|a{64}:Java 开发工程师:OPEN:/);
   assert.throws(() => validateJobSnapshot({ ...payload, entries: [entry, entry] }), /重复/);
   assert.throws(() => validateJobSnapshot({ ...payload, entries: [{ ...entry, sourceDigest: 'raw-platform-id' }] }), /摘要无效/);
 });
 
 test('accepts unified visible job detail fields', () => {
-  const payload = { pageState: 'JOB_MANAGEMENT_READY', observedAt: '2026-08-30T08:00:00.000Z', entries: [{
+  const payload = { pageState: 'JOB_MANAGEMENT_READY', observedAt: '2026-08-30T08:00:00.000Z', scope: 'SINGLE_JOB', authoritative: false, entries: [{
     sourceDigest: 'd'.repeat(64), title: '跨境客服主管', location: null, salaryDisplay: '8-13K',
     salaryMinK: 8, salaryMaxK: 13, salaryMonths: null, experienceRequirement: '1-3年', educationRequirement: '大专',
     description: '负责客户咨询与售后问题处理。', recruitmentType: '社会全职', jobCategory: '客服主管',
-    overseasRequirement: '境内岗位', jobKeywords: '客服｜跨境电商', workAddress: '东莞中熙时代大厦22楼', completeness: 10,
+    overseasRequirement: '境内岗位', jobKeywords: '客服｜跨境电商', workAddress: '东莞中熙时代大厦22楼', completeness: 10, platformStatus: 'UNKNOWN',
   }] };
   assert.equal(validateJobSnapshot(payload), payload);
   assert.match(jobSnapshotSignature(payload), /东莞中熙时代大厦22楼/);
@@ -147,4 +186,43 @@ test('accepts only one-click phone or wechat confirmation evidence', () => {
     controlDigest: digest2, beforeStateDigest: 'c'.repeat(64), afterStateDigest: 'd'.repeat(64), clickTriggered: true, retryTriggered: false };
   assert.equal(validateExchangeConfirmationTestResult(result), result);
   assert.throws(() => validateExchangeConfirmationTestResult({ ...result, action: 'REQUEST_RESUME' }), /类型无效/);
+});
+
+test('accepts a confirmed one-shot production resume request receipt', () => {
+  const result = { actionType: 'REQUEST_RESUME', outcome: 'SUCCEEDED', chatDigest: digest,
+    messageDigest: digest2, controlDigest: 'c'.repeat(64), beforeStateDigest: 'd'.repeat(64),
+    afterStateDigest: 'e'.repeat(64), receiptDigest: 'f'.repeat(64), clickTriggered: true,
+    confirmTriggered: true, retryTriggered: false, reason: '已向当前匹配会话发出一次简历请求。' };
+  assert.equal(validateActionLeaseExecutionResult(result, digest), result);
+  assert.throws(() => validateActionLeaseExecutionResult({ ...result, chatDigest: digest2 }, digest), /目标不一致/);
+  assert.throws(() => validateActionLeaseExecutionResult({ ...result, confirmTriggered: false }, digest), /确认点击/);
+  assert.equal(validateActionLeaseExecutionResult({ ...result, outcome: 'UNKNOWN', confirmTriggered: false }, digest).outcome, 'UNKNOWN');
+  assert.throws(() => validateActionLeaseExecutionResult({ ...result, retryTriggered: true }, digest), /只能执行一次/);
+});
+
+test('accepts only matching one-shot send and contact lease receipts', () => {
+  const base = { outcome: 'SUCCEEDED', chatDigest: digest, messageDigest: digest2,
+    controlDigest: 'c'.repeat(64), beforeStateDigest: 'd'.repeat(64), afterStateDigest: 'e'.repeat(64),
+    receiptDigest: 'f'.repeat(64), clickTriggered: true, retryTriggered: false, reason: '页面状态已确认变化。' };
+  const send = { ...base, actionType: 'SEND_MESSAGE', confirmTriggered: false };
+  assert.equal(validateActionLeaseExecutionResult(send, digest, 'SEND_MESSAGE'), send);
+  const wechat = { ...base, actionType: 'EXCHANGE_WECHAT', confirmTriggered: true };
+  assert.equal(validateActionLeaseExecutionResult(wechat, digest, 'EXCHANGE_WECHAT'), wechat);
+  assert.throws(() => validateActionLeaseExecutionResult({ ...wechat, confirmTriggered: false }, digest, 'EXCHANGE_WECHAT'), /确认点击/);
+  assert.throws(() => validateActionLeaseExecutionResult(wechat, digest, 'EXCHANGE_PHONE'), /无效/);
+});
+
+test('accepts production and explicit single-conversation lease modes only', () => {
+  assert.equal(isSupportedActionLeaseMode('VERIFIED_PAGE_EXECUTOR'), true);
+  assert.equal(isSupportedActionLeaseMode('EXPLICIT_SINGLE_CONVERSATION_TEST'), true);
+  assert.equal(isSupportedActionLeaseMode('MANUAL_TEST'), false);
+  assert.equal(isSupportedActionLeaseMode(undefined), false);
+});
+
+test('accepts only a bounded online resume capture bound to the selected conversation', () => {
+  const capture = { actionType: 'VISIBLE_RESUME_TEXT_CAPTURE', chatDigest: digest,
+    sourceEventDigest: digest2, textDigest: 'c'.repeat(64), resumeText: '候选人简历必要内容'.repeat(20), resumeReceived: true };
+  assert.equal(validateVisibleResumeTextCapture(capture, digest), capture);
+  assert.throws(() => validateVisibleResumeTextCapture({ ...capture, chatDigest: 'd'.repeat(64) }, digest), /当前会话/);
+  assert.throws(() => validateVisibleResumeTextCapture({ ...capture, resumeText: '过短' }, digest), /长度/);
 });

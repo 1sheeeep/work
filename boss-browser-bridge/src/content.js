@@ -23,9 +23,19 @@
   let autoReplyArm = null;
   let autoReplyTimer = null;
   let autoReplyBusy = false;
+  let singleAccountAutoReplyEnabled = false;
+  let singleAccountAutoReplyTimer = null;
+  let singleAccountAutoReplyBusy = false;
+  let singleAccountPendingChatDigest = null;
+  let singleAccountUnreadBaseline = new Map();
+  let singleAccountSelectedMessageBaseline = new Map();
+  let singleAccountPendingReplies = new Map();
+  let lastDeepConversationScanAt = 0;
+  let jobConfirmationTimer = null;
+  let pendingJobConfirmationSignature = '';
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (!['BRIDGE_COLLECT', 'BRIDGE_COLLECT_JOBS', 'BRIDGE_CHECK_REPLY_READINESS', 'BRIDGE_INSPECT_CURRENT_CONTROLS', 'BRIDGE_TEST_CURRENT_ACTION_ENTRY', 'BRIDGE_CONFIRM_CURRENT_EXCHANGE', 'BRIDGE_FILL_TEST_DRAFT', 'BRIDGE_PREPARE_CURRENT_SEND_TEST', 'BRIDGE_SEND_CURRENT_TEST_DRAFT', 'BRIDGE_DIAGNOSE_CURRENT_AUTO_REPLY', 'BRIDGE_ARM_CURRENT_AUTO_REPLY_TEST', 'BRIDGE_CANCEL_CURRENT_AUTO_REPLY_TEST', 'BRIDGE_PREPARE_APPROVED_DRAFT_FILL', 'BRIDGE_FILL_APPROVED_DRAFT'].includes(message?.type)) return false;
+    if (!['BRIDGE_COLLECT', 'BRIDGE_COLLECT_JOBS', 'BRIDGE_CHECK_REPLY_READINESS', 'BRIDGE_INSPECT_CURRENT_CONTROLS', 'BRIDGE_TEST_CURRENT_ACTION_ENTRY', 'BRIDGE_CONFIRM_CURRENT_EXCHANGE', 'BRIDGE_PREPARE_ACTION_LEASE', 'BRIDGE_EXECUTE_ACTION_LEASE', 'BRIDGE_FILL_TEST_DRAFT', 'BRIDGE_PREPARE_CURRENT_SEND_TEST', 'BRIDGE_SEND_CURRENT_TEST_DRAFT', 'BRIDGE_DIAGNOSE_CURRENT_AUTO_REPLY', 'BRIDGE_ARM_CURRENT_AUTO_REPLY_TEST', 'BRIDGE_CANCEL_CURRENT_AUTO_REPLY_TEST', 'BRIDGE_SET_SINGLE_ACCOUNT_AUTO_REPLY', 'BRIDGE_PREPARE_APPROVED_DRAFT_FILL', 'BRIDGE_FILL_APPROVED_DRAFT', 'BRIDGE_COLLECT_VISIBLE_RESUME', 'BRIDGE_OPEN_VISIBLE_RESUME'].includes(message?.type)) return false;
     const task = message.type === 'BRIDGE_COLLECT_JOBS'
       ? collectJobsAndPublish(Boolean(message.allowEmbeddedJobList))
       : message.type === 'BRIDGE_CHECK_REPLY_READINESS'
@@ -36,6 +46,10 @@
           ? testCurrentActionEntry(message.action)
         : message.type === 'BRIDGE_CONFIRM_CURRENT_EXCHANGE'
           ? confirmCurrentExchange(message.action)
+        : message.type === 'BRIDGE_PREPARE_ACTION_LEASE'
+          ? prepareActionLeaseContext()
+        : message.type === 'BRIDGE_EXECUTE_ACTION_LEASE'
+          ? executeActionLease(message.lease)
         : message.type === 'BRIDGE_FILL_TEST_DRAFT'
           ? fillTestDraft()
           : message.type === 'BRIDGE_PREPARE_CURRENT_SEND_TEST'
@@ -48,22 +62,44 @@
             ? armCurrentAutoReplyTest()
           : message.type === 'BRIDGE_CANCEL_CURRENT_AUTO_REPLY_TEST'
             ? cancelCurrentAutoReplyTest('CANCELLED')
+          : message.type === 'BRIDGE_SET_SINGLE_ACCOUNT_AUTO_REPLY'
+            ? setSingleAccountAutoReply(Boolean(message.enabled), Boolean(message.restore))
           : message.type === 'BRIDGE_PREPARE_APPROVED_DRAFT_FILL'
             ? prepareApprovedDraftFill()
-            : message.type === 'BRIDGE_FILL_APPROVED_DRAFT' ? fillApprovedDraft(message.payload) : collectAndPublish(true);
+            : message.type === 'BRIDGE_FILL_APPROVED_DRAFT'
+              ? fillApprovedDraft(message.payload)
+              : message.type === 'BRIDGE_COLLECT_VISIBLE_RESUME'
+                ? collectVisibleResumeText()
+                : message.type === 'BRIDGE_OPEN_VISIBLE_RESUME' ? openVisibleResume(message.expectedChatDigest) : collectAndPublish(true);
     task.then((result) => sendResponse(result || { ok: true })).catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   });
 
-  const observer = new MutationObserver(() => { scheduleCollect(1_200); scheduleAutoReplyCheck(700); });
+  const observer = new MutationObserver(() => { scheduleCollect(1_200); scheduleAutoReplyCheck(500); scheduleSingleAccountAutoReply(300); });
   observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'data-id'] });
+  document.addEventListener('click', (event) => {
+    const node = [...event.composedPath()].find((candidate) => candidate instanceof HTMLElement
+      && /^(?:查看简历|点击预览附件简历|预览附件简历)$/.test(compact(controlLabel(candidate))));
+    if (node) void recordResumePreviewControl(node);
+  }, true);
+  window.addEventListener('message', (event) => {
+    if (!/^https:\/\/(?:[^./]+\.)?zhipin\.com$/i.test(event.origin)) return;
+    if (event.data?.type === 'RECRUITMENT_VISIBLE_RESUME_PDF') void forwardMainWorldResumePdf(event.data);
+    if (event.data?.type === 'RECRUITMENT_RESUME_DOWNLOAD_DETECTED') void reportResumeDownloadDetected();
+  });
   window.addEventListener('focus', () => scheduleCollect(500), { passive: true });
   document.addEventListener('visibilitychange', () => { if (!document.hidden) scheduleCollect(500); }, { passive: true });
   scheduleCollect(1_500);
+  void restoreSingleAccountAutoReply();
 
   function scheduleCollect(delay) {
     clearTimeout(collectTimer);
-    collectTimer = setTimeout(() => void collectAndPublish(false), delay);
+    collectTimer = setTimeout(() => {
+      const task = /(?:job|position)/i.test(location.pathname) && !CHAT_URL.test(location.pathname)
+        ? collectJobsAndPublish(false)
+        : collectAndPublish(false);
+      void task;
+    }, delay);
   }
 
   function scheduleAutoReplyCheck(delay) {
@@ -125,11 +161,23 @@
         if (autoReplyArm) { autoReplyArm.transientFailures += 1; if (autoReplyArm.transientFailures <= 5) return scheduleAutoReplyCheck(800); }
         return void finishAutoReplyTest('BLOCKED', '候选人新消息连续 5 次未能稳定确认；未发送。');
       }
+      if (!second.messageText) return void finishAutoReplyTest('BLOCKED', '最后一条候选人消息不是可识别的纯文本，已转人工且未发送。');
+      const replyResult = await send({ type: 'BRIDGE_DECIDE_INBOUND_REPLY', payload: {
+        chatDigest: second.chatDigest, messageDigest: second.messageDigest,
+        messageText: second.messageText, messageAt: second.messageAt,
+        selectedUnread: second.selectedUnread, conversationSignals: second.conversationSignals,
+        observedAt: new Date().toISOString(),
+      } });
+      if (!replyResult?.ok) return void finishAutoReplyTest('BLOCKED', `岗位相关性识别失败：${replyResult?.error || '后端不可用'}；未发送。`);
+      const decision = replyResult.decision;
+      if (!decision?.replyAllowed || !decision.content) return void finishAutoReplyTest('BLOCKED', `${decision?.reason || '消息不符合自动回复条件'}；未发送。`);
+      const replyText = compact(decision.content).slice(0, 90);
+      if (!replyText) return void finishAutoReplyTest('BLOCKED', '后端没有返回可发送的安全短回复；未发送。');
       const controls = findReplyControls();
       if (!controls.editor || readEditorText(controls.editor).trim()) return void finishAutoReplyTest('BLOCKED', '回复输入框不可用或已有内容，未发送。');
-      writeEditorText(controls.editor, TEST_DRAFT_TEXT);
+      writeEditorText(controls.editor, replyText);
       await delay(300);
-      if (readEditorText(controls.editor).trim() !== TEST_DRAFT_TEXT) return void finishAutoReplyTest('BLOCKED', '测试草稿未稳定写入，未发送。');
+      if (readEditorText(controls.editor).trim() !== replyText) return void finishAutoReplyTest('BLOCKED', '安全短回复未稳定写入，未发送。');
       let filledControls = findReplyControls();
       for (let attempt = 0; attempt < 5 && (!filledControls.sendButton || filledControls.sendButtonCount !== 1); attempt++) {
         await delay(200);
@@ -155,9 +203,9 @@
         const currentControls = findReplyControls();
         const active = [...document.querySelectorAll(SELECTORS.activeConversation)].find(visible);
         const last = active ? [...active.querySelectorAll(SELECTORS.message)].filter(visible).filter((item) => directionOf(item)).at(-1) : null;
-        if (currentControls.editor && !readEditorText(currentControls.editor).trim() && directionOf(last) === 'OUTBOUND' && compact(last?.textContent).includes(compact(TEST_DRAFT_TEXT))) { confirmed = true; break; }
+        if (currentControls.editor && !readEditorText(currentControls.editor).trim() && directionOf(last) === 'OUTBOUND' && compact(last?.textContent).includes(replyText)) { confirmed = true; break; }
       }
-      await finishAutoReplyTest(confirmed ? 'SUCCEEDED' : 'UNKNOWN', confirmed ? '检测到候选人新消息后，固定测试草稿已自动发送一次。' : '已点击一次发送，但页面结果无法确认；不会重试。', armed.chatDigest);
+      await finishAutoReplyTest(confirmed ? 'SUCCEEDED' : 'UNKNOWN', confirmed ? `已识别为${decision.category}并自动发送一次岗位事实回复。` : '已点击一次发送，但页面结果无法确认；不会重试。', armed.chatDigest);
     } finally {
       autoReplyBusy = false;
       if (autoReplyArm) scheduleAutoReplyCheck(1_000);
@@ -184,6 +232,457 @@
     if (!autoReplyArm || now - Number(autoReplyArm.lastProgressAt || 0) < 1_500) return;
     autoReplyArm.lastProgressAt = now;
     await send({ type: 'BRIDGE_AUTO_REPLY_TEST_PROGRESS', payload: { actionType: 'CURRENT_AUTO_REPLY_TEST_PROGRESS', chatDigest: autoReplyArm.chatDigest, direction, messageChanged: Boolean(messageChanged), checkedAt: new Date(now).toISOString() } });
+  }
+
+  async function restoreSingleAccountAutoReply() {
+    const result = await send({ type: 'BRIDGE_GET_STATUS' });
+    if (result?.ok && result.status?.singleAccountAutoReplyEnabled) await setSingleAccountAutoReply(true, true);
+  }
+
+  async function setSingleAccountAutoReply(enabled, restore = false) {
+    if (enabled && autoReplyArm) return { ok: false, error: '请先取消当前单会话一次触发测试。' };
+    const wasEnabled = singleAccountAutoReplyEnabled;
+    let initialUnreadCount = 0;
+    singleAccountAutoReplyEnabled = enabled;
+    if (!enabled) {
+      singleAccountPendingChatDigest = null;
+      singleAccountUnreadBaseline = new Map();
+      singleAccountSelectedMessageBaseline = new Map();
+      singleAccountPendingReplies = new Map();
+    } else if (!wasEnabled) {
+      const saved = restore ? await send({ type: 'BRIDGE_GET_SINGLE_ACCOUNT_BASELINE' }) : null;
+      const currentUnread = await collectUnreadBaseline();
+      initialUnreadCount = currentUnread.size;
+      singleAccountUnreadBaseline = restore && saved?.ok && saved.unread?.length
+        ? new Map(saved.unread) : new Map();
+      singleAccountSelectedMessageBaseline = saved?.ok && saved.selected?.length
+        ? new Map(saved.selected) : new Map();
+      if (!singleAccountSelectedMessageBaseline.size) {
+        const selected = await collectSelectedConversation();
+        if (selected.ok) singleAccountSelectedMessageBaseline.set(selected.chatDigest, selected.messageDigest);
+      }
+      const pending = await send({ type: 'BRIDGE_GET_PENDING_INBOUND_REPLIES' });
+      singleAccountPendingReplies = new Map((pending?.tasks || []).map((task) => [task.taskId, { ...task, nextPollAt: 0 }]));
+      await persistSingleAccountBaseline();
+    }
+    clearTimeout(singleAccountAutoReplyTimer);
+    singleAccountAutoReplyTimer = null;
+    if (enabled) scheduleSingleAccountAutoReply(800);
+    return { ok: true, enabled, baselineCount: singleAccountUnreadBaseline.size,
+      initialUnreadCount: enabled && !restore ? initialUnreadCount : 0 };
+  }
+
+  async function persistSingleAccountBaseline() {
+    if (!singleAccountAutoReplyEnabled) return;
+    const unread = [...singleAccountUnreadBaseline.entries()].slice(-500);
+    const selected = [...singleAccountSelectedMessageBaseline.entries()].slice(-500);
+    singleAccountUnreadBaseline = new Map(unread);
+    singleAccountSelectedMessageBaseline = new Map(selected);
+    await send({ type: 'BRIDGE_SAVE_SINGLE_ACCOUNT_BASELINE', payload: {
+      unread, selected,
+    } });
+  }
+
+  async function collectUnreadBaseline() {
+    const baseline = new Map();
+    const items = [...document.querySelectorAll(SELECTORS.conversation)]
+      .filter((item) => visible(item) && item.querySelector(SELECTORS.unread));
+    for (const item of items) {
+      const identity = stableIdentity(item);
+      if (!identity) continue;
+      const chatDigest = await digest(identity);
+      baseline.set(chatDigest, await unreadRowSignature(item));
+    }
+    return baseline;
+  }
+
+  async function unreadRowSignature(item) {
+    const preview = textOf(item, SELECTORS.preview);
+    const unreadNode = item.querySelector(SELECTORS.unread);
+    const unreadCount = unreadNode ? Math.max(1, Number(String(unreadNode.textContent || '').match(/\d+/)?.[0]) || 1) : 0;
+    return digest(`${preview}|${unreadCount}`);
+  }
+
+  async function findNewOrChangedUnreadConversation() {
+    const items = [...document.querySelectorAll(SELECTORS.conversation)]
+      .filter((item) => visible(item) && item.querySelector(SELECTORS.unread));
+    for (const item of items) {
+      const identity = stableIdentity(item);
+      if (!identity) return { error: '未读会话没有稳定 DOM 身份，禁止猜测目标。' };
+      const chatDigest = await digest(identity);
+      const signature = await unreadRowSignature(item);
+      if (!singleAccountUnreadBaseline.has(chatDigest) || singleAccountUnreadBaseline.get(chatDigest) !== signature) {
+        return { item, chatDigest };
+      }
+    }
+    return { item: null, chatDigest: null };
+  }
+
+  async function findConversationByDigest(chatDigest) {
+    for (const item of [...document.querySelectorAll(SELECTORS.conversation)].filter(visible)) {
+      const identity = stableIdentity(item);
+      if (identity && await digest(identity) === chatDigest) return item;
+    }
+    return null;
+  }
+
+  function conversationScrollContainer() {
+    const row = [...document.querySelectorAll(SELECTORS.conversation)].find((item) => visible(item));
+    let node = row?.parentElement || null;
+    for (let depth = 0; node && depth < 8; depth++, node = node.parentElement) {
+      const style = getComputedStyle(node);
+      if (node.scrollHeight > node.clientHeight + 24 && /(auto|scroll)/.test(style.overflowY)) return node;
+    }
+    return null;
+  }
+
+  async function scanConversationPages(matcher) {
+    const scroller = conversationScrollContainer();
+    if (!scroller) return null;
+    const originalTop = scroller.scrollTop;
+    const step = Math.max(120, Math.floor(scroller.clientHeight * .75));
+    const maxTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    const positions = [];
+    for (let top = 0; top < maxTop && positions.length < 40; top += step) positions.push(top);
+    positions.push(maxTop);
+    let matched = false;
+    try {
+      for (const top of [...new Set(positions)]) {
+        scroller.scrollTop = top;
+        scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
+        await delay(120);
+        const rows = [...document.querySelectorAll(SELECTORS.conversation)].filter(visible);
+        for (const row of rows) {
+          const match = await matcher(row);
+          if (match) { matched = true; return match; }
+        }
+      }
+      return null;
+    } finally {
+      if (!matched) {
+        scroller.scrollTop = originalTop;
+        scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
+      }
+    }
+  }
+
+  async function findConversationByDigestDeep(chatDigest) {
+    const found = await scanConversationPages(async (item) => {
+      const identity = stableIdentity(item);
+      return identity && await digest(identity) === chatDigest ? item : null;
+    });
+    return found;
+  }
+
+  async function findNewOrChangedUnreadConversationDeep() {
+    return scanConversationPages(async (item) => {
+      if (!item.querySelector(SELECTORS.unread)) return null;
+      const identity = stableIdentity(item);
+      if (!identity) return null;
+      const chatDigest = await digest(identity);
+      const signature = await unreadRowSignature(item);
+      return !singleAccountUnreadBaseline.has(chatDigest) || singleAccountUnreadBaseline.get(chatDigest) !== signature
+        ? { item, chatDigest } : null;
+    });
+  }
+
+  async function nextReadyInboundReply() {
+    const now = Date.now();
+    for (const [taskId, task] of singleAccountPendingReplies) {
+      if (Number(task.nextPollAt || 0) > now) continue;
+      task.nextPollAt = now + 1_000;
+      try {
+        const result = await send({ type: 'BRIDGE_POLL_INBOUND_REPLY', payload: task });
+        if (!result?.ok) { task.nextPollAt = now + 5_000; continue; }
+        if (result.status === 'CANCELLED' || result.status === 'FAILED'
+            || (result.status === 'COMPLETED' && !result.decision?.replyAllowed)) {
+          singleAccountPendingReplies.delete(taskId);
+          continue;
+        }
+        if (result.status === 'COMPLETED' && result.decision?.replyAllowed && result.decision?.content) {
+          return { task, decision: result.decision };
+        }
+      } catch (_error) {
+        task.nextPollAt = now + 5_000;
+      }
+    }
+    return null;
+  }
+
+  function scheduleSingleAccountAutoReply(delay) {
+    if (!singleAccountAutoReplyEnabled || singleAccountAutoReplyTimer) return;
+    singleAccountAutoReplyTimer = setTimeout(() => {
+      singleAccountAutoReplyTimer = null;
+      void processNextUnreadConversation();
+    }, delay);
+  }
+
+  async function haltSingleAccountAutoReply(state) {
+    singleAccountAutoReplyEnabled = false;
+    clearTimeout(singleAccountAutoReplyTimer);
+    singleAccountAutoReplyTimer = null;
+    await send({ type: 'BRIDGE_SINGLE_ACCOUNT_AUTO_REPLY_STATE', payload: {
+      state, disable: true, observedAt: new Date().toISOString(),
+    } });
+  }
+
+  async function reportSingleAccountResult(selected, outcome, reason) {
+    const result = await send({ type: 'BRIDGE_SINGLE_ACCOUNT_AUTO_REPLY_RESULT', payload: {
+      chatDigest: selected.chatDigest, messageDigest: selected.messageDigest,
+      outcome, reason: compact(reason).slice(0, 300), occurredAt: new Date().toISOString(),
+    } });
+    if (result?.shouldStop) {
+      singleAccountAutoReplyEnabled = false;
+      clearTimeout(singleAccountAutoReplyTimer);
+      singleAccountAutoReplyTimer = null;
+    }
+    const matchingItem = [...document.querySelectorAll(SELECTORS.conversation)].filter(visible)
+      .find((item) => stableIdentity(item) && item.matches(SELECTORS.selectedConversation));
+    if (matchingItem && await digest(stableIdentity(matchingItem)) === selected.chatDigest && matchingItem.querySelector(SELECTORS.unread)) {
+      singleAccountUnreadBaseline.set(selected.chatDigest, await unreadRowSignature(matchingItem));
+    } else {
+      singleAccountUnreadBaseline.delete(selected.chatDigest);
+    }
+    singleAccountSelectedMessageBaseline.set(selected.chatDigest, selected.messageDigest);
+    await persistSingleAccountBaseline();
+  }
+
+  async function receiptInboundReplySend(lease, outcome, afterShape, reason) {
+    const afterStateDigest = await digest(afterShape);
+    const receiptDigest = await digest(`${lease.beforeStateDigest}|${afterStateDigest}|${outcome}`);
+    return send({ type: 'BRIDGE_RECEIPT_INBOUND_REPLY_SEND', payload: {
+      leaseToken: lease.leaseToken, outcome, beforeStateDigest: lease.beforeStateDigest,
+      afterStateDigest, receiptDigest, reason: compact(reason).slice(0, 300),
+    } });
+  }
+
+  async function processNextUnreadConversation() {
+    if (!singleAccountAutoReplyEnabled) return;
+    if (singleAccountAutoReplyBusy || autoReplyBusy || collecting) return scheduleSingleAccountAutoReply(1_000);
+    singleAccountAutoReplyBusy = true;
+    autoReplyBusy = true;
+    try {
+      const page = classifyPage();
+      if (!page.ok) return void await haltSingleAccountAutoReply(`持续回复已停止：${page.reason || '当前页面存在登录、验证或风险状态。'}`);
+      const currentControls = findReplyControls();
+      if (currentControls.editor && readEditorText(currentControls.editor).trim()) {
+        return void await haltSingleAccountAutoReply('持续回复已停止：当前输入框已有内容，为避免覆盖 HR 草稿未切换会话。');
+      }
+      const readyReply = await nextReadyInboundReply();
+      const selectedItem = [...document.querySelectorAll(SELECTORS.selectedConversation)].find(visible);
+      let target = readyReply ? await findConversationByDigest(readyReply.task.chatDigest) : null;
+      if (readyReply && !target) target = await findConversationByDigestDeep(readyReply.task.chatDigest);
+      let queuedDecision = target ? readyReply.decision : null;
+      let queuedTask = target ? readyReply.task : null;
+      if (!target && singleAccountPendingChatDigest && selectedItem) {
+        const selectedIdentity = stableIdentity(selectedItem);
+        if (selectedIdentity && await digest(selectedIdentity) === singleAccountPendingChatDigest) target = selectedItem;
+      }
+      if (!target && !queuedTask && selectedItem) {
+        const currentSelected = await collectSelectedConversation();
+        if (currentSelected.ok) {
+          const baselineMessageDigest = singleAccountSelectedMessageBaseline.get(currentSelected.chatDigest);
+          if (baselineMessageDigest && baselineMessageDigest !== currentSelected.messageDigest && currentSelected.direction === 'INBOUND') {
+            target = selectedItem;
+          } else if (!baselineMessageDigest || baselineMessageDigest !== currentSelected.messageDigest) {
+            singleAccountSelectedMessageBaseline.set(currentSelected.chatDigest, currentSelected.messageDigest);
+          }
+        }
+      }
+      if (!target && !queuedTask) {
+        singleAccountPendingChatDigest = null;
+        const candidate = await findNewOrChangedUnreadConversation();
+        if (candidate.error) return void await haltSingleAccountAutoReply(`持续回复已停止：${candidate.error}`);
+        target = candidate.item;
+        if (!target && Date.now() - lastDeepConversationScanAt >= 15_000) {
+          lastDeepConversationScanAt = Date.now();
+          const deepCandidate = await findNewOrChangedUnreadConversationDeep();
+          target = deepCandidate?.item || null;
+        }
+      }
+      if (!target) return scheduleSingleAccountAutoReply(1_000);
+      const identity = stableIdentity(target);
+      if (!identity) return void await haltSingleAccountAutoReply('持续回复已停止：未读会话没有稳定 DOM 身份，禁止猜测目标。');
+      const expectedChatDigest = await digest(identity);
+      singleAccountPendingChatDigest = expectedChatDigest;
+      const switchedConversation = !target.matches(SELECTORS.selectedConversation);
+      if (switchedConversation) target.click();
+      await delay(switchedConversation ? 650 : 120);
+      const first = await collectSelectedConversation();
+      await delay(350);
+      const second = await collectSelectedConversation();
+      if (!first.ok || !second.ok || first.chatDigest !== expectedChatDigest || second.chatDigest !== expectedChatDigest || first.signature !== second.signature) {
+        return scheduleSingleAccountAutoReply(1_500);
+      }
+      if (queuedTask && second.messageDigest !== queuedTask.messageDigest) {
+        try {
+          await send({ type: 'BRIDGE_DISCARD_STALE_INBOUND_REPLY', payload: {
+            taskId: queuedTask.taskId, chatDigest: queuedTask.chatDigest,
+            messageDigest: queuedTask.messageDigest, currentMessageDigest: second.messageDigest,
+            currentMessageAt: second.messageAt, selectedUnread: second.selectedUnread,
+            conversationSignals: second.conversationSignals,
+          } });
+        } catch (_error) {
+          // Backend keeps the task non-sendable by target digest; the operations page exposes any residual READY item.
+        }
+        singleAccountPendingReplies.delete(queuedTask.taskId);
+        await reportSingleAccountResult(queuedTask, 'SILENT', '候选人在 AI 分析期间发来了新消息，旧结果已作废且未发送。');
+        singleAccountPendingChatDigest = null;
+        return scheduleSingleAccountAutoReply(300);
+      }
+      const activeConversation = [...document.querySelectorAll(SELECTORS.activeConversation)].find(visible);
+      const stableLastMessage = activeConversation
+        ? [...activeConversation.querySelectorAll(SELECTORS.message)].filter(visible).filter((item) => directionOf(item)).at(-1)
+        : null;
+      const containsStructuredAttachment = Boolean(stableLastMessage?.querySelector('.message-card-wrap, .hyperLink, video, audio, [class*="attachment"], [class*="resume"]'));
+      if (second.direction !== 'INBOUND' || !second.messageText || containsStructuredAttachment) {
+        await reportSingleAccountResult(second, 'SILENT', '最后一条内容不是可安全处理的候选人纯文本，未回复。');
+        singleAccountPendingChatDigest = null;
+        return scheduleSingleAccountAutoReply(1_500);
+      }
+      if (second.conversationSignals?.interviewScheduled === true) {
+        await reportSingleAccountResult(second, 'SILENT', '该会话已约面试，后续消息交由 HR 跟进，不再自动回复。');
+        singleAccountPendingChatDigest = null;
+        return scheduleSingleAccountAutoReply(1_500);
+      }
+      const controls = findReplyControls();
+      if (!controls.editor || readEditorText(controls.editor).trim()) {
+        return void await haltSingleAccountAutoReply('持续回复已停止：目标会话输入框不可用或已有内容，未发送。');
+      }
+      let decision = queuedDecision;
+      if (!decision) {
+        const replyResult = await send({ type: 'BRIDGE_DECIDE_INBOUND_REPLY', payload: {
+          chatDigest: second.chatDigest, messageDigest: second.messageDigest, messageText: second.messageText,
+          messageAt: second.messageAt, selectedUnread: second.selectedUnread,
+          conversationSignals: second.conversationSignals, observedAt: new Date().toISOString(), continuous: true,
+        } });
+        if (!replyResult?.ok) return scheduleSingleAccountAutoReply(5_000);
+        if (replyResult.pending && replyResult.taskId) {
+          singleAccountPendingReplies.set(replyResult.taskId, {
+            taskId: replyResult.taskId, chatDigest: second.chatDigest, messageDigest: second.messageDigest, nextPollAt: Date.now() + 500,
+          });
+          const selectedRow = [...document.querySelectorAll(SELECTORS.selectedConversation)].find(visible);
+          if (selectedRow?.querySelector(SELECTORS.unread)) singleAccountUnreadBaseline.set(second.chatDigest, await unreadRowSignature(selectedRow));
+          singleAccountSelectedMessageBaseline.set(second.chatDigest, second.messageDigest);
+          await persistSingleAccountBaseline();
+          singleAccountPendingChatDigest = null;
+          return scheduleSingleAccountAutoReply(300);
+        }
+        decision = replyResult.decision;
+      }
+      if (!singleAccountAutoReplyEnabled) {
+        await reportSingleAccountResult(second, 'SILENT', 'HR 已在判定期间停止持续回复，未写入或发送。');
+        singleAccountPendingChatDigest = null;
+        return;
+      }
+      if (!decision?.replyAllowed || !decision.content) {
+        if (decision?.category === 'RATE_LIMIT' || decision?.category === 'DISABLED') {
+          return void await haltSingleAccountAutoReply(`持续回复已停止：${decision.reason || '安全限制已触发。'}`);
+        }
+        if (decision?.category !== 'DUPLICATE') await reportSingleAccountResult(second, 'SILENT', decision?.reason || '消息不符合自动回复条件。');
+        singleAccountPendingChatDigest = null;
+        return scheduleSingleAccountAutoReply(1_500);
+      }
+      let sendLease = null;
+      if (queuedTask) {
+        const beforeStateDigest = await digest(`${second.chatDigest}|${second.messageDigest}|EMPTY_EDITOR|READY_TO_FILL`);
+        const claim = await send({ type: 'BRIDGE_CLAIM_INBOUND_REPLY_SEND', payload: {
+          taskId: queuedTask.taskId, chatDigest: second.chatDigest,
+          messageDigest: second.messageDigest, beforeStateDigest, messageAt: second.messageAt,
+          selectedUnread: second.selectedUnread, conversationSignals: second.conversationSignals,
+          observedAt: new Date().toISOString(),
+        } });
+        if (!claim?.available || !claim.leaseToken || !claim.content || !claim.replyDigest) {
+          if (claim?.status === 'READY') {
+            const rateLimited = String(claim.reason || '').includes('发送安全上限');
+            queuedTask.nextPollAt = Date.now() + (rateLimited ? 60_000 : 10_000);
+            await send({ type: 'BRIDGE_SINGLE_ACCOUNT_AUTO_REPLY_STATE', payload: {
+              state: claim.reason || '后端自动发送总开关已关闭，任务继续保留等待。',
+              disable: false, observedAt: new Date().toISOString(),
+            } });
+            singleAccountPendingChatDigest = null;
+            return scheduleSingleAccountAutoReply(5_000);
+          }
+          singleAccountPendingReplies.delete(queuedTask.taskId);
+          await reportSingleAccountResult(second, claim?.status === 'SKIPPED' ? 'SILENT' : 'UNKNOWN', claim?.reason || 'AI 回复发送租约不可用，已禁止重试。');
+          singleAccountPendingChatDigest = null;
+          return scheduleSingleAccountAutoReply(1_000);
+        }
+        if (await digest(claim.content) !== claim.replyDigest) {
+          sendLease = { ...claim, beforeStateDigest };
+          await receiptInboundReplySend(sendLease, 'FAILED', `${second.chatDigest}|${second.messageDigest}|CONTENT_DIGEST_MISMATCH`, '租约回复内容摘要不一致，未写入且未发送。');
+          singleAccountPendingReplies.delete(queuedTask.taskId);
+          await reportSingleAccountResult(second, 'SILENT', '租约内容校验失败，未发送。');
+          singleAccountPendingChatDigest = null;
+          return scheduleSingleAccountAutoReply(1_000);
+        }
+        sendLease = { ...claim, beforeStateDigest };
+        decision = { ...decision, content: claim.content };
+      }
+      const replyText = compact(decision.content);
+      if (!replyText || replyText.length > 90) {
+        if (sendLease) await receiptInboundReplySend(sendLease, 'FAILED', `${second.chatDigest}|${second.messageDigest}|INVALID_REPLY_LENGTH`, '租约内容为空或超过 90 字，未发送。');
+        await reportSingleAccountResult(second, 'SILENT', '后端没有返回可发送的安全短回复。');
+        singleAccountPendingChatDigest = null;
+        return scheduleSingleAccountAutoReply(1_500);
+      }
+      writeEditorText(controls.editor, replyText);
+      await delay(350);
+      if (readEditorText(controls.editor).trim() !== replyText) {
+        writeEditorText(controls.editor, '');
+        if (sendLease) await receiptInboundReplySend(sendLease, 'FAILED', `${second.chatDigest}|${second.messageDigest}|DRAFT_FILL_FAILED`, '安全短回复未稳定写入，未发送。');
+        await reportSingleAccountResult(second, 'SILENT', '安全短回复未稳定写入，已清空且未发送。');
+        singleAccountPendingChatDigest = null;
+        return scheduleSingleAccountAutoReply(2_000);
+      }
+      let filledControls = findReplyControls();
+      for (let attempt = 0; attempt < 5 && (!filledControls.sendButton || filledControls.sendButtonCount !== 1); attempt++) {
+        await delay(200);
+        filledControls = findReplyControls();
+      }
+      const beforeSend = await collectSelectedConversation();
+      if (filledControls.editor !== controls.editor || !filledControls.sendButton || filledControls.sendButtonCount !== 1
+          || !beforeSend.ok || beforeSend.chatDigest !== second.chatDigest
+          || beforeSend.messageDigest !== second.messageDigest || beforeSend.direction !== 'INBOUND') {
+        writeEditorText(controls.editor, '');
+        if (sendLease) await receiptInboundReplySend(sendLease, 'FAILED', `${second.chatDigest}|${second.messageDigest}|PRE_SEND_REVALIDATION_FAILED`, '发送前页面或会话状态变化，未点击发送。');
+        await reportSingleAccountResult(second, 'SILENT', '发送前页面或会话状态发生变化，已清空且未发送。');
+        singleAccountPendingChatDigest = null;
+        return scheduleSingleAccountAutoReply(2_000);
+      }
+      if (!singleAccountAutoReplyEnabled) {
+        writeEditorText(controls.editor, '');
+        if (sendLease) await receiptInboundReplySend(sendLease, 'FAILED', `${second.chatDigest}|${second.messageDigest}|STOPPED_BEFORE_SEND`, 'HR 在发送前停止持续回复，未点击发送。');
+        await reportSingleAccountResult(second, 'SILENT', 'HR 已在发送前停止持续回复，草稿已清空且未发送。');
+        singleAccountPendingChatDigest = null;
+        return;
+      }
+      filledControls.sendButton.click();
+      let confirmed = false;
+      for (let attempt = 0; attempt < 8; attempt++) {
+        await delay(500);
+        const current = await collectSelectedConversation();
+        if (!current.ok || current.chatDigest !== second.chatDigest) break;
+        const active = [...document.querySelectorAll(SELECTORS.activeConversation)].find(visible);
+        const last = active ? [...active.querySelectorAll(SELECTORS.message)].filter(visible).filter((item) => directionOf(item)).at(-1) : null;
+        const nextControls = findReplyControls();
+        if (nextControls.editor && !readEditorText(nextControls.editor).trim()
+            && directionOf(last) === 'OUTBOUND' && compact(last?.textContent).includes(replyText)) { confirmed = true; break; }
+      }
+      if (sendLease) await receiptInboundReplySend(sendLease, confirmed ? 'SUCCEEDED' : 'UNKNOWN',
+        `${second.chatDigest}|${second.messageDigest}|${confirmed ? 'OUTBOUND_CONFIRMED' : 'SEND_RESULT_UNCONFIRMED'}|${await digest(replyText)}`,
+        confirmed ? '页面已确认输入框清空且最后一条为相同出站回复。' : '已点击一次发送，但页面结果无法确认；禁止重试。');
+      await reportSingleAccountResult(second, confirmed ? 'SENT' : 'UNKNOWN', confirmed
+        ? `已识别为${decision.category}并发送一条岗位事实回复。`
+        : '已点击一次发送，但页面结果无法确认；该消息不会自动重试。');
+      singleAccountPendingChatDigest = null;
+      if (queuedTask) singleAccountPendingReplies.delete(queuedTask.taskId);
+      scheduleSingleAccountAutoReply(2_000);
+    } finally {
+      singleAccountAutoReplyBusy = false;
+      autoReplyBusy = false;
+      if (singleAccountAutoReplyEnabled && !singleAccountAutoReplyTimer) scheduleSingleAccountAutoReply(2_000);
+    }
   }
 
   async function collectAndPublish(reportNonChat) {
@@ -238,9 +737,30 @@
       const second = await collectCurrentJobPage();
       if (!second.ok) { await send({ type: 'BRIDGE_JOB_BLOCKED', payload: second }); return { ok: false, error: second.reason }; }
       if (first.signature !== second.signature) return { ok: false, error: '职位列表仍在变化，请等待页面稳定后重试。' };
-      const response = await send({ type: 'BRIDGE_JOB_SNAPSHOT', payload: { pageState: 'JOB_MANAGEMENT_READY', entries: second.entries, observedAt: new Date().toISOString() } });
+      const response = await send({ type: 'BRIDGE_JOB_SNAPSHOT', payload: { pageState: 'JOB_MANAGEMENT_READY', entries: second.entries, observedAt: new Date().toISOString(), scope: second.scope, authoritative: second.authoritative } });
+      scheduleJobClosureConfirmation(second, response);
       return response?.ok ? response : { ok: false, pageMatched: true, error: response?.error || '本地服务未接受职位快照。' };
     } finally { collecting = false; }
+  }
+
+  function scheduleJobClosureConfirmation(snapshot, response) {
+    if (response?.skipped) return;
+    if (!snapshot.authoritative || !response?.ok) {
+      clearTimeout(jobConfirmationTimer);
+      jobConfirmationTimer = null;
+      pendingJobConfirmationSignature = '';
+      return;
+    }
+    if (pendingJobConfirmationSignature === snapshot.signature) {
+      pendingJobConfirmationSignature = '';
+      return;
+    }
+    clearTimeout(jobConfirmationTimer);
+    pendingJobConfirmationSignature = snapshot.signature;
+    jobConfirmationTimer = setTimeout(() => {
+      jobConfirmationTimer = null;
+      if (!document.hidden && pendingJobConfirmationSignature === snapshot.signature) void collectJobsAndPublish(false);
+    }, 12_000);
   }
 
   async function collectReplyReadiness() {
@@ -478,7 +998,7 @@
     }
     const diagnosticScope = editorContainer?.closest('.conversation-operate') || matchedButtonScope || findControlScope(editor);
     const actionLabels = [...(diagnosticScope?.querySelectorAll('button, [role="button"], a, [tabindex], .operate-btn, .submit') || [])]
-      .map(controlLabel).filter((label) => /^(?:发送(?:消息)?|求简历|接收简历|换电话|换微信|约面试|不合适)$/.test(label));
+      .map((node) => knownActionLabel(node, controlLabel(node))).filter(Boolean);
     return { editor, sendButton: sendButtons.length === 1 ? sendButtons[0] : null, sendButtonCount: sendButtons.length, actionLabels: [...new Set(actionLabels)].slice(0, 20) };
   }
 
@@ -502,10 +1022,360 @@
     const candidates = [...new Set([scope, ...structural, ...pointerControls, ...dialogControls])].filter((node) => node instanceof HTMLElement && visible(node)).slice(0, 120);
     const editorReport = await describeControl(editor);
     const controls = await Promise.all(candidates.map(describeControl));
+    const activeConversation = [...document.querySelectorAll(SELECTORS.activeConversation)].find(visible);
+    const resumeCandidateNodes = activeConversation ? [...activeConversation.querySelectorAll(
+      'button, a, [role="button"], [class*="resume"], [class*="attachment"], [class*="file"], [class*="pdf"], [class*="preview"], [class*="download"]'
+    )].filter((node) => node instanceof HTMLElement && visible(node)).filter((node) => {
+      const shape = `${node.className || ''} ${node.getAttribute('title') || ''} ${node.getAttribute('aria-label') || ''} ${compact(node.textContent)}`.toLowerCase();
+      return /(简历|附件|pdf|在线简历|预览|下载|resume|attachment|file|preview|download)/i.test(shape);
+    }).slice(0, 80) : [];
+    const resumeCandidates = await Promise.all(resumeCandidateNodes.map(async (node) => {
+      const report = await describeControl(node);
+      const shape = `${node.className || ''} ${node.getAttribute('title') || ''} ${node.getAttribute('aria-label') || ''} ${compact(node.textContent)}`;
+      const hints = [
+        /简历|resume/i.test(shape) ? 'RESUME' : null,
+        /附件|attachment|file/i.test(shape) ? 'ATTACHMENT' : null,
+        /pdf/i.test(shape) ? 'PDF' : null,
+        /预览|查看|preview/i.test(shape) ? 'PREVIEW' : null,
+        /下载|download/i.test(shape) ? 'DOWNLOAD' : null,
+      ].filter(Boolean);
+      return { ...report, hints };
+    }));
     const observedAt = new Date().toISOString();
-    const reportDigest = await digest(JSON.stringify([selected.chatDigest, editorReport.fingerprint, ...controls.map((item) => item.fingerprint)]));
+    const reportDigest = await digest(JSON.stringify([selected.chatDigest, editorReport.fingerprint, ...controls.map((item) => item.fingerprint), ...resumeCandidates.map((item) => item.fingerprint)]));
     return { ok: true, diagnostic: { actionType: 'CURRENT_CONTROL_DOM_DIAGNOSTIC', pageState: 'CHAT_PAGE_READY', chatDigest: selected.chatDigest,
-      observedAt, rawContentIncluded: false, truncated: candidates.length >= 120, editor: editorReport, controls, reportDigest } };
+      observedAt, rawContentIncluded: false, truncated: candidates.length >= 120 || resumeCandidateNodes.length >= 80,
+      editor: editorReport, controls, resumeCandidates, reportDigest } };
+  }
+
+  async function recordResumePreviewControl(node) {
+    try {
+      // 先记录被点击节点；平台可能在 click 后立即替换附件卡片 DOM。
+      const clickedControl = await describeControl(node);
+      const selected = await collectSelectedConversation();
+      const { editor } = findReplyControls();
+      if (!selected.ok || !editor || !visible(editor)) return;
+      const editorReport = await describeControl(editor);
+      const observedAt = new Date().toISOString();
+      const reportDigest = await digest(JSON.stringify([selected.chatDigest, clickedControl.fingerprint, observedAt]));
+      await send({ type: 'BRIDGE_RESUME_PREVIEW_CLICK_DIAGNOSTIC', payload: {
+        actionType: 'CURRENT_CONTROL_DOM_DIAGNOSTIC', pageState: 'CHAT_PAGE_READY', chatDigest: selected.chatDigest,
+        observedAt, rawContentIncluded: false, truncated: false, editor: editorReport,
+        controls: [clickedControl], resumeCandidates: [{ ...clickedControl, hints: ['RESUME', 'ATTACHMENT', 'PDF', 'PREVIEW'] }], reportDigest,
+      } });
+      void recordResumePreviewSurface(selected.chatDigest, editorReport, clickedControl);
+    } catch {
+      // 诊断记录不得阻断 HR 的原始点击行为。
+    }
+  }
+
+  async function recordResumePreviewSurface(chatDigest, editorReport, clickedControl) {
+    let importTriggered = false;
+    let attachmentViewRequested = false;
+    for (const wait of [500, 1200, 2500]) {
+      await delay(wait);
+      const selected = await collectSelectedConversation();
+      if (!selected.ok || selected.chatDigest !== chatDigest) return;
+      if (!attachmentViewRequested && !findVisibleResumePdfFrame()) {
+        const fileControls = [...document.querySelectorAll('a.resume-btn-file, .resume-file-content .btn')]
+          .filter((node) => node instanceof HTMLElement && visible(node) && !node.disabled && node.getAttribute('aria-disabled') !== 'true');
+        if (fileControls.length === 1) {
+          attachmentViewRequested = true;
+          fileControls[0].click();
+          await send({ type: 'BRIDGE_VISIBLE_RESUME_IMPORT_STATUS', payload: {
+            chatDigest, state: '已识别附件简历入口，正在加载 PDF 预览…', observedAt: new Date().toISOString(),
+          } });
+          await delay(700);
+        }
+      }
+      const selector = 'iframe, embed, object, canvas, [role="dialog"], [class*="pdf"], [class*="preview"], [class*="resume"], [class*="viewer"]';
+      const nodes = [...document.querySelectorAll(selector)]
+        .filter((node) => node instanceof HTMLElement && visible(node))
+        .filter((node) => {
+          if (['IFRAME','EMBED','OBJECT','CANVAS'].includes(node.tagName)) return true;
+          const shape = `${node.className || ''} ${node.getAttribute('title') || ''} ${node.getAttribute('aria-label') || ''}`;
+          return /(pdf|preview|resume|viewer|简历|预览)/i.test(shape);
+        }).slice(0, 79);
+      if (!nodes.length) continue;
+      const reports = await Promise.all(nodes.map(async (node) => {
+        const report = await describeControl(node);
+        const shape = `${node.tagName} ${node.className || ''} ${node.getAttribute('type') || ''}`;
+        const hints = [
+          /resume|简历/i.test(shape) ? 'RESUME' : null,
+          /pdf|application\/pdf/i.test(shape) ? 'PDF' : null,
+          /preview|viewer|dialog/i.test(shape) || ['IFRAME','EMBED','OBJECT','CANVAS'].includes(node.tagName) ? 'PREVIEW' : null,
+          /download|下载/i.test(shape) ? 'DOWNLOAD' : null,
+        ].filter(Boolean);
+        return { ...report, hints };
+      }));
+      const observedAt = new Date().toISOString();
+      const reportDigest = await digest(JSON.stringify([chatDigest, clickedControl.fingerprint, ...reports.map((item) => item.fingerprint)]));
+      await send({ type: 'BRIDGE_RESUME_PREVIEW_CLICK_DIAGNOSTIC', payload: {
+        actionType: 'CURRENT_CONTROL_DOM_DIAGNOSTIC', pageState: 'CHAT_PAGE_READY', chatDigest,
+        observedAt, rawContentIncluded: false, truncated: nodes.length >= 79, editor: editorReport,
+        controls: [clickedControl], resumeCandidates: [{ ...clickedControl, hints: ['RESUME','ATTACHMENT','PDF','PREVIEW'] }, ...reports], reportDigest,
+      } });
+      // 预览正文由 BOSS 异步渲染。正文稳定后主动提交一次当前会话，
+      // 避免普通 DOM 快照去重把“附件已展开”误判成无变化而漏掉导入。
+      if (!importTriggered && findVisibleResumeRoot()) {
+        const capture = await collectVisibleResumeText();
+        if (capture.ok) {
+          importTriggered = true;
+          await collectAndPublish(true);
+        } else {
+          const pdfCapture = await collectVisibleResumePdf();
+          if (pdfCapture.ok) {
+            importTriggered = true;
+            await collectAndPublish(true);
+            await send({ type: 'BRIDGE_VISIBLE_RESUME_PDF_CAPTURE', payload: pdfCapture.resume });
+          } else {
+            importTriggered = true;
+            await collectAndPublish(true);
+            const fetched = await send({ type: 'BRIDGE_FETCH_VISIBLE_RESUME_MAIN_WORLD', payload: { chatDigest } });
+            if (!fetched?.ok) await send({ type: 'BRIDGE_VISIBLE_RESUME_IMPORT_STATUS', payload: {
+              chatDigest, state: `PDF 尚未导入：${fetched?.error || pdfCapture.error}`, observedAt: new Date().toISOString(),
+            } });
+          }
+        }
+      }
+    }
+  }
+
+  async function prepareActionLeaseContext() {
+    if (document.visibilityState !== 'visible') return { ok: false, error: '当前 BOSS 沟通页不可见，不领取页面写动作。' };
+    if (collecting) return { ok: false, error: '页面正在生成稳定快照，暂不领取写动作。' };
+    const samples = [];
+    for (let cycle = 0; cycle < 3; cycle++) {
+      const selected = await collectSelectedConversation();
+      if (!selected.ok) return selected;
+      if (selected.selectedUnread) return { ok: false, error: '当前会话尚未稳定转为已读，不领取写动作。' };
+      samples.push({ selected });
+      if (cycle < 2) await delay(350);
+    }
+    const first = samples[0];
+    if (!samples.every((sample) => sample.selected.signature === first.selected.signature)) {
+      return { ok: false, error: '当前会话未连续稳定，不领取写动作。' };
+    }
+    return { ok: true, context: { targetDigest: first.selected.chatDigest,
+      messageDigest: first.selected.messageDigest, direction: first.selected.direction,
+      actionTypes: ['SEND_MESSAGE', 'REQUEST_RESUME', 'EXCHANGE_WECHAT', 'EXCHANGE_PHONE'],
+      observedAt: new Date().toISOString(), stableCycles: 3 } };
+  }
+
+  async function executeActionLease(lease) {
+    if (!lease || !['SEND_MESSAGE', 'REQUEST_RESUME', 'EXCHANGE_WECHAT', 'EXCHANGE_PHONE'].includes(lease.actionType)
+        || !/^[a-f0-9]{64}$/.test(lease.targetDigest || '')
+        || !Number.isFinite(Date.parse(lease.leaseUntil)) || Date.parse(lease.leaseUntil) <= Date.now()) {
+      return { ok: false, error: '页面动作租约无效或已过期。' };
+    }
+    if (lease.actionType === 'SEND_MESSAGE') return executeSendMessageLease(lease);
+    if (lease.actionType === 'EXCHANGE_WECHAT' || lease.actionType === 'EXCHANGE_PHONE') return executeContactExchangeLease(lease);
+    return executeResumeRequestLease(lease);
+  }
+
+  async function executeResumeRequestLease(lease) {
+    if (document.visibilityState !== 'visible') return { ok: false, error: '当前 BOSS 沟通页不可见，未执行租约。' };
+    if (collecting) return { ok: false, error: '页面正在生成稳定快照，未执行租约。' };
+    collecting = true;
+    let clickTriggered = false;
+    let confirmTriggered = false;
+    let evidence = null;
+    try {
+      const samples = [];
+      for (let cycle = 0; cycle < 3; cycle++) {
+        const selected = await collectSelectedConversation();
+        if (!selected.ok || selected.chatDigest !== lease.targetDigest || selected.selectedUnread) {
+          return { ok: false, error: '租约目标与当前已读会话不一致，未点击“求简历”。' };
+        }
+        const target = findCurrentActionControl('求简历');
+        if (!target.ok) return target;
+        const controlDigest = await digest(actionControlShape(target.node, '求简历'));
+        samples.push({ selected, node: target.node, controlDigest });
+        if (cycle < 2) await delay(300);
+      }
+      const first = samples[0];
+      if (!samples.every((sample) => sample.selected.signature === first.selected.signature && sample.node === first.node && sample.controlDigest === first.controlDigest)) {
+        return { ok: false, error: '租约执行前会话或“求简历”入口发生变化，未点击。' };
+      }
+      const beforeStateDigest = await digest(`${lease.targetDigest}|${first.selected.messageDigest}|${first.controlDigest}|REQUEST_RESUME|READY`);
+      evidence = { chatDigest: lease.targetDigest, messageDigest: first.selected.messageDigest, controlDigest: first.controlDigest, beforeStateDigest };
+      first.node.click();
+      clickTriggered = true;
+      let confirmation = null;
+      for (let attempt = 0; attempt < 8; attempt++) {
+        await delay(250);
+        const found = findResumeConfirmation();
+        if (found.ok) { confirmation = found; break; }
+      }
+      if (!confirmation) return await unknownResumeLeaseResult(evidence, 'REQUEST_RESUME_CONFIRMATION_NOT_FOUND', clickTriggered, confirmTriggered);
+      const confirmationDigest = await digest(resumeConfirmationShape(confirmation));
+      const selectedBeforeConfirm = await collectSelectedConversation();
+      if (!selectedBeforeConfirm.ok || selectedBeforeConfirm.chatDigest !== lease.targetDigest || selectedBeforeConfirm.messageDigest !== first.selected.messageDigest) {
+        return await unknownResumeLeaseResult(evidence, 'CONVERSATION_CHANGED_BEFORE_CONFIRMATION', clickTriggered, confirmTriggered);
+      }
+      confirmation.confirm.click();
+      confirmTriggered = true;
+      let succeeded = false;
+      let afterShape = '';
+      for (let attempt = 0; attempt < 10; attempt++) {
+        await delay(300);
+        const selectedAfter = await collectSelectedConversation();
+        const currentConfirmation = findResumeConfirmation(true);
+        const currentAction = findCurrentActionControl('求简历', true);
+        const messageChanged = selectedAfter.ok && selectedAfter.chatDigest === lease.targetDigest && selectedAfter.messageDigest !== first.selected.messageDigest;
+        const actionUnavailable = !currentAction.ok || currentAction.unavailable;
+        afterShape = `${selectedAfter.ok ? selectedAfter.messageDigest : 'unreadable'}|${currentConfirmation.ok ? 'confirmation-visible' : 'confirmation-closed'}|${actionUnavailable ? 'action-unavailable' : 'action-ready'}`;
+        if (!currentConfirmation.ok && (messageChanged || actionUnavailable)) { succeeded = true; break; }
+      }
+      const outcome = succeeded ? 'SUCCEEDED' : 'UNKNOWN';
+      const afterStateDigest = await digest(`${lease.targetDigest}|${confirmationDigest}|${outcome}|${afterShape}`);
+      return { ok: true, result: { actionType: 'REQUEST_RESUME', outcome, ...evidence, afterStateDigest,
+        receiptDigest: await digest(`${evidence.beforeStateDigest}|${afterStateDigest}|${outcome}`), clickTriggered, confirmTriggered,
+        retryTriggered: false, reason: succeeded ? '已向当前匹配会话发出一次简历请求，页面状态已变化。' : '已点击求简历并确认，但页面结果无法明确验证；已停止且不会重试。' } };
+    } catch (error) {
+      if (!clickTriggered) throw error;
+      return await unknownResumeLeaseResult(evidence, 'PAGE_EXECUTION_INTERRUPTED', clickTriggered, confirmTriggered);
+    } finally { collecting = false; }
+  }
+
+  async function executeSendMessageLease(lease) {
+    const content = String(lease.payload || '').trim();
+    if (!content || content.length > 2000) return { ok: false, error: '已审核回复内容为空或超出限制，未执行发送。' };
+    if (document.visibilityState !== 'visible') return { ok: false, error: '当前 BOSS 沟通页不可见，未执行租约。' };
+    if (collecting) return { ok: false, error: '页面正在生成稳定快照，未执行租约。' };
+    collecting = true;
+    let clickTriggered = false;
+    let evidence = null;
+    try {
+      const samples = [];
+      for (let cycle = 0; cycle < 3; cycle++) {
+        const selected = await collectSelectedConversation();
+        if (!selected.ok || selected.chatDigest !== lease.targetDigest || selected.selectedUnread) return { ok: false, error: '租约目标与当前已读会话不一致，未发送消息。' };
+        const controls = findReplyControls();
+        if (!controls.editor) return { ok: false, error: '当前会话未找到可见且可编辑的回复输入框，未执行发送。' };
+        if (readEditorText(controls.editor).trim()) return { ok: false, error: '当前回复框已有内容，为避免覆盖 HR 草稿，未执行发送。' };
+        samples.push({ selected, controls, editorDigest: await digest(replyEditorShape(controls.editor)) });
+        if (cycle < 2) await delay(300);
+      }
+      const first = samples[0];
+      if (!samples.every((sample) => sample.selected.signature === first.selected.signature
+        && sample.controls.editor === first.controls.editor
+        && sample.editorDigest === first.editorDigest)) return { ok: false, error: '发送前会话或回复编辑器发生变化，未执行发送。' };
+      writeEditorText(first.controls.editor, content);
+      await delay(250);
+      if (readEditorText(first.controls.editor).trim() !== content) return { ok: false, error: '页面未稳定保留已审核回复，未点击发送。' };
+
+      // BOSS 在编辑器为空时会隐藏或禁用发送按钮。必须先写入内容，
+      // 再等待按钮进入唯一、可见且可用状态；这与人工发送测试的顺序一致。
+      let filledControls = findReplyControls();
+      for (let attempt = 0; attempt < 6 && (!filledControls.sendButton || filledControls.sendButtonCount !== 1); attempt++) {
+        await delay(200);
+        filledControls = findReplyControls();
+      }
+      if (filledControls.editor !== first.controls.editor || !filledControls.sendButton || filledControls.sendButtonCount !== 1) {
+        writeEditorText(first.controls.editor, '');
+        return { ok: false, error: '草稿已写入，但发送按钮未进入唯一可用状态；已清空草稿且未发送。' };
+      }
+      const beforeSend = await collectSelectedConversation();
+      if (!beforeSend.ok || beforeSend.chatDigest !== lease.targetDigest
+          || beforeSend.messageDigest !== first.selected.messageDigest || beforeSend.selectedUnread
+          || readEditorText(filledControls.editor).trim() !== content) {
+        writeEditorText(first.controls.editor, '');
+        return { ok: false, error: '草稿写入后目标会话或消息状态发生变化；已清空草稿且未发送。' };
+      }
+      const controlDigest = await digest(replyControlShape(filledControls));
+      const beforeStateDigest = await digest(`${lease.targetDigest}|${first.selected.messageDigest}|${controlDigest}|${await digest(content)}|SEND_MESSAGE|READY`);
+      evidence = { chatDigest: lease.targetDigest, messageDigest: first.selected.messageDigest, controlDigest, beforeStateDigest };
+      filledControls.sendButton.click(); clickTriggered = true;
+      let succeeded = false; let afterShape = '';
+      for (let attempt = 0; attempt < 10; attempt++) {
+        await delay(350);
+        const selectedAfter = await collectSelectedConversation();
+        const controlsAfter = findReplyControls();
+        const active = [...document.querySelectorAll(SELECTORS.activeConversation)].find(visible);
+        const messages = active ? [...active.querySelectorAll(SELECTORS.message)].filter(visible) : [];
+        const last = messages.filter((item) => directionOf(item)).at(-1);
+        const matches = directionOf(last) === 'OUTBOUND' && compact(last?.textContent).includes(compact(content));
+        afterShape = `${selectedAfter.ok ? selectedAfter.messageDigest : 'unreadable'}|${controlsAfter.editor ? readEditorText(controlsAfter.editor).trim().length : -1}|${matches}`;
+        if (selectedAfter.ok && selectedAfter.chatDigest === lease.targetDigest && controlsAfter.editor && !readEditorText(controlsAfter.editor).trim() && matches) { succeeded = true; break; }
+      }
+      return await actionLeaseResult('SEND_MESSAGE', evidence, succeeded ? 'SUCCEEDED' : 'UNKNOWN', clickTriggered, false, afterShape,
+        succeeded ? '已向当前匹配会话发送一次经 HR 确认的安全回复，页面状态已变化。' : '已点击发送，但页面结果无法明确验证；已停止且不会重试。');
+    } catch (error) {
+      if (!clickTriggered) throw error;
+      return actionLeaseResult('SEND_MESSAGE', evidence, 'UNKNOWN', true, false, 'PAGE_EXECUTION_INTERRUPTED', '发送后页面通信中断；结果不明，已停止且不会重试。');
+    } finally { collecting = false; }
+  }
+
+  async function executeContactExchangeLease(lease) {
+    const label = lease.actionType === 'EXCHANGE_WECHAT' ? '换微信' : '换电话';
+    if (document.visibilityState !== 'visible') return { ok: false, error: '当前 BOSS 沟通页不可见，未执行租约。' };
+    if (collecting) return { ok: false, error: '页面正在生成稳定快照，未执行租约。' };
+    collecting = true; let clickTriggered = false; let confirmTriggered = false; let evidence = null;
+    try {
+      const samples = [];
+      for (let cycle = 0; cycle < 3; cycle++) {
+        const selected = await collectSelectedConversation();
+        if (!selected.ok || selected.chatDigest !== lease.targetDigest || selected.selectedUnread) return { ok: false, error: `租约目标与当前已读会话不一致，未点击“${label}”。` };
+        const target = findCurrentActionControl(label); if (!target.ok) return target;
+        samples.push({ selected, node: target.node, controlDigest: await digest(actionControlShape(target.node, label)) });
+        if (cycle < 2) await delay(300);
+      }
+      const first = samples[0];
+      if (!samples.every((sample) => sample.selected.signature === first.selected.signature && sample.node === first.node && sample.controlDigest === first.controlDigest)) return { ok: false, error: `联系方式交换前会话或“${label}”入口发生变化，未点击。` };
+      const beforeStateDigest = await digest(`${lease.targetDigest}|${first.selected.messageDigest}|${first.controlDigest}|${lease.actionType}|READY`);
+      evidence = { chatDigest: lease.targetDigest, messageDigest: first.selected.messageDigest, controlDigest: first.controlDigest, beforeStateDigest };
+      first.node.click(); clickTriggered = true;
+      let confirmation = null;
+      for (let attempt = 0; attempt < 8; attempt++) { await delay(250); const found = findExchangeConfirmation(label); if (found.ok) { confirmation = found; break; } }
+      if (!confirmation) return actionLeaseResult(lease.actionType, evidence, 'UNKNOWN', clickTriggered, confirmTriggered, 'CONFIRMATION_NOT_FOUND', `已点击“${label}”，但没有找到唯一确认层；已停止且不会重试。`);
+      const selectedBeforeConfirm = await collectSelectedConversation();
+      if (!selectedBeforeConfirm.ok || selectedBeforeConfirm.chatDigest !== lease.targetDigest || selectedBeforeConfirm.messageDigest !== first.selected.messageDigest) return actionLeaseResult(lease.actionType, evidence, 'UNKNOWN', clickTriggered, confirmTriggered, 'TARGET_CHANGED', '确认前目标会话发生变化；已停止且不会重试。');
+      confirmation.confirm.click(); confirmTriggered = true;
+      let succeeded = false; let afterShape = '';
+      for (let attempt = 0; attempt < 10; attempt++) { await delay(300); const selectedAfter = await collectSelectedConversation(); const current = findExchangeConfirmation(label, true); const action = findCurrentActionControl(label, true); afterShape = `${selectedAfter.ok ? selectedAfter.messageDigest : 'unreadable'}|${current.ok}|${action.ok ? action.unavailable : 'missing'}`; if (selectedAfter.ok && selectedAfter.chatDigest === lease.targetDigest && !current.ok && (!action.ok || action.unavailable)) { succeeded = true; break; } }
+      return actionLeaseResult(lease.actionType, evidence, succeeded ? 'SUCCEEDED' : 'UNKNOWN', clickTriggered, confirmTriggered, afterShape,
+        succeeded ? `已对当前匹配会话完成一次“${label}”，页面状态已变化。` : `已点击并确认“${label}”，但页面结果无法明确验证；已停止且不会重试。`);
+    } catch (error) {
+      if (!clickTriggered) throw error;
+      return actionLeaseResult(lease.actionType, evidence, 'UNKNOWN', true, confirmTriggered, 'PAGE_EXECUTION_INTERRUPTED', '联系方式交换后页面通信中断；结果不明，已停止且不会重试。');
+    } finally { collecting = false; }
+  }
+
+  async function actionLeaseResult(actionType, evidence, outcome, clickTriggered, confirmTriggered, afterShape, reason) {
+    const safe = evidence || { chatDigest: '0'.repeat(64), messageDigest: '0'.repeat(64), controlDigest: '0'.repeat(64), beforeStateDigest: '0'.repeat(64) };
+    const afterStateDigest = await digest(`${safe.chatDigest}|${actionType}|${outcome}|${afterShape}`);
+    return { ok: true, result: { actionType, outcome, ...safe, afterStateDigest, receiptDigest: await digest(`${safe.beforeStateDigest}|${afterStateDigest}|${outcome}`), clickTriggered, confirmTriggered, retryTriggered: false, reason } };
+  }
+
+  async function unknownResumeLeaseResult(evidence, code, clickTriggered, confirmTriggered) {
+    const safeEvidence = evidence || { chatDigest: '0'.repeat(64), messageDigest: '0'.repeat(64), controlDigest: '0'.repeat(64), beforeStateDigest: '0'.repeat(64) };
+    const afterStateDigest = await digest(`${safeEvidence.chatDigest}|REQUEST_RESUME|UNKNOWN|${code}`);
+    return { ok: true, result: { actionType: 'REQUEST_RESUME', outcome: 'UNKNOWN', ...safeEvidence, afterStateDigest,
+      receiptDigest: await digest(`${safeEvidence.beforeStateDigest}|${afterStateDigest}|UNKNOWN`), clickTriggered,
+      confirmTriggered, retryTriggered: false, reason: `${code}；结果不明，已停止且不会重试。` } };
+  }
+
+  function findResumeConfirmation(allowUnavailable = false) {
+    const { editor } = findReplyControls();
+    const scope = editor?.closest('.conversation-operate');
+    if (!scope) return { ok: false, error: '当前回复框不属于已验证的会话功能区。' };
+    const owners = [...scope.querySelectorAll('.toolbar-box-right .operate-exchange-left .operate-icon-item')]
+      .filter((node) => knownActionLabel(node.querySelector(':scope > .operate-btn'), controlLabel(node.querySelector(':scope > .operate-btn'))) === '求简历');
+    if (owners.length !== 1) return { ok: false, error: '当前会话没有唯一的“求简历”操作容器。' };
+    const localScopes = [owners[0], ...visibleDialogs().filter((dialog) => compact(dialog.textContent).includes('简历'))];
+    const candidates = [...new Set(localScopes.flatMap((root) => [...root.querySelectorAll('button, [role="button"], .boss-btn, .card-btn')]))].filter(visible);
+    const confirms = candidates.filter((node) => ['确定', '确认'].includes(knownActionLabel(node, controlLabel(node))));
+    const cancels = candidates.filter((node) => ['取消', '暂不'].includes(knownActionLabel(node, controlLabel(node))));
+    if (confirms.length !== 1 || cancels.length !== 1) return { ok: false, error: '“求简历”确认层没有唯一且语义明确的确认/取消按钮。' };
+    const confirm = confirms[0];
+    const unavailable = getComputedStyle(confirm).cursor !== 'pointer' || confirm.classList.contains('disabled') || Boolean(confirm.closest('[aria-disabled="true"], .disabled'));
+    if (unavailable && !allowUnavailable) return { ok: false, error: '“求简历”确认按钮不可用。' };
+    return { ok: true, owner: owners[0], confirm, cancel: cancels[0], unavailable };
+  }
+
+  function resumeConfirmationShape(controls) {
+    return ['求简历', safeClassTokens(controls.owner).join('.'), safeClassTokens(controls.confirm).join('.'), safeClassTokens(controls.cancel).join('.'), '确认', '取消'].join('|');
   }
 
   async function testCurrentActionEntry(action) {
@@ -721,21 +1591,35 @@
   }
 
   function safeKnownLabel(value) {
-    const label = compact(value);
-    return /^(?:发送(?:消息)?|求简历|接收简历|换电话|换微信|约面试|不合适|确认|确定|取消|暂不)$/.test(label) ? label : null;
+    return normalizeKnownActionLabel(compact(value));
   }
 
   function knownActionLabel(node, rawLabel) {
     if (!node) return null;
-    const exact = rawLabel.match(/^(发送(?:消息)?|求简历|接收简历|换电话|换微信|约面试|不合适)$/)?.[1];
-    if (exact) return exact === '发送消息' ? '发送' : exact;
+    const exact = normalizeKnownActionLabel(rawLabel);
+    if (exact) return exact;
     if (!node.matches('.operate-btn, .submit, .boss-btn, .card-btn, button, [role="button"]') || rawLabel.length > 40) return null;
-    return ['求简历', '接收简历', '换电话', '换微信', '约面试', '不合适', '发送', '确认', '确定', '取消', '暂不'].find((label) => rawLabel.includes(label)) || null;
+    const matched = ['查看电话', '查看面试', '求简历', '接收简历', '换电话', '换微信', '约面试', '不合适', '发送', '确认', '确定', '取消', '暂不']
+      .find((label) => rawLabel.includes(label));
+    return normalizeKnownActionLabel(matched);
+  }
+
+  function normalizeKnownActionLabel(label) {
+    if (!label) return null;
+    if (label === '发送消息') return '发送';
+    if (label === '查看电话') return '换电话';
+    if (label === '查看面试') return '约面试';
+    return ['发送', '求简历', '接收简历', '换电话', '换微信', '约面试', '不合适', '确认', '确定', '取消', '暂不'].includes(label) ? label : null;
   }
 
   function replyControlShape({ editor, sendButton }) {
     return [editor?.id || 'fallback-editor', editor?.tagName || '', editor?.getAttribute('role') || '',
       editor?.getAttribute('contenteditable') || '', sendButton ? `${sendButton.tagName}:${safeClassTokens(sendButton).join('.')}:发送` : 'ENTER_TO_SEND'].join('|');
+  }
+
+  function replyEditorShape(editor) {
+    return [editor?.id || 'fallback-editor', editor?.tagName || '', editor?.getAttribute('role') || '',
+      editor?.getAttribute('contenteditable') || '', safeClassTokens(editor).join('.')].join('|');
   }
 
   function controlLabel(node) {
@@ -809,10 +1693,10 @@
       experienceRequirement: experienceRequirement || null, educationRequirement: educationRequirement || null,
       description: description || null, recruitmentType: recruitmentType || null, jobCategory: jobCategory || null,
       overseasRequirement: overseasRequirement || null, jobKeywords: jobKeywords || null, workAddress: workAddress || null,
-      completeness: values.filter(Boolean).length,
+      completeness: values.filter(Boolean).length, platformStatus: 'UNKNOWN',
     };
     const signature = Object.values(entry).map((value) => value ?? '').join('|');
-    return { ok: true, entries: [entry], signature };
+    return { ok: true, entries: [entry], signature, scope: 'SINGLE_JOB', authoritative: false };
   }
 
   function findJobDetailRoot() {
@@ -902,11 +1786,36 @@
       seenSources.add(sourceDigest);
       const description = firstText(item, JOB_SELECTORS.description, 10000);
       const values = [title, location, salaryDisplay, experienceRequirement, educationRequirement, description];
-      entries.push({ sourceDigest, title, location: location || null, salaryDisplay: salaryDisplay || null, salaryMinK: salary.min, salaryMaxK: salary.max, salaryMonths: salary.months, experienceRequirement: experienceRequirement || null, educationRequirement: educationRequirement || null, description: description || null, completeness: values.filter(Boolean).length });
+      entries.push({ sourceDigest, title, location: location || null, salaryDisplay: salaryDisplay || null, salaryMinK: salary.min, salaryMaxK: salary.max, salaryMonths: salary.months, experienceRequirement: experienceRequirement || null, educationRequirement: educationRequirement || null, description: description || null, completeness: values.filter(Boolean).length, platformStatus: platformJobStatus(item) });
     }
     if (!entries.length) return blocked('JOB_LIST_EMPTY_AFTER_DEDUP', '职位行去重后没有可同步数据。');
-    const signature = entries.map((entry) => `${entry.sourceDigest}:${entry.title}:${entry.location || ''}:${entry.salaryDisplay || ''}:${entry.experienceRequirement || ''}:${entry.educationRequirement || ''}:${entry.description || ''}`).join('|');
-    return { ok: true, entries, signature };
+    const scope = selectedJobListScope();
+    const authoritative = scope === 'OPEN_JOBS' && entries.every((entry) => entry.platformStatus === 'OPEN') && completeVisibleJobList(entries.length);
+    const signature = `${scope}:${authoritative}|${entries.map((entry) => `${entry.sourceDigest}:${entry.title}:${entry.platformStatus}:${entry.location || ''}:${entry.salaryDisplay || ''}:${entry.experienceRequirement || ''}:${entry.educationRequirement || ''}:${entry.description || ''}`).join('|')}`;
+    return { ok: true, entries, signature, scope, authoritative };
+  }
+
+  function platformJobStatus(root) {
+    if (hasExactVisibleText(root, '已关闭') || hasExactVisibleText(root, '重新开放') || hasExactVisibleText(root, '开放职位')) return 'CLOSED';
+    if (hasExactVisibleText(root, '关闭') || hasExactVisibleText(root, '开放中') || hasExactVisibleText(root, '招聘中')) return 'OPEN';
+    return 'UNKNOWN';
+  }
+
+  function selectedJobListScope() {
+    const selected = [...document.querySelectorAll('[aria-selected="true"], [role="tab"].active, .tab-item.active, .ui-tab-item.active, .tabs-item.active')]
+      .filter(visible).map((node) => compact(node.textContent)).join(' ');
+    if (/(已关闭|关闭中|已下架)/.test(selected)) return 'CLOSED_JOBS';
+    if (/(招聘中|开放中|在招|发布中)/.test(selected)) return 'OPEN_JOBS';
+    return 'MIXED';
+  }
+
+  function completeVisibleJobList(visibleCount) {
+    const nextButtons = [...document.querySelectorAll('[aria-label*="下一页"], .btn-next, .pagination-next, [class*="pager"] [class*="next"]')].filter(visible);
+    const hasEnabledNext = nextButtons.some((node) => !node.disabled && node.getAttribute('aria-disabled') !== 'true' && !node.classList.contains('disabled'));
+    if (hasEnabledNext) return false;
+    const text = compact(document.body?.innerText);
+    const declared = [...text.matchAll(/(?:共|全部)\s*(\d{1,3})\s*(?:个|条)?\s*职位/g)].map((match) => Number(match[1])).find((value) => value > 0);
+    return declared === undefined || declared === visibleCount;
   }
 
   function findJobCards() {
@@ -1044,7 +1953,145 @@
     const mediaShape = [...last.querySelectorAll('img, video, audio, svg')].map((node) => node.tagName.toLowerCase()).join(',') || 'non-text';
     const messageDigest = await digest(stableIdentity(last) || `derived:${direction}:${messageAt}:${content || mediaShape}`);
     const selectedUnread = Boolean(selected.querySelector(SELECTORS.unread));
-    return { ok: true, chatDigest, messageDigest, direction, messageAt, selectedUnread, signature: `${chatDigest}:${messageDigest}:${direction}:${messageAt}:${selectedUnread}` };
+    const conversationSignals = collectConversationSignals();
+    const signalSignature = Object.values(conversationSignals).map((value) => value ? '1' : '0').join('');
+    const messageText = direction === 'INBOUND' && content ? compact(content).slice(0, 1000) : null;
+    return { ok: true, chatDigest, messageDigest, direction, messageAt, selectedUnread, conversationSignals, messageText, signature: `${chatDigest}:${messageDigest}:${direction}:${messageAt}:${selectedUnread}:${signalSignature}` };
+  }
+
+  function collectConversationSignals() {
+    const { editor } = findReplyControls();
+    const scope = editor?.closest('.conversation-operate');
+    const empty = {
+      requestResumeAvailable: false, resumeReceived: false,
+      exchangeWechatAvailable: false, exchangePhoneAvailable: false,
+      wechatExchanged: false, phoneExchanged: false,
+      scheduleInterviewAvailable: false, interviewScheduled: false,
+    };
+    if (!scope) return empty;
+    const nodes = [...scope.querySelectorAll('.toolbar-box-right .operate-exchange-left .operate-btn, button, [role="button"], [class*="status"]')]
+      .filter((node) => visible(node));
+    const labels = nodes.map((node) => ({ node, label: compact(controlLabel(node)) }));
+    const has = (...expected) => labels.some(({ label }) => expected.some((value) => label === value || label.startsWith(`${value} `)));
+    const available = (...expected) => labels.some(({ node, label }) => expected.some((value) => label === value || label.startsWith(`${value} `)) && isAvailableAction(node));
+    return {
+      requestResumeAvailable: available('求简历'),
+      resumeReceived: has('查看简历') || Boolean(findVisibleResumeRoot()) || Boolean(findResumeOpenControl()),
+      exchangeWechatAvailable: available('换微信', '交换微信'),
+      exchangePhoneAvailable: available('换电话', '交换电话'),
+      wechatExchanged: has('查看微信'),
+      phoneExchanged: has('查看电话'),
+      scheduleInterviewAvailable: available('约面试'),
+      interviewScheduled: has('面试时间已确认'),
+    };
+  }
+
+  function findVisibleResumeRoot() {
+    const dialog = [...document.querySelectorAll('.resume-common-dialog.search-resume, .resume-common-dialog')].find(visible);
+    if (!dialog) return null;
+    return [...dialog.querySelectorAll('.resume-detail.resume-detail-chat, .resume-content, .new-resume-online-main-ui')]
+      .filter(visible)
+      .sort((left, right) => String(right.innerText || '').length - String(left.innerText || '').length)[0] || null;
+  }
+
+  function findResumeOpenControl() {
+    const active = [...document.querySelectorAll(SELECTORS.activeConversation)].find(visible);
+    if (!active) return null;
+    const matches = [...active.querySelectorAll('button, a, [role="button"], [class*="resume"], [class*="attachment"], [class*="file"], [class*="preview"]')]
+      .filter(visible)
+      .map((node) => ({ node, label: compact(controlLabel(node)), area: node.getBoundingClientRect().width * node.getBoundingClientRect().height }))
+      .filter(({ node, label }) => /^(?:查看简历|点击预览附件简历|预览附件简历)$/.test(label) && label.length <= 80
+        && !node.disabled && node.getAttribute('aria-disabled') !== 'true' && getComputedStyle(node).cursor === 'pointer')
+      .sort((left, right) => left.area - right.area);
+    return matches[0]?.node || null;
+  }
+
+  async function openVisibleResume(expectedChatDigest) {
+    const first = await collectSelectedConversation();
+    if (!first.ok || first.chatDigest !== expectedChatDigest) return { ok: false, error: '当前选中会话与待接收简历不一致。' };
+    if (findVisibleResumeRoot()) return { ok: true, alreadyOpen: true };
+    const control = findResumeOpenControl();
+    if (!control) return { ok: false, error: '当前会话尚未找到唯一可用的“查看简历”或“点击预览附件简历”入口。' };
+    control.click();
+    for (let attempt = 0; attempt < 15; attempt++) {
+      await delay(300);
+      const current = await collectSelectedConversation();
+      if (!current.ok || current.chatDigest !== expectedChatDigest) return { ok: false, error: '打开简历后目标会话发生变化，已停止。' };
+      if (findVisibleResumeRoot()) return { ok: true, alreadyOpen: false };
+    }
+    return { ok: false, error: '已打开一次“查看简历”，但在线简历正文未在限定时间内稳定呈现。' };
+  }
+
+  async function collectVisibleResumeText() {
+    const selected = await collectSelectedConversation();
+    if (!selected.ok) return { ok: false, error: selected.reason };
+    const root = findVisibleResumeRoot();
+    if (!root) return { ok: false, error: '请保持当前会话的在线简历弹窗打开。' };
+    const copy = root.cloneNode(true);
+    copy.querySelectorAll('script, style, button, input, textarea, .attachment-resume-btns, .close-btn, [role="button"]')
+      .forEach((node) => node.remove());
+    const resumeText = String(copy.textContent || '').replace(/\u00a0/g, ' ').replace(/[\t\x0B\f\r ]+/g, ' ')
+      .replace(/\n{3,}/g, '\n\n').trim().slice(0, 30000);
+    if (resumeText.length < 100) return { ok: false, error: '在线简历正文尚未完整渲染。' };
+    const textDigest = await digest(resumeText);
+    const sourceEventDigest = await digest(`${selected.chatDigest}|${selected.messageDigest}|${textDigest}`);
+    return { ok: true, resume: { actionType: 'VISIBLE_RESUME_TEXT_CAPTURE', chatDigest: selected.chatDigest,
+      sourceEventDigest, textDigest, resumeText, resumeReceived: true } };
+  }
+
+  async function collectVisibleResumePdf() {
+    const selected = await collectSelectedConversation();
+    if (!selected.ok) return { ok: false, error: selected.reason };
+    const iframe = findVisibleResumePdfFrame();
+    if (!iframe) return { ok: false, error: '当前简历预览中没有找到 PDF 载体。' };
+    const source = String(iframe.getAttribute('src') || iframe.src || '').trim();
+    if (!source || !/^(?:blob:|https?:)/i.test(source)) return { ok: false, error: '当前 PDF 预览地址不可读取。' };
+    let response;
+    try { response = await fetch(source, { credentials: 'include', signal: AbortSignal.timeout(3_000) }); }
+    catch { return { ok: false, error: '当前 PDF 资源无法从页面安全读取。' }; }
+    if (!response.ok) return { ok: false, error: `当前 PDF 资源读取失败（HTTP ${response.status}）。` };
+    const buffer = await response.arrayBuffer();
+    if (buffer.byteLength < 5 || buffer.byteLength > 8 * 1024 * 1024) return { ok: false, error: '当前 PDF 文件大小不在允许范围内。' };
+    const bytes = new Uint8Array(buffer);
+    if (String.fromCharCode(...bytes.slice(0, 5)) !== '%PDF-') return { ok: false, error: '当前预览资源不是有效 PDF 文件。' };
+    let binary = '';
+    for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+    const fileDigest = await digest(btoa(binary));
+    const sourceEventDigest = await digest(`${selected.chatDigest}|${selected.messageDigest}|${fileDigest}`);
+    return { ok: true, resume: { actionType: 'VISIBLE_RESUME_PDF_CAPTURE', chatDigest: selected.chatDigest,
+      sourceEventDigest, fileDigest, fileBase64: btoa(binary), fileSize: bytes.length } };
+  }
+
+  function findVisibleResumePdfFrame() {
+    return [...document.querySelectorAll('iframe.attachment-iframe, .attachment-view iframe')].find(visible) || null;
+  }
+
+  async function forwardMainWorldResumePdf(data) {
+    if (typeof data.fileBase64 !== 'string' || !Number.isInteger(data.fileSize)
+        || data.fileSize < 5 || data.fileSize > 8 * 1024 * 1024 || data.fileBase64.length > 12_000_000) return;
+    const selected = await collectSelectedConversation();
+    if (!selected.ok) return;
+    await collectAndPublish(true);
+    const fileDigest = await digest(data.fileBase64);
+    const sourceEventDigest = await digest(`${selected.chatDigest}|${selected.messageDigest}|${fileDigest}`);
+    await send({ type: 'BRIDGE_VISIBLE_RESUME_PDF_CAPTURE', payload: {
+      actionType: 'VISIBLE_RESUME_PDF_CAPTURE', chatDigest: selected.chatDigest,
+      sourceEventDigest, fileDigest, fileBase64: data.fileBase64, fileSize: data.fileSize,
+    } });
+  }
+
+  async function reportResumeDownloadDetected() {
+    const selected = await collectSelectedConversation();
+    if (!selected.ok) return;
+    await send({ type: 'BRIDGE_VISIBLE_RESUME_IMPORT_STATUS', payload: {
+      chatDigest: selected.chatDigest, state: '已识别简历下载操作，正在捕获真实 PDF 文件…', observedAt: new Date().toISOString(),
+    } });
+  }
+
+  function isAvailableAction(node) {
+    return !node.disabled && node.getAttribute('aria-disabled') !== 'true'
+      && !node.classList.contains('disabled') && !node.closest('[aria-disabled="true"], .disabled')
+      && getComputedStyle(node).cursor === 'pointer';
   }
 
   function stableIdentity(item) {
@@ -1071,7 +2118,7 @@
     const date = new Date(now); date.setFullYear(match[1] ? Number(match[1]) : now.getFullYear(), Number(match[2]) - 1, Number(match[3])); date.setHours(Number(match[4]), Number(match[5]), 0, 0); if (!match[1] && date.getTime() > now.getTime() + 86_400_000) date.setFullYear(date.getFullYear() - 1); return date.toISOString();
   }
   function blocked(code, reason) { return { ok: false, code, reason }; }
-  function stripSelected(value) { return { chatDigest: value.chatDigest, messageDigest: value.messageDigest, direction: value.direction, messageAt: value.messageAt, selectedUnread: value.selectedUnread, observedAt: new Date().toISOString() }; }
+  function stripSelected(value) { return { chatDigest: value.chatDigest, messageDigest: value.messageDigest, direction: value.direction, messageAt: value.messageAt, selectedUnread: value.selectedUnread, conversationSignals: value.conversationSignals, observedAt: new Date().toISOString() }; }
   function delay(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
   async function send(message) { try { return await chrome.runtime.sendMessage(message); } catch { return null; } }
 })();

@@ -1,4 +1,6 @@
-const elements = Object.fromEntries(['stateBadge','summary','pairForm','accountName','totalCount','currentUnreadCount','trackedUnreadCount','reason','detailState','lastSync','jobState','lastJobSync','collectJobs','readinessState','lastReadiness','checkReadiness','controlDiagnosticState','lastControlDiagnostic','inspectControls','controlDiagnosticReport','copyControlDiagnostic','actionTestState','lastActionTest','testRequestResume','testExchangePhone','testExchangeWechat','testInterview','exchangeConfirmState','lastExchangeConfirm','confirmExchangePhone','confirmExchangeWechat','draftTestState','lastDraftTest','fillTestDraft','sendTestState','lastSendTest','prepareCurrentSendTest','sendCurrentTestDraft','autoReplyTestResult','autoReplyTestState','autoReplyTestExpiry','autoReplyDiagnosticState','lastAutoReplyDiagnostic','diagnoseCurrentAutoReply','armCurrentAutoReplyTest','cancelCurrentAutoReplyTest','approvedDraftFillState','lastApprovedDraftFill','fillApprovedDraft','enabled','collect','forget','message','deviceName','pairingToken','pageContext','openConsole'].map((id) => [id, document.getElementById(id)]));
+const elements = Object.fromEntries(['stateBadge','summary','pairForm','accountName','totalCount','currentUnreadCount','trackedUnreadCount','reason','continuousReplyState','continuousReplyBadge','startContinuousReply','stopContinuousReply','lastContinuousReply','detailState','lastSync','jobState','lastJobSync','collectJobs','readinessState','lastReadiness','checkReadiness','controlDiagnosticState','lastControlDiagnostic','inspectControls','controlDiagnosticReport','copyControlDiagnostic','visibleResumeState','lastVisibleResume','recognizeCurrentResume','resumeStageBadge','resumeStepDetected','resumeStepImported','resumeStepAnalyzing','resumeStepCompleted','resumeRecovery','pluginVersion','actionTestState','lastActionTest','testRequestResume','testExchangePhone','testExchangeWechat','testInterview','exchangeConfirmState','lastExchangeConfirm','confirmExchangePhone','confirmExchangeWechat','productionActionState','lastProductionAction','draftTestState','lastDraftTest','fillTestDraft','sendTestState','lastSendTest','prepareCurrentSendTest','sendCurrentTestDraft','autoReplyTestResult','autoReplyTestState','autoReplyTestExpiry','autoReplyDiagnosticState','lastAutoReplyDiagnostic','diagnoseCurrentAutoReply','armCurrentAutoReplyTest','cancelCurrentAutoReplyTest','approvedDraftFillState','lastApprovedDraftFill','fillApprovedDraft','enabled','collect','forget','message','deviceName','pairingToken','pageContext','openConsole'].map((id) => [id, document.getElementById(id)]));
+
+elements.pluginVersion.textContent = chrome.runtime.getManifest().version;
 
 elements.pairForm.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -11,6 +13,18 @@ elements.pairForm.addEventListener('submit', async (event) => {
   });
 });
 elements.enabled.addEventListener('change', () => void act({ type: 'BRIDGE_SET_ENABLED', enabled: elements.enabled.checked }));
+elements.startContinuousReply.addEventListener('click', () => void busy(elements.startContinuousReply, async () => {
+  const confirmed = window.confirm(`确定为当前配对账号“${elements.accountName.textContent || '-'}”开启全未读自动回复吗？\n\n扩展会从当前列表开始遍历全部未读会话，并持续处理后续新来信。只有末条来自求职者、未约面且通过岗位事实校验时才真实发送；消息无法撤回。`);
+  if (!confirmed) { show('已取消，持续自动回复未开启。'); return; }
+  const result = await send({ type: 'BRIDGE_SET_SINGLE_ACCOUNT_AUTO_REPLY', enabled: true });
+  if (!result.ok) throw new Error(result.error);
+  render(result.status); show(result.status.singleAccountAutoReplyState);
+}, '开启中…'));
+elements.stopContinuousReply.addEventListener('click', () => void busy(elements.stopContinuousReply, async () => {
+  const result = await send({ type: 'BRIDGE_SET_SINGLE_ACCOUNT_AUTO_REPLY', enabled: false });
+  if (!result.ok) throw new Error(result.error);
+  render(result.status); show('当前账号的全未读自动回复已停止。');
+}, '停止中…'));
 elements.collect.addEventListener('click', () => void busy(elements.collect, async () => { const result = await send({ type: 'BRIDGE_COLLECT_NOW' }); if (!result.ok) throw new Error(result.error); render(result.status); }));
 elements.collectJobs.addEventListener('click', () => void busy(elements.collectJobs, async () => {
   show('正在读取当前职位页并进行稳定性校验，请稍候…');
@@ -38,7 +52,14 @@ elements.copyControlDiagnostic.addEventListener('click', () => void busy(element
   await navigator.clipboard.writeText(elements.controlDiagnosticReport.value);
   show('脱敏 DOM 报告已复制，可以直接发给我继续适配。');
 }, '复制中…'));
-for (const [id, action, label] of [['testRequestResume', 'REQUEST_RESUME', '求简历'], ['testExchangePhone', 'EXCHANGE_PHONE', '换电话'], ['testExchangeWechat', 'EXCHANGE_WECHAT', '换微信'], ['testInterview', 'INTERVIEW', '约面试']]) {
+elements.recognizeCurrentResume.addEventListener('click', () => void busy(elements.recognizeCurrentResume, async () => {
+  show('正在识别当前会话中的 PDF 简历，打开预览后将直接进入现有 AI 分析流程…');
+  const result = await send({ type: 'BRIDGE_RECOGNIZE_CURRENT_RESUME' });
+  if (!result.ok) throw new Error(result.error);
+  render(result.status);
+  show(result.status.visibleResumeState);
+}, '识别中…'));
+for (const [id, action, label] of [['testRequestResume', 'REQUEST_RESUME', '求简历'], ['testExchangePhone', 'EXCHANGE_PHONE', '查看电话'], ['testExchangeWechat', 'EXCHANGE_WECHAT', '换微信'], ['testInterview', 'INTERVIEW', '查看面试']]) {
   elements[id].addEventListener('click', () => void busy(elements[id], async () => {
     const confirmed = window.confirm(`确定只对当前已打开会话点击一次“${label}”入口吗？\n\n该操作可能直接向候选人发起请求，或打开平台设置界面。扩展不会切换会话、不会填写或确认二级界面、不会重试。`);
     if (!confirmed) { show('已取消，未执行任何页面操作。'); return; }
@@ -83,7 +104,7 @@ elements.prepareCurrentSendTest.addEventListener('click', () => void busy(elemen
   render(result.status); show(result.status.sendTestState);
 }, '准备中…'));
 elements.armCurrentAutoReplyTest.addEventListener('click', () => void busy(elements.armCurrentAutoReplyTest, async () => {
-  const confirmed = window.confirm('确定对当前已打开的已读测试会话开启一次自动回复吗？\n\n如果当前会话最后一条稳定消息已经来自求职者，将立即自动写入并真实发送一次固定测试草稿。该消息无法撤回，扩展不会切换其他会话。');
+  const confirmed = window.confirm('确定对当前已打开的已读测试会话开启一次受限自动回复吗？\n\n系统会先判断最后一条求职者消息是否与当前岗位相关。仅当问题低风险且能由已审核岗位资料回答时，才会真实发送一条不超过 90 字的短回复；其他情况保持静默。消息发送后无法撤回，扩展不会切换其他会话。');
   if (!confirmed) { show('已取消，未开启自动触发。'); return; }
   const result = await send({ type: 'BRIDGE_ARM_CURRENT_AUTO_REPLY_TEST' });
   if (!result.ok) throw new Error(result.error);
@@ -110,10 +131,14 @@ elements.forget.addEventListener('click', () => void busy(elements.forget, async
 elements.openConsole.addEventListener('click', () => void busy(elements.openConsole, async () => { const result = await send({ type: 'BRIDGE_OPEN_CONSOLE' }); if (!result.ok) throw new Error(result.error); }, '打开中…'));
 
 void act({ type: 'BRIDGE_GET_STATUS' });
+const statusRefreshTimer = setInterval(() => {
+  if (document.visibilityState === 'visible') void act({ type: 'BRIDGE_GET_STATUS' }, false);
+}, 1_000);
+window.addEventListener('unload', () => clearInterval(statusRefreshTimer), { once: true });
 
-async function act(message) {
+async function act(message, reportError = true) {
   try { const result = await send(message); if (!result.ok) throw new Error(result.error); render(result.status); }
-  catch (error) { show(error.message, true); }
+  catch (error) { if (reportError) show(error.message, true); }
 }
 async function send(message) { return chrome.runtime.sendMessage(message); }
 async function busy(button, operation, busyText = '') { const original = button.textContent; button.disabled = true; if (busyText) button.textContent = busyText; try { await operation(); } catch (error) { show(error.message, true); } finally { button.disabled = button.dataset.locked === 'true'; button.textContent = original; } }
@@ -121,14 +146,24 @@ function render(status) {
   elements.summary.hidden = !status.paired; elements.pairForm.hidden = status.paired;
   elements.accountName.textContent = status.accountName || '-'; elements.totalCount.textContent = status.total; elements.currentUnreadCount.textContent = status.currentUnread; elements.trackedUnreadCount.textContent = status.trackedUnread;
   elements.reason.textContent = status.reason; elements.detailState.textContent = `详情复核：${status.detailState}`; elements.lastSync.textContent = status.lastSyncAt ? `最近同步：${new Date(status.lastSyncAt).toLocaleString('zh-CN')}` : '尚未同步真实快照'; elements.enabled.checked = status.enabled;
+  elements.continuousReplyState.textContent = status.singleAccountAutoReplyState;
+  elements.continuousReplyBadge.textContent = status.singleAccountAutoReplyEnabled ? '运行中' : '已停止';
+  elements.continuousReplyBadge.className = `badge ${status.singleAccountAutoReplyEnabled ? 'running' : 'paused'}`;
+  elements.startContinuousReply.dataset.locked = status.singleAccountAutoReplyEnabled ? 'true' : 'false'; elements.startContinuousReply.disabled = status.singleAccountAutoReplyEnabled === true;
+  elements.stopContinuousReply.dataset.locked = status.singleAccountAutoReplyEnabled ? 'false' : 'true'; elements.stopContinuousReply.disabled = status.singleAccountAutoReplyEnabled !== true;
+  elements.lastContinuousReply.textContent = status.lastSingleAccountAutoReplyAt ? `最近处理：${new Date(status.lastSingleAccountAutoReplyAt).toLocaleString('zh-CN')} · 已检查 ${status.singleAccountAutoReplyProcessedCount} 条` : '尚未处理消息';
   elements.jobState.textContent = status.jobState; elements.lastJobSync.textContent = status.lastJobSyncAt ? `最近职位同步：${new Date(status.lastJobSyncAt).toLocaleString('zh-CN')} · ${status.jobTotal} 个` : '尚未同步职位管理页';
   elements.readinessState.textContent = status.readinessState; elements.lastReadiness.textContent = status.lastReadinessAt ? `最近检查：${new Date(status.lastReadinessAt).toLocaleString('zh-CN')}` : '尚未形成人工验收证据';
   elements.controlDiagnosticState.textContent = status.controlDiagnosticState; elements.lastControlDiagnostic.textContent = status.lastControlDiagnosticAt ? `最近识别：${new Date(status.lastControlDiagnosticAt).toLocaleString('zh-CN')}` : '尚未生成脱敏结构报告';
   elements.controlDiagnosticReport.hidden = !status.controlDiagnostic; elements.copyControlDiagnostic.disabled = !status.controlDiagnostic;
   elements.controlDiagnosticReport.value = status.controlDiagnostic ? JSON.stringify(status.controlDiagnostic, null, 2) : '';
+  elements.visibleResumeState.textContent = status.visibleResumeState;
+  elements.lastVisibleResume.textContent = status.lastVisibleResumeAt ? `最近识别：${new Date(status.lastVisibleResumeAt).toLocaleString('zh-CN')}` : '尚未尝试识别 PDF 简历';
+  renderResumePipeline(status.visibleResumeState);
   elements.actionTestState.textContent = status.actionTestState; elements.lastActionTest.textContent = status.lastActionTestAt ? `最近入口测试：${new Date(status.lastActionTestAt).toLocaleString('zh-CN')}` : '尚未点击操作入口';
   for (const [id, action] of [['testRequestResume', 'REQUEST_RESUME'], ['testExchangePhone', 'EXCHANGE_PHONE'], ['testExchangeWechat', 'EXCHANGE_WECHAT'], ['testInterview', 'INTERVIEW']]) { elements[id].dataset.locked = status.actionTestLocks?.[action] ? 'true' : 'false'; elements[id].disabled = status.actionTestLocks?.[action] === true; }
   elements.exchangeConfirmState.textContent = status.exchangeConfirmState; elements.lastExchangeConfirm.textContent = status.lastExchangeConfirmAt ? `最近二级测试：${new Date(status.lastExchangeConfirmAt).toLocaleString('zh-CN')}` : '尚未点击二级确定';
+  elements.productionActionState.textContent = status.productionActionState; elements.lastProductionAction.textContent = status.lastProductionActionAt ? `最近自动动作：${new Date(status.lastProductionActionAt).toLocaleString('zh-CN')} · ${status.productionActionOutcome}` : '尚未领取生产动作租约';
   for (const [id, action] of [['confirmExchangePhone', 'EXCHANGE_PHONE'], ['confirmExchangeWechat', 'EXCHANGE_WECHAT']]) { elements[id].dataset.locked = status.exchangeConfirmLocks?.[action] ? 'true' : 'false'; elements[id].disabled = status.exchangeConfirmLocks?.[action] === true; }
   elements.draftTestState.textContent = status.draftTestState; elements.lastDraftTest.textContent = status.lastDraftTestAt ? `最近测试：${new Date(status.lastDraftTestAt).toLocaleString('zh-CN')}` : '尚未写入测试草稿';
   elements.sendTestState.textContent = status.sendTestState; elements.lastSendTest.textContent = status.lastSendTestAt ? `最近发送测试：${new Date(status.lastSendTestAt).toLocaleString('zh-CN')}` : '尚未发送测试草稿';
@@ -139,11 +174,31 @@ function render(status) {
   elements.autoReplyDiagnosticState.textContent = status.autoReplyDiagnosticState;
   elements.lastAutoReplyDiagnostic.textContent = status.lastAutoReplyDiagnosticAt ? `诊断时间：${new Date(status.lastAutoReplyDiagnosticAt).toLocaleString('zh-CN')}` : '尚未诊断';
   elements.autoReplyTestExpiry.textContent = status.autoReplyTestArmed && status.autoReplyTestExpiresAt ? `最近方向检查：${status.autoReplyTestLastCheckedAt ? new Date(status.autoReplyTestLastCheckedAt).toLocaleTimeString('zh-CN') : '尚未完成'} · 自动结束：${new Date(status.autoReplyTestExpiresAt).toLocaleString('zh-CN')}` : (status.lastAutoReplyTestAt ? `最近结果：${new Date(status.lastAutoReplyTestAt).toLocaleString('zh-CN')}` : '尚未执行触发测试');
-  elements.armCurrentAutoReplyTest.dataset.locked = status.autoReplyTestArmed ? 'true' : 'false'; elements.armCurrentAutoReplyTest.disabled = status.autoReplyTestArmed === true;
+  elements.armCurrentAutoReplyTest.dataset.locked = (status.autoReplyTestArmed || status.singleAccountAutoReplyEnabled) ? 'true' : 'false'; elements.armCurrentAutoReplyTest.disabled = status.autoReplyTestArmed === true || status.singleAccountAutoReplyEnabled === true;
   elements.cancelCurrentAutoReplyTest.dataset.locked = status.autoReplyTestArmed ? 'false' : 'true'; elements.cancelCurrentAutoReplyTest.disabled = status.autoReplyTestArmed !== true;
   elements.approvedDraftFillState.textContent = status.approvedDraftFillState; elements.lastApprovedDraftFill.textContent = status.lastApprovedDraftFillAt ? `最近填入：${new Date(status.lastApprovedDraftFillAt).toLocaleString('zh-CN')}` : '尚未填入后台已审核草稿';
   elements.pageContext.textContent = ({ CHAT: '当前在 BOSS 沟通页', JOB_LIST: '当前在 BOSS 职位列表', JOB_DETAIL: '当前在 BOSS 职位详情', OTHER_BOSS: '当前在其他 BOSS 页面', NO_BOSS_PAGE: '未识别 BOSS 工作页面' })[status.pageContext] || '未识别 BOSS 工作页面';
   const running = status.state === 'RUNNING'; const paused = ['PAUSED','ERROR'].includes(status.state);
   elements.stateBadge.textContent = running ? '只读运行中' : paused ? '已暂停' : status.paired ? '已配对' : '未配对'; elements.stateBadge.className = `badge ${running ? 'running' : paused ? 'paused' : ''}`;
+}
+function renderResumePipeline(value) {
+  const state = String(value || '');
+  let stage = 0; let label = '等待识别'; let tone = 'idle';
+  if (/已捕获|已识别|正在识别|等待导入|预览/.test(state)) { stage = 1; label = '已识别'; tone = 'waiting'; }
+  if (/已接收|已导入|处理状态|分析中|正在分析/.test(state)) { stage = 2; label = '已导入'; tone = 'working'; }
+  if (/分析中|正在分析/.test(state)) { stage = 3; label = 'AI 分析中'; tone = 'working'; }
+  if (/已完成 AI 分析|SUCCEEDED|已完成/.test(state)) { stage = 4; label = '已完成'; tone = 'done'; }
+  if (/失败|未完成|错误/.test(state)) tone = 'error';
+  elements.resumeStageBadge.textContent = label;
+  elements.resumeStageBadge.className = `resume-stage-badge ${tone}`;
+  [elements.resumeStepDetected, elements.resumeStepImported, elements.resumeStepAnalyzing, elements.resumeStepCompleted]
+    .forEach((node, index) => node.classList.toggle('active', index < stage));
+  elements.resumeRecovery.textContent = tone === 'done'
+    ? '分析结果已进入招聘值守台的“简历分析”页面。'
+    : tone === 'error'
+      ? '保持当前简历预览打开后重试；若提示无法读取 PDF，请点击预览器内的下载按钮。'
+      : stage >= 2
+        ? '正在处理，请保持 BOSS 页面打开，无需重复点击。'
+        : '打开目标会话并点击 PDF 预览，插件会自动识别；也可以使用下方主按钮重试。';
 }
 function show(text, error = false) { elements.message.hidden = false; elements.message.textContent = text; elements.message.className = `message${error ? ' error' : ''}`; }

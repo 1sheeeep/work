@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "招聘值守台·BOSS 安全桥接",
-  "version": "0.12.3",
-  "description": "默认只读识别 BOSS 未读状态；只有 HR 在扩展内二次确认时，才可对当前已打开会话单次发送固定测试草稿。",
+  "version": "0.32.0",
+  "description": "持续同步已打开的职位管理页并识别当前账号未读消息；仅对岗位相关、低风险纯文本发送受限短回复。",
   "permissions": ["alarms", "storage", "tabs", "scripting"],
   "host_permissions": [
     "https://zhipin.com/*",
@@ -15,6 +15,14 @@
     "type": "module"
   },
   "content_scripts": [
+    {
+      "matches": ["https://zhipin.com/*", "https://*.zhipin.com/*"],
+      "js": ["src/page-resume-capture.js"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": true,
+      "match_origin_as_fallback": true
+    },
     {
       "matches": ["https://zhipin.com/*", "https://*.zhipin.com/*"],
       "js": ["src/content.js"],
@@ -30,10 +38,6 @@
       "suggested_key": { "default": "Alt+Shift+R", "mac": "Alt+Shift+R" },
       "description": "只读检查当前 BOSS 会话的回复入口"
     },
-    "fill-test-draft": {
-      "suggested_key": { "default": "Alt+Shift+D", "mac": "Alt+Shift+D" },
-      "description": "向当前已读会话的空输入框写入固定测试草稿（不发送）"
-    },
     "fill-approved-draft": {
       "suggested_key": { "default": "Alt+Shift+F", "mac": "Alt+Shift+F" },
       "description": "向当前会话空输入框填入后台已审核安全草稿（不发送）"
@@ -41,6 +45,10 @@
     "inspect-current-controls": {
       "suggested_key": { "default": "Alt+Shift+I", "mac": "Alt+Shift+I" },
       "description": "不打开扩展弹窗，只读采集当前会话与已展开浮层的脱敏 DOM"
+    },
+    "recognize-current-resume": {
+      "suggested_key": { "default": "Alt+Shift+P", "mac": "Alt+Shift+P" },
+      "description": "识别当前 BOSS 会话中的 PDF 简历并提交现有 AI 分析流程"
     }
   }
 }

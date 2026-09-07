@@ -1,35 +1,44 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="popup.css"><title>BOSS 安全桥接</title></head>
-<body>
-  <main>
-    <header><span class="mark">值</span><div><strong>BOSS 安全桥接</strong><small>默认只读·当前会话单次测试</small></div><span id="stateBadge" class="badge">检查中</span></header>
-    <section id="summary" class="summary" hidden>
-      <div><span>绑定账号</span><strong id="accountName">-</strong></div>
-      <div class="metrics"><article><strong id="totalCount">0</strong><span>本次会话</span></article><article><strong id="currentUnreadCount">0</strong><span>本次未读</span></article><article><strong id="trackedUnreadCount">0</strong><span>观察队列</span></article></div>
-      <p id="reason"></p><small id="detailState"></small><small id="lastSync"></small>
-      <div class="console-link"><span>浏览器协同</span><strong id="pageContext">未识别 BOSS 工作页面</strong><button id="openConsole" class="primary" type="button">进入对应工作页</button></div>
-      <div class="job-sync"><strong>职位列表 / 详情同步</strong><span id="jobState">尚未同步职位页面。</span><small id="lastJobSync"></small><button id="collectJobs" class="quiet" type="button">同步当前职位页</button></div>
-      <div class="job-sync"><strong>回复入口安全验收</strong><span id="readinessState">尚未检查当前会话的回复入口。</span><small id="lastReadiness"></small><small>macOS 可在 BOSS 页面按 Option + Shift + R，无需打开扩展弹窗。</small><button id="checkReadiness" class="quiet" type="button">只读检查回复入口</button></div>
-      <div class="dom-diagnostic"><strong>当前会话功能键 DOM 诊断</strong><span id="controlDiagnosticState">尚未识别当前会话功能键 DOM。</span><small id="lastControlDiagnostic"></small><small>只读扫描当前会话，不点击、不切换、不发送；不记录候选人或消息正文。采集会自动收起的下拉层时，请保持展开并按 Option + Shift + I，之后再打开扩展复制报告。</small><div class="dom-diagnostic-actions"><button id="inspectControls" class="quiet" type="button">识别当前会话功能键 DOM</button><button id="copyControlDiagnostic" class="quiet" type="button" disabled>复制脱敏报告</button></div><textarea id="controlDiagnosticReport" readonly hidden aria-label="脱敏功能键 DOM 报告"></textarea></div>
-      <div class="action-entry-test"><strong>当前会话功能入口单次测试</strong><span id="actionTestState">尚未执行求简历或联系方式入口测试。</span><small id="lastActionTest"></small><small>每项最多点击一次。若出现平台确认或面试设置界面，扩展不会代为填写或确认；不会切换会话或连续执行。</small><div><button id="testRequestResume" class="warning" type="button">测试求简历入口</button><button id="testExchangePhone" class="warning" type="button">测试换电话入口</button><button id="testExchangeWechat" class="warning" type="button">测试换微信入口</button><button id="testInterview" class="warning" type="button">测试约面试入口</button></div></div>
-      <div class="action-entry-test"><strong>联系方式二级确定测试</strong><span id="exchangeConfirmState">尚未执行联系方式二级确定测试。</span><small id="lastExchangeConfirm"></small><small>仅当当前会话对应确认层已打开时使用；会真实点击一次“确定”，不会点击取消、不会重试。</small><div><button id="confirmExchangePhone" class="danger" type="button">确定换电话（单次）</button><button id="confirmExchangeWechat" class="danger" type="button">确定换微信（单次）</button></div></div>
-      <div class="draft-test"><strong>已读会话草稿测试</strong><span id="draftTestState">尚未执行已读会话草稿写入测试。</span><small id="lastDraftTest"></small><p>固定文字： “【草稿测试，不会自动发送】您好，已收到您的消息。”</p><small>请先手动打开已读会话并确认输入框为空。推荐按 Option + Shift + D；插件只填入，不发送。</small><button id="fillTestDraft" class="warning" type="button">写入测试草稿（不发送）</button></div>
-      <div class="draft-test send-test"><strong>当前会话单次发送测试</strong><span id="sendTestState">尚未执行当前会话单次发送测试。</span><small id="lastSendTest"></small><small>每轮先准备再发送。准备阶段要求当前会话已读且输入框为空；每轮最多点击一次，结果不明不会自动重试。同一测试会话需要再次验收时，可重新准备下一轮。</small><div><button id="prepareCurrentSendTest" class="warning" type="button">准备当前会话本轮测试</button><button id="sendCurrentTestDraft" class="danger" type="button">发送当前测试草稿</button></div></div>
-      <div class="draft-test auto-trigger-test"><strong>当前会话来信触发测试</strong><p id="autoReplyTestResult" class="trigger-result">结果：尚未执行</p><span id="autoReplyTestState">尚未开启当前会话来信触发测试。</span><small id="autoReplyTestExpiry"></small><p id="autoReplyDiagnosticState">尚未执行当前触发条件诊断。</p><small id="lastAutoReplyDiagnostic"></small><small>只监测当前由 HR 手动打开的已读会话。开启后，只要最后一条稳定消息来自求职者，就自动写入并发送一次固定测试草稿，随后立即结束；不切换或处理其他会话。</small><div><button id="diagnoseCurrentAutoReply" class="warning" type="button">只读诊断触发条件</button><button id="armCurrentAutoReplyTest" class="danger" type="button">开启当前会话一次触发</button><button id="cancelCurrentAutoReplyTest" class="quiet" type="button">取消等待</button></div></div>
-      <div class="draft-test approved"><strong>填入已审核安全草稿</strong><span id="approvedDraftFillState">尚未填入后台已审核安全草稿。</span><small id="lastApprovedDraftFill"></small><small>请先由 HR 在“今日值守”审核草稿，再手动打开同一会话并确认输入框为空。推荐按 Option + Shift + F。</small><button id="fillApprovedDraft" class="primary" type="button">填入已审核草稿（不发送）</button></div>
-      <label class="toggle"><input id="enabled" type="checkbox"><span>开启只读观测</span></label>
-      <div class="actions"><button id="collect" class="primary">立即检测</button><button id="forget" class="quiet">解除本机绑定</button></div>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="popup.css"><link rel="stylesheet" href="continuous-reply.css"><title>BOSS 招聘桥接</title></head>
+<body><main>
+  <header><span class="mark">值</span><div><strong>BOSS 招聘桥接</strong><small>当前会话 · 安全自动化</small></div><span id="stateBadge" class="badge">检查中</span></header>
+  <section id="summary" hidden>
+    <div class="context-bar"><div><small>当前账号</small><strong id="accountName">-</strong></div><div><small>页面</small><strong id="pageContext">未识别</strong></div></div>
+    <section class="resume-workflow" aria-labelledby="resumeWorkflowTitle">
+      <div class="resume-heading"><div><h1 id="resumeWorkflowTitle">简历导入与 AI 分析</h1><small id="lastVisibleResume">尚未开始</small></div><span id="resumeStageBadge" class="resume-stage-badge">等待识别</span></div>
+      <div class="resume-progress" aria-label="简历处理进度"><span id="resumeStepDetected">1 已识别</span><span id="resumeStepImported">2 已导入</span><span id="resumeStepAnalyzing">3 AI 分析</span><span id="resumeStepCompleted">4 已完成</span></div>
+      <p id="visibleResumeState" class="resume-status">尚未识别当前会话中的 PDF 简历。</p>
+      <p id="resumeRecovery" class="resume-recovery">打开目标会话并点击 PDF 预览，插件将自动识别。</p>
+      <button id="recognizeCurrentResume" class="primary primary-action" type="button">识别并导入当前简历</button>
     </section>
-    <form id="pairForm" hidden>
-      <p>请先在招聘值守台的“账号与浏览器”中生成 10 分钟有效的一次性接入码。</p>
-      <label>设备名称<input id="deviceName" maxlength="80" value="HR 电脑" required></label>
-      <label>一次性接入码<textarea id="pairingToken" maxlength="200" rows="3" required placeholder="粘贴接入码"></textarea></label>
-      <button class="primary" type="submit">完成配对</button>
-    </form>
-    <div id="message" class="message" hidden></div>
-    <footer>不读取 Cookie、密码或候选人姓名。默认只读；只有 HR 在扩展内二次确认时，才可对当前已打开会话单次发送固定测试草稿。</footer>
-  </main>
-  <script type="module" src="popup.js"></script>
-</body>
-</html>
+    <div class="sync-row"><div><strong>会话同步</strong><span id="detailState">尚未复核当前会话</span><small id="lastSync"></small></div><button id="collect" class="secondary" type="button">同步当前会话</button></div>
+    <div class="metrics"><article><strong id="totalCount">0</strong><span>本次会话</span></article><article><strong id="currentUnreadCount">0</strong><span>当前未读</span></article><article><strong id="trackedUnreadCount">0</strong><span>观察队列</span></article></div>
+    <p id="reason" class="system-note"></p>
+    <section class="continuous-reply" aria-labelledby="continuousReplyTitle">
+      <div class="continuous-reply-heading"><div><strong id="continuousReplyTitle">当前账号·全未读自动回复</strong><small id="continuousReplyState">当前未开启</small></div><span id="continuousReplyBadge" class="badge">已停止</span></div>
+      <p>开启后遍历当前消息列表及后续新未读；仅当末条来自求职者、未约面且通过岗位事实校验时回复。</p>
+      <div class="button-grid"><button id="startContinuousReply" class="danger" type="button">开启持续回复</button><button id="stopContinuousReply" class="secondary" type="button">停止</button></div>
+      <small id="lastContinuousReply"></small>
+    </section>
+    <details class="tool-group"><summary><span>页面与职位工具</span><small>同步职位、检查回复入口</small></summary><div class="tool-content">
+      <div class="tool-item"><strong>职位同步</strong><span id="jobState">尚未同步职位页面。</span><small id="lastJobSync"></small><button id="collectJobs" class="secondary" type="button">同步当前职位页</button></div>
+      <div class="tool-item"><strong>回复入口检查</strong><span id="readinessState">尚未检查当前会话。</span><small id="lastReadiness"></small><button id="checkReadiness" class="secondary" type="button">检查回复入口</button></div>
+      <div class="tool-item"><strong>已审核草稿</strong><span id="approvedDraftFillState">尚未填入后台已审核草稿。</span><small id="lastApprovedDraftFill"></small><button id="fillApprovedDraft" class="secondary" type="button">填入已审核草稿</button></div>
+    </div></details>
+    <details class="tool-group"><summary><span>单会话测试工具</span><small>仅用于人工验收</small></summary><div class="tool-content">
+      <div class="tool-item"><strong>操作入口</strong><span id="actionTestState">尚未执行入口测试。</span><small id="lastActionTest"></small><div class="button-grid"><button id="testRequestResume" class="warning">测试求简历</button><button id="testExchangePhone" class="warning">测试换电话</button><button id="testExchangeWechat" class="warning">测试换微信</button><button id="testInterview" class="warning">测试约面试</button></div></div>
+      <div class="tool-item"><strong>联系方式确认</strong><span id="exchangeConfirmState">尚未执行二级确认。</span><small id="lastExchangeConfirm"></small><div class="button-grid"><button id="confirmExchangePhone" class="danger">确认换电话</button><button id="confirmExchangeWechat" class="danger">确认换微信</button></div></div>
+      <div class="tool-item"><strong>生产自动动作</strong><span id="productionActionState">尚未执行生产自动动作。</span><small id="lastProductionAction"></small></div>
+      <div class="tool-item"><strong>草稿写入</strong><span id="draftTestState">尚未写入测试草稿。</span><small id="lastDraftTest"></small><button id="fillTestDraft" class="warning">写入测试草稿</button></div>
+      <div class="tool-item"><strong>单次发送</strong><span id="sendTestState">尚未执行发送测试。</span><small id="lastSendTest"></small><div class="button-grid"><button id="prepareCurrentSendTest" class="warning">准备本轮测试</button><button id="sendCurrentTestDraft" class="danger">发送测试草稿</button></div></div>
+      <div class="tool-item"><strong>来信触发</strong><p id="autoReplyTestResult">结果：尚未执行</p><span id="autoReplyTestState">尚未开启。</span><small id="autoReplyTestExpiry"></small><span id="autoReplyDiagnosticState">尚未诊断触发条件。</span><small id="lastAutoReplyDiagnostic"></small><div class="button-grid"><button id="diagnoseCurrentAutoReply" class="secondary">诊断条件</button><button id="armCurrentAutoReplyTest" class="danger">开启一次触发</button><button id="cancelCurrentAutoReplyTest" class="secondary">取消等待</button></div></div>
+    </div></details>
+    <details class="tool-group"><summary><span>诊断与连接设置</span><small>出现适配问题时使用</small></summary><div class="tool-content">
+      <div class="tool-item"><strong>DOM 诊断</strong><span id="controlDiagnosticState">尚未生成报告。</span><small id="lastControlDiagnostic"></small><div class="button-grid"><button id="inspectControls" class="secondary">重新识别 DOM</button><button id="copyControlDiagnostic" class="secondary" disabled>复制报告</button></div><textarea id="controlDiagnosticReport" readonly hidden aria-label="脱敏功能键 DOM 报告"></textarea></div>
+      <label class="toggle"><input id="enabled" type="checkbox"><span>开启页面观测</span></label><div class="button-grid"><button id="openConsole" class="secondary">打开招聘值守台</button><button id="forget" class="text-button">解除本机绑定</button></div>
+    </div></details>
+  </section>
+  <form id="pairForm" hidden><h1>连接招聘值守台</h1><p>在招聘账号页面生成一次性接入码后完成配对。</p><label>设备名称<input id="deviceName" maxlength="80" value="HR 电脑" required></label><label>一次性接入码<textarea id="pairingToken" maxlength="200" rows="3" required></textarea></label><button class="primary primary-action" type="submit">完成配对</button></form>
+  <div id="message" class="message" hidden></div><footer>版本 <span id="pluginVersion">-</span> · 默认只读，不读取 Cookie 或密码</footer>
+</main><script type="module" src="popup.js"></script></body></html>

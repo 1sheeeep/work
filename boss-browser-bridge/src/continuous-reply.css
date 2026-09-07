@@ -1,0 +1,39 @@
+.continuous-reply {
+  display: grid;
+  gap: 9px;
+  padding: 13px;
+  border: 1px solid #efd6a7;
+  border-radius: 12px;
+  background: #fffaf1;
+}
+
+.continuous-reply-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.continuous-reply-heading strong,
+.continuous-reply-heading small {
+  display: block;
+}
+
+.continuous-reply-heading strong {
+  font-size: 13px;
+}
+
+.continuous-reply-heading small,
+.continuous-reply > small {
+  margin-top: 3px;
+  color: #695d48;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.continuous-reply p {
+  margin: 0;
+  color: #5b5141;
+  font-size: 11px;
+  line-height: 1.5;
+}

@@ -12,6 +12,9 @@ frontend/test-results/
 frontend/playwright-report/
 boss-local-connector/connector.config.json
 boss-local-connector/node_modules/
+# 只保留 boss-browser-bridge 作为 Chrome 扩展的唯一源码目录。
+# 禁止再提交或生成旧的别名/符号链接，避免 Chrome 加载错目录。
+boss-browser-extension
 backups/
 secrets/*
 !secrets/*.example

@@ -80,7 +80,25 @@ export function validateSelected(selected) {
   if (!Number.isFinite(Date.parse(selected.messageAt))) throw new Error('最后消息时间无效。');
   if (!Number.isFinite(Date.parse(selected.observedAt))) throw new Error('会话复核时间无效。');
   if (typeof selected.selectedUnread !== 'boolean') throw new Error('选中会话未读状态无效。');
+  validateConversationSignals(selected.conversationSignals);
   return selected;
+}
+
+export function validateConversationSignals(signals) {
+  const keys = ['requestResumeAvailable', 'resumeReceived', 'exchangeWechatAvailable', 'exchangePhoneAvailable', 'wechatExchanged', 'phoneExchanged', 'scheduleInterviewAvailable', 'interviewScheduled'];
+  if (!signals || Object.keys(signals).length !== keys.length || keys.some((key) => typeof signals[key] !== 'boolean')) {
+    throw new Error('会话阶段信号无效。');
+  }
+  return signals;
+}
+
+export function validateVisibleResumeTextCapture(payload, expectedChatDigest) {
+  if (!payload || payload.actionType !== 'VISIBLE_RESUME_TEXT_CAPTURE') throw new Error('在线简历采集结果类型无效。');
+  if (!DIGEST_PATTERN.test(payload.chatDigest || '') || payload.chatDigest !== expectedChatDigest) throw new Error('在线简历与当前会话不一致。');
+  if (!DIGEST_PATTERN.test(payload.sourceEventDigest || '') || !DIGEST_PATTERN.test(payload.textDigest || '')) throw new Error('在线简历事件摘要无效。');
+  if (typeof payload.resumeText !== 'string' || payload.resumeText.trim().length < 100 || payload.resumeText.length > 30000) throw new Error('在线简历文本长度无效。');
+  if (payload.resumeReceived !== true) throw new Error('页面尚未确认简历已到达。');
+  return payload;
 }
 
 export function validateValidationReadiness(payload) {
@@ -139,6 +157,24 @@ export function validateCurrentActionEntryTestResult(payload) {
   return payload;
 }
 
+export function validateActionLeaseExecutionResult(payload, expectedTargetDigest, expectedActionType = 'REQUEST_RESUME') {
+  if (!payload || !['SEND_MESSAGE', 'REQUEST_RESUME', 'EXCHANGE_WECHAT', 'EXCHANGE_PHONE'].includes(expectedActionType)
+      || payload.actionType !== expectedActionType || !['SUCCEEDED', 'UNKNOWN'].includes(payload.outcome)) throw new Error('页面动作租约执行结果无效。');
+  if (!DIGEST_PATTERN.test(expectedTargetDigest || '') || payload.chatDigest !== expectedTargetDigest) throw new Error('页面动作租约目标不一致。');
+  for (const key of ['messageDigest', 'controlDigest', 'beforeStateDigest', 'afterStateDigest', 'receiptDigest']) {
+    if (!DIGEST_PATTERN.test(payload[key] || '')) throw new Error('页面动作租约回执摘要无效。');
+  }
+  if (payload.clickTriggered !== true || payload.retryTriggered !== false) throw new Error('页面动作必须且只能执行一次入口点击。');
+  if (typeof payload.confirmTriggered !== 'boolean' || (payload.outcome === 'SUCCEEDED' && expectedActionType !== 'SEND_MESSAGE' && payload.confirmTriggered !== true)) throw new Error('原生页面动作成功回执必须包含唯一一次确认点击。');
+  if (payload.outcome === 'SUCCEEDED' && payload.beforeStateDigest === payload.afterStateDigest) throw new Error('页面动作成功回执缺少页面状态变化。');
+  if (typeof payload.reason !== 'string' || !payload.reason.trim() || payload.reason.length > 300) throw new Error('页面动作执行原因无效。');
+  return payload;
+}
+
+export function isSupportedActionLeaseMode(mode) {
+  return mode === 'VERIFIED_PAGE_EXECUTOR' || mode === 'EXPLICIT_SINGLE_CONVERSATION_TEST';
+}
+
 export function validateExchangeConfirmationTestResult(payload) {
   if (!payload || payload.actionType !== 'CURRENT_EXCHANGE_CONFIRMATION_TEST' || !['EXCHANGE_PHONE', 'EXCHANGE_WECHAT'].includes(payload.action)) throw new Error('联系方式二级确认测试类型无效。');
   if (!['STATE_CHANGED', 'UNKNOWN'].includes(payload.outcome)) throw new Error('联系方式二级确认测试结果无效。');
@@ -149,13 +185,14 @@ export function validateExchangeConfirmationTestResult(payload) {
 
 export function validateControlDomDiagnostic(payload) {
   if (!payload || payload.actionType !== 'CURRENT_CONTROL_DOM_DIAGNOSTIC' || payload.pageState !== 'CHAT_PAGE_READY') throw new Error('功能键 DOM 诊断类型无效。');
-  const allowedPayloadKeys = new Set(['actionType', 'pageState', 'chatDigest', 'observedAt', 'rawContentIncluded', 'truncated', 'editor', 'controls', 'reportDigest']);
+  const allowedPayloadKeys = new Set(['actionType', 'pageState', 'chatDigest', 'observedAt', 'rawContentIncluded', 'truncated', 'editor', 'controls', 'resumeCandidates', 'reportDigest']);
   if (Object.keys(payload).some((key) => !allowedPayloadKeys.has(key))) throw new Error('功能键 DOM 诊断包含未允许字段。');
   if (!DIGEST_PATTERN.test(payload.chatDigest || '') || !DIGEST_PATTERN.test(payload.reportDigest || '')) throw new Error('功能键 DOM 诊断摘要无效。');
   if (!Number.isFinite(Date.parse(payload.observedAt)) || payload.rawContentIncluded !== false) throw new Error('功能键 DOM 诊断安全标记无效。');
   if (!payload.editor || !Array.isArray(payload.controls) || payload.controls.length > MAX_CONTROL_DIAGNOSTICS) throw new Error('功能键 DOM 诊断数量无效。');
-  const allowedKeys = new Set(['fingerprint', 'tag', 'classes', 'role', 'type', 'ariaLabel', 'title', 'tabIndex', 'disabled', 'visible', 'width', 'height', 'cursor', 'knownAction', 'ownerAction', 'interviewField', 'selected', 'labelDigest', 'dataAttributeNames', 'icon', 'ancestors']);
-  for (const control of [payload.editor, ...payload.controls]) {
+  if (payload.resumeCandidates !== undefined && (!Array.isArray(payload.resumeCandidates) || payload.resumeCandidates.length > 80)) throw new Error('简历入口 DOM 诊断数量无效。');
+  const allowedKeys = new Set(['fingerprint', 'tag', 'classes', 'role', 'type', 'ariaLabel', 'title', 'tabIndex', 'disabled', 'visible', 'width', 'height', 'cursor', 'knownAction', 'ownerAction', 'interviewField', 'selected', 'labelDigest', 'dataAttributeNames', 'icon', 'ancestors', 'hints']);
+  for (const control of [payload.editor, ...payload.controls, ...(payload.resumeCandidates || [])]) {
     if (!control || Object.keys(control).some((key) => !allowedKeys.has(key))) throw new Error('功能键 DOM 诊断包含未允许字段。');
     if (!DIGEST_PATTERN.test(control.fingerprint || '') || !/^[A-Z][A-Z0-9-]{0,24}$/.test(control.tag || '')) throw new Error('功能键 DOM 控件摘要无效。');
     if (!Array.isArray(control.classes) || control.classes.length > 12 || control.classes.some((item) => typeof item !== 'string' || item.length > 80)) throw new Error('功能键 DOM 类名无效。');
@@ -168,6 +205,7 @@ export function validateControlDomDiagnostic(payload) {
     if (control.ownerAction !== null && control.ownerAction !== undefined && !['求简历', '换电话', '换微信', '约面试'].includes(control.ownerAction)) throw new Error('功能键 DOM 所属操作无效。');
     if (control.interviewField !== null && control.interviewField !== undefined && !['JOB', 'ADDRESS', 'NOTE', 'DATE', 'TIME', 'MODE_OPTION', 'CONTACT', 'CANCEL', 'SEND'].includes(control.interviewField)) throw new Error('面试弹窗字段分类无效。');
     if (control.selected !== null && control.selected !== undefined && typeof control.selected !== 'boolean') throw new Error('面试弹窗选择状态无效。');
+    if (control.hints !== undefined && (!Array.isArray(control.hints) || control.hints.length > 5 || control.hints.some((item) => !['RESUME','ATTACHMENT','PDF','PREVIEW','DOWNLOAD'].includes(item)))) throw new Error('简历入口提示分类无效。');
     if (control.labelDigest !== null && control.labelDigest !== undefined && !DIGEST_PATTERN.test(control.labelDigest)) throw new Error('功能键 DOM 文字摘要无效。');
   }
   return payload;
@@ -177,6 +215,9 @@ export function validateJobSnapshot(payload) {
   if (!payload || payload.pageState !== 'JOB_MANAGEMENT_READY') throw new Error('当前不是可采集的职位管理页。');
   if (!Array.isArray(payload.entries) || payload.entries.length === 0 || payload.entries.length > MAX_JOBS) throw new Error('职位列表数量无效。');
   if (!Number.isFinite(Date.parse(payload.observedAt))) throw new Error('职位快照时间无效。');
+  if (!['OPEN_JOBS', 'CLOSED_JOBS', 'MIXED', 'SINGLE_JOB'].includes(payload.scope)) throw new Error('职位快照范围无效。');
+  if (typeof payload.authoritative !== 'boolean') throw new Error('职位快照完整性标记无效。');
+  if (payload.authoritative && payload.scope !== 'OPEN_JOBS') throw new Error('只有完整的在招职位清单可以作为下架依据。');
   const seen = new Set();
   for (const entry of payload.entries) {
     if (!DIGEST_PATTERN.test(entry?.sourceDigest || '') || seen.has(entry.sourceDigest)) throw new Error('职位来源摘要无效或重复。');
@@ -188,12 +229,14 @@ export function validateJobSnapshot(payload) {
     for (const key of ['salaryMinK', 'salaryMaxK']) if (entry[key] !== null && entry[key] !== undefined && (!Number.isInteger(entry[key]) || entry[key] < 1 || entry[key] > 1000)) throw new Error('职位薪资无效。');
     if (entry.salaryMonths !== null && entry.salaryMonths !== undefined && (!Number.isInteger(entry.salaryMonths) || entry.salaryMonths < 12 || entry.salaryMonths > 16)) throw new Error('职位薪数无效。');
     if (!Number.isInteger(entry.completeness) || entry.completeness < 1 || entry.completeness > 12) throw new Error('职位完整度无效。');
+    if (!['OPEN', 'CLOSED', 'UNKNOWN'].includes(entry.platformStatus)) throw new Error('职位平台状态无效。');
   }
+  if (payload.authoritative && payload.entries.some((entry) => entry.platformStatus !== 'OPEN')) throw new Error('完整在招清单包含非在招职位。');
   return payload;
 }
 
 export function jobSnapshotSignature(payload) {
-  return payload.entries.map((entry) => [entry.sourceDigest, entry.title, entry.location || '', entry.salaryDisplay || '', entry.experienceRequirement || '', entry.educationRequirement || '', entry.description || '', entry.recruitmentType || '', entry.jobCategory || '', entry.overseasRequirement || '', entry.jobKeywords || '', entry.workAddress || ''].join(':')).join('|');
+  return `${payload.scope}:${payload.authoritative}|${payload.entries.map((entry) => [entry.sourceDigest, entry.title, entry.platformStatus, entry.location || '', entry.salaryDisplay || '', entry.experienceRequirement || '', entry.educationRequirement || '', entry.description || '', entry.recruitmentType || '', entry.jobCategory || '', entry.overseasRequirement || '', entry.jobKeywords || '', entry.workAddress || ''].join(':')).join('|')}`;
 }
 
 export function snapshotSignature(payload) {
@@ -201,9 +244,40 @@ export function snapshotSignature(payload) {
     .map((entry) => [entry.chatDigest, entry.unreadCount, entry.previewDigest || '', entry.jobDigest || '', entry.timeDigest || ''].join(':'))
     .join('|');
   const selected = payload.selected
-    ? [payload.selected.chatDigest, payload.selected.messageDigest, payload.selected.direction, payload.selected.messageAt, payload.selected.selectedUnread].join(':')
+    ? [payload.selected.chatDigest, payload.selected.messageDigest, payload.selected.direction, payload.selected.messageAt, payload.selected.selectedUnread,
+      ...Object.values(payload.selected.conversationSignals || {}).map((value) => value ? 1 : 0)].join(':')
     : 'none';
   return `${list}|selected:${selected}`;
+}
+
+export function compactProcessedMessages(entries, terminalLimit = 200, absoluteLimit = 1200) {
+  const safe = Array.isArray(entries) ? entries.filter((item) => item && typeof item === 'object') : [];
+  const processing = safe.filter((item) => item.outcome === 'PROCESSING');
+  const terminal = safe.filter((item) => item.outcome !== 'PROCESSING').slice(-terminalLimit);
+  return [...terminal, ...processing].slice(-absoluteLimit);
+}
+
+export function validateSingleAccountBaseline(payload, limit = 500) {
+  const validateEntries = (entries) => {
+    if (!Array.isArray(entries) || entries.length > limit) throw new Error('持续回复恢复基线无效。');
+    const keys = new Set();
+    for (const entry of entries) {
+      if (!Array.isArray(entry) || entry.length !== 2
+          || !/^[a-f0-9]{64}$/.test(entry[0]) || !/^[a-f0-9]{64}$/.test(entry[1])
+          || keys.has(entry[0])) throw new Error('持续回复恢复基线无效。');
+      keys.add(entry[0]);
+    }
+    return entries;
+  };
+  if (!payload || typeof payload !== 'object') throw new Error('持续回复恢复基线无效。');
+  return { unread: validateEntries(payload.unread), selected: validateEntries(payload.selected) };
+}
+
+export function nextConsecutiveFailureCount(previous, outcome) {
+  const safePrevious = Math.max(0, Number(previous) || 0);
+  if (outcome === 'SENT') return 0;
+  if (outcome === 'UNKNOWN') return safePrevious + 1;
+  return safePrevious;
 }
 
 export function publicStatus(settings, runtime) {
@@ -242,6 +316,11 @@ export function publicStatus(settings, runtime) {
     autoReplyTestLastCheckedAt: runtime?.autoReplyTestLastCheckedAt || null,
     autoReplyDiagnosticState: runtime?.autoReplyDiagnosticState || '尚未执行当前触发条件诊断。',
     lastAutoReplyDiagnosticAt: runtime?.lastAutoReplyDiagnosticAt || null,
+    singleAccountAutoReplyEnabled: runtime?.singleAccountAutoReplyEnabled === true,
+    singleAccountAutoReplyState: runtime?.singleAccountAutoReplyState || '当前未开启；仅支持当前配对账号。',
+    singleAccountAutoReplyProcessedCount: Array.isArray(runtime?.singleAccountProcessedMessages) ? runtime.singleAccountProcessedMessages.length : 0,
+    singleAccountConsecutiveFailures: Number(runtime?.singleAccountConsecutiveFailures || 0),
+    lastSingleAccountAutoReplyAt: runtime?.lastSingleAccountAutoReplyAt || null,
     controlDiagnosticState: runtime?.controlDiagnosticState || '尚未识别当前会话功能键 DOM。',
     lastControlDiagnosticAt: runtime?.lastControlDiagnosticAt || null,
     controlDiagnostic: runtime?.controlDiagnostic || null,
@@ -251,6 +330,11 @@ export function publicStatus(settings, runtime) {
     exchangeConfirmState: runtime?.exchangeConfirmState || '尚未执行联系方式二级确定测试。',
     lastExchangeConfirmAt: runtime?.lastExchangeConfirmAt || null,
     exchangeConfirmLocks: runtime?.exchangeConfirmLocks || {},
+    productionActionState: runtime?.productionActionState || '尚未执行生产自动动作。',
+    productionActionOutcome: runtime?.productionActionOutcome || 'NOT_RUN',
+    lastProductionActionAt: runtime?.lastProductionActionAt || null,
+    visibleResumeState: runtime?.visibleResumeState || '尚未识别当前会话中的 PDF 简历。',
+    lastVisibleResumeAt: runtime?.lastVisibleResumeAt || null,
     pageContext: runtime?.pageContext || 'NO_BOSS_PAGE',
   };
 }

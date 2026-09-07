@@ -1,4 +1,4 @@
-import { DEFAULT_BACKEND_URL, consolePathForContext, isJobManagementUrl, jobSnapshotSignature, pageContextFromUrl, publicStatus, snapshotSignature, validateApprovedDraftFillContext, validateApprovedDraftFillResult, validateBackendUrl, validateControlDomDiagnostic, validateCurrentActionEntryTestResult, validateCurrentTestDraftSendResult, validateDraftFillResult, validateExchangeConfirmationTestResult, validateJobSnapshot, validateSnapshot, validateValidationReadiness } from './bridge-core.mjs';
+import { DEFAULT_BACKEND_URL, compactProcessedMessages, consolePathForContext, isJobManagementUrl, isSupportedActionLeaseMode, jobSnapshotSignature, nextConsecutiveFailureCount, pageContextFromUrl, publicStatus, snapshotSignature, validateActionLeaseExecutionResult, validateApprovedDraftFillContext, validateApprovedDraftFillResult, validateBackendUrl, validateControlDomDiagnostic, validateCurrentActionEntryTestResult, validateCurrentTestDraftSendResult, validateDraftFillResult, validateExchangeConfirmationTestResult, validateJobSnapshot, validateSingleAccountBaseline, validateSnapshot, validateValidationReadiness, validateVisibleResumeTextCapture } from './bridge-core.mjs';
 
 const SETTINGS_KEY = 'bridgeSettingsV1';
 const RUNTIME_KEY = 'bridgeRuntimeV1';
@@ -7,11 +7,13 @@ const MIN_SYNC_INTERVAL_MS = 10_000;
 const BOSS_TAB_PATTERNS = ['https://zhipin.com/*', 'https://*.zhipin.com/*'];
 let syncInFlight = null;
 let jobSyncInFlight = null;
+let actionExecutionInFlight = null;
+let runtimeMutationTail = Promise.resolve();
 
 chrome.runtime.onInstalled.addListener(() => initialise());
 chrome.runtime.onStartup.addListener(() => initialise());
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === ALARM_NAME) void collectFromBestTab();
+  if (alarm.name === ALARM_NAME) void runObservationCycle();
 });
 chrome.commands.onCommand.addListener((command) => {
   if (command === 'check-reply-readiness') void checkReplyReadiness().catch((error) => setRuntime({ readinessState: `回复入口检查失败：${safeError(error)}` }));
@@ -19,7 +21,19 @@ chrome.commands.onCommand.addListener((command) => {
   if (command === 'fill-approved-draft') void fillApprovedDraft().catch((error) => setRuntime({ approvedDraftFillState: `已审核草稿填入失败：${safeError(error)}` }));
   if (command === 'inspect-current-controls') void inspectCurrentControls()
     .catch((error) => setRuntime({ controlDiagnosticState: `快捷键识别失败：${safeError(error)}` }));
+  if (command === 'recognize-current-resume') void recognizeCurrentResume()
+    .then(() => flashActionBadge('完成', '#0D9488'))
+    .catch(async (error) => {
+      await setRuntime({ visibleResumeState: `识别失败：${safeError(error)}`, lastVisibleResumeAt: new Date().toISOString() });
+      await flashActionBadge('失败', '#C2410C');
+    });
 });
+
+async function flashActionBadge(text, color) {
+  await chrome.action.setBadgeBackgroundColor({ color });
+  await chrome.action.setBadgeText({ text });
+  setTimeout(() => void chrome.action.setBadgeText({ text: '' }), 5_000);
+}
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   void handleMessage(message, sender).then(sendResponse).catch((error) => sendResponse({ ok: false, error: safeError(error) }));
@@ -61,6 +75,8 @@ async function handleMessage(message, sender) {
       return pair(message.payload);
     case 'BRIDGE_SET_ENABLED':
       return setEnabled(Boolean(message.enabled));
+    case 'BRIDGE_SET_SINGLE_ACCOUNT_AUTO_REPLY':
+      return setSingleAccountAutoReply(Boolean(message.enabled));
     case 'BRIDGE_FORGET_DEVICE':
       return forgetDevice();
     case 'BRIDGE_COLLECT_NOW':
@@ -72,6 +88,8 @@ async function handleMessage(message, sender) {
       return { ok: true, readiness: await checkReplyReadiness(), status: await getPublicStatus() };
     case 'BRIDGE_INSPECT_CURRENT_CONTROLS':
       return { ok: true, diagnostic: await inspectCurrentControls(), status: await getPublicStatus() };
+    case 'BRIDGE_RECOGNIZE_CURRENT_RESUME':
+      return { ok: true, resumeRecognition: await recognizeCurrentResume(), status: await getPublicStatus() };
     case 'BRIDGE_TEST_CURRENT_ACTION_ENTRY':
       return { ok: true, actionTest: await testCurrentActionEntry(message.action), status: await getPublicStatus() };
     case 'BRIDGE_CONFIRM_CURRENT_EXCHANGE':
@@ -110,9 +128,430 @@ async function handleMessage(message, sender) {
     case 'BRIDGE_AUTO_REPLY_TEST_PROGRESS':
       if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的触发测试进度。');
       return recordAutoReplyTestProgress(message.payload);
+    case 'BRIDGE_DECIDE_INBOUND_REPLY':
+      if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的候选人消息。');
+      return decideInboundReply(message.payload);
+    case 'BRIDGE_POLL_INBOUND_REPLY':
+      if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的 AI 任务查询。');
+      return pollInboundReply(message.payload);
+    case 'BRIDGE_GET_PENDING_INBOUND_REPLIES':
+      if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的待处理任务查询。');
+      return pendingInboundReplies();
+    case 'BRIDGE_GET_SINGLE_ACCOUNT_BASELINE':
+      if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的恢复基线查询。');
+      return singleAccountBaseline();
+    case 'BRIDGE_SAVE_SINGLE_ACCOUNT_BASELINE':
+      if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的恢复基线写入。');
+      return saveSingleAccountBaseline(message.payload);
+    case 'BRIDGE_DISCARD_STALE_INBOUND_REPLY':
+      if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的旧回复作废请求。');
+      return discardStaleInboundReply(message.payload);
+    case 'BRIDGE_CLAIM_INBOUND_REPLY_SEND':
+      if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的发送租约请求。');
+      return claimInboundReplySend(message.payload);
+    case 'BRIDGE_RECEIPT_INBOUND_REPLY_SEND':
+      if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的发送回执。');
+      return receiptInboundReplySend(message.payload);
+    case 'BRIDGE_SINGLE_ACCOUNT_AUTO_REPLY_RESULT':
+      if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的持续回复结果。');
+      return recordSingleAccountAutoReplyResult(message.payload);
+    case 'BRIDGE_SINGLE_ACCOUNT_AUTO_REPLY_STATE':
+      if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的持续回复状态。');
+      return recordSingleAccountAutoReplyState(message.payload);
+    case 'BRIDGE_RESUME_PREVIEW_CLICK_DIAGNOSTIC':
+      if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的简历预览诊断。');
+      return recordResumePreviewClickDiagnostic(message.payload);
+    case 'BRIDGE_VISIBLE_RESUME_PDF_CAPTURE':
+      if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的 PDF 简历。');
+      return importVisibleResumePdf(message.payload);
+    case 'BRIDGE_VISIBLE_RESUME_IMPORT_STATUS':
+      if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的简历导入状态。');
+      return recordVisibleResumeImportStatus(message.payload);
+    case 'BRIDGE_FETCH_VISIBLE_RESUME_MAIN_WORLD':
+      if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的主环境 PDF 请求。');
+      return fetchVisibleResumeFromMainWorld(sender.tab.id, message.payload);
     default:
       throw new Error('未知的桥接请求。');
   }
+}
+
+async function decideInboundReply(payload) {
+  if (!payload || !/^[a-f0-9]{64}$/.test(payload.chatDigest || '')
+      || !/^[a-f0-9]{64}$/.test(payload.messageDigest || '')
+      || typeof payload.messageText !== 'string' || !payload.messageText.trim()
+      || payload.messageText.length > 1000 || !Number.isFinite(Date.parse(payload.messageAt))
+      || typeof payload.selectedUnread !== 'boolean' || !payload.conversationSignals
+      || !Number.isFinite(Date.parse(payload.observedAt))) {
+    throw new Error('候选人消息识别请求无效。');
+  }
+  const settings = await getSettings();
+  if (!settings.deviceToken) throw new Error('请先完成本机账号配对。');
+  const continuous = payload.continuous === true;
+  const decisionPayload = { ...payload };
+  delete decisionPayload.continuous;
+  const messageKey = `${payload.chatDigest}:${payload.messageDigest}`;
+  if (continuous) {
+    const claim = await claimSingleAccountMessage(messageKey);
+    if (claim === 'DISABLED') {
+      return { ok: true, decision: { replyAllowed: false, category: 'DISABLED', reason: '单账号持续自动回复已停止。' } };
+    }
+    if (claim === 'DUPLICATE') {
+      return { ok: true, decision: { replyAllowed: false, category: 'DUPLICATE', reason: '该条候选人消息已经处理，禁止重复回复。' } };
+    }
+  } else {
+    await setRuntime({ autoReplyTestState: '正在判断候选人消息是否与当前岗位相关…' });
+  }
+  try {
+  await request(settings.backendUrl, '/api/local-connector/runtime/selected-conversation', {
+    method: 'POST', token: settings.deviceToken, body: {
+      chatDigest: payload.chatDigest, messageDigest: payload.messageDigest, direction: 'INBOUND',
+      messageAt: payload.messageAt, selectedUnread: payload.selectedUnread,
+      conversationSignals: payload.conversationSignals, observedAt: payload.observedAt,
+    },
+  });
+  if (continuous) {
+    const accepted = await request(settings.backendUrl, '/api/local-connector/runtime/inbound-reply-tasks', {
+      method: 'POST', token: settings.deviceToken, body: decisionPayload, timeoutMs: 8_000,
+    });
+    if (accepted?.status === 'COMPLETED' && accepted.decision) {
+      await updateSingleAccountProcessedMessage(messageKey, accepted.decision.replyAllowed ? 'READY' : 'SILENT');
+      return { ok: true, pending: false, decision: accepted.decision };
+    }
+    if (!/^[0-9a-f-]{36}$/i.test(accepted?.taskId || '')) throw new Error('AI 队列未返回有效任务编号。');
+    await attachSingleAccountTask(messageKey, accepted.taskId, payload.chatDigest, payload.messageDigest);
+    await setRuntime({ singleAccountAutoReplyState: 'AI 任务已入队，继续检查其他新消息…' });
+    return { ok: true, pending: true, taskId: accepted.taskId };
+  }
+  const decision = await request(settings.backendUrl, '/api/local-connector/runtime/inbound-reply-decision', {
+    method: 'POST', token: settings.deviceToken, body: decisionPayload, timeoutMs: 135_000,
+  });
+  if (continuous) {
+    await updateSingleAccountProcessedMessage(messageKey, decision.replyAllowed ? 'READY' : 'SILENT');
+    await setRuntime({ singleAccountAutoReplyState: decision.replyAllowed
+      ? `岗位相关，已生成短回复（${Math.round(Number(decision.confidence || 0) * 100)}%），准备发送。`
+      : `已静默跳过：${decision.reason || '消息不符合自动回复条件'}。`, lastSingleAccountAutoReplyAt: new Date().toISOString() });
+  } else {
+    await setRuntime({ autoReplyTestState: decision.replyAllowed
+      ? `岗位相关，已生成受限回复（${Math.round(Number(decision.confidence || 0) * 100)}%）。`
+      : `未自动回复：${decision.reason || '消息不符合自动回复条件'}。` });
+  }
+  return { ok: true, decision };
+  } catch (error) {
+    if (continuous) {
+      await mutateRuntime((runtime) => ({
+        singleAccountProcessedMessages: (runtime.singleAccountProcessedMessages || []).filter((item) => item.key !== messageKey),
+        singleAccountAutoReplyState: `岗位相关性服务暂不可用：${safeError(error)}；稍后重试。`,
+      }));
+    }
+    throw error;
+  }
+}
+
+async function pollInboundReply(payload) {
+  if (!payload || !/^[0-9a-f-]{36}$/i.test(payload.taskId || '')
+      || !/^[a-f0-9]{64}$/.test(payload.chatDigest || '')
+      || !/^[a-f0-9]{64}$/.test(payload.messageDigest || '')) throw new Error('AI 任务查询参数无效。');
+  const settings = await getSettings();
+  if (!settings.deviceToken) throw new Error('请先完成本机账号配对。');
+  const key = `${payload.chatDigest}:${payload.messageDigest}`;
+  const runtime = await getRuntime();
+  const tracked = (runtime.singleAccountProcessedMessages || [])
+    .find((item) => item.key === key && item.taskId === payload.taskId && item.outcome === 'PROCESSING');
+  if (!tracked) return { ok: true, status: 'CANCELLED' };
+  const result = await request(settings.backendUrl, `/api/local-connector/runtime/inbound-reply-tasks/${payload.taskId}`, {
+    method: 'GET', token: settings.deviceToken, timeoutMs: 8_000,
+  });
+  if (!['COMPLETED', 'FAILED'].includes(result?.status)) return { ok: true, status: result?.status || 'QUEUED' };
+  const decision = result.decision || { replyAllowed: false, category: 'UNCERTAIN', reason: 'AI 任务未返回有效结果。' };
+  if (!decision.replyAllowed) await updateSingleAccountProcessedMessage(key, 'SILENT');
+  await setRuntime({ singleAccountAutoReplyState: decision.replyAllowed
+    ? `AI 已生成安全短回复（${Math.round(Number(decision.confidence || 0) * 100)}%），等待页面复核。`
+    : `已静默跳过：${decision.reason || '消息不符合自动回复条件'}。` });
+  return { ok: true, status: result.status, decision };
+}
+
+async function pendingInboundReplies() {
+  const runtime = await getRuntime();
+  const tasks = (runtime.singleAccountProcessedMessages || [])
+    .filter((item) => item.outcome === 'PROCESSING' && /^[0-9a-f-]{36}$/i.test(item.taskId || '')
+      && /^[a-f0-9]{64}$/.test(item.chatDigest || '') && /^[a-f0-9]{64}$/.test(item.messageDigest || ''))
+    .map(({ taskId, chatDigest, messageDigest }) => ({ taskId, chatDigest, messageDigest }));
+  return { ok: true, tasks };
+}
+
+async function singleAccountBaseline() {
+  const runtime = await getRuntime();
+  try {
+    return { ok: true, ...validateSingleAccountBaseline({
+      unread: runtime.singleAccountUnreadBaseline || [], selected: runtime.singleAccountSelectedMessageBaseline || [],
+    }) };
+  } catch (_error) {
+    return { ok: true, unread: [], selected: [] };
+  }
+}
+
+async function saveSingleAccountBaseline(payload) {
+  const baseline = validateSingleAccountBaseline(payload);
+  await setRuntime({ singleAccountUnreadBaseline: baseline.unread, singleAccountSelectedMessageBaseline: baseline.selected });
+  return { ok: true };
+}
+
+async function discardStaleInboundReply(payload) {
+  if (!payload || !/^[0-9a-f-]{36}$/i.test(payload.taskId || '')
+      || !/^[a-f0-9]{64}$/.test(payload.chatDigest || '')
+      || !/^[a-f0-9]{64}$/.test(payload.messageDigest || '')
+      || !/^[a-f0-9]{64}$/.test(payload.currentMessageDigest || '')
+      || payload.messageDigest === payload.currentMessageDigest
+      || !Number.isFinite(Date.parse(payload.currentMessageAt))
+      || typeof payload.selectedUnread !== 'boolean' || !payload.conversationSignals) throw new Error('旧回复作废参数无效。');
+  const settings = await getSettings();
+  if (!settings.deviceToken) throw new Error('请先完成本机账号配对。');
+  await request(settings.backendUrl, '/api/local-connector/runtime/selected-conversation', {
+    method: 'POST', token: settings.deviceToken, body: {
+      chatDigest: payload.chatDigest, messageDigest: payload.currentMessageDigest, direction: 'INBOUND',
+      messageAt: payload.currentMessageAt, selectedUnread: payload.selectedUnread,
+      conversationSignals: payload.conversationSignals, observedAt: new Date().toISOString(),
+    }, timeoutMs: 8_000,
+  });
+  return request(settings.backendUrl, `/api/local-connector/runtime/inbound-reply-tasks/${payload.taskId}/discard`, {
+    method: 'POST', token: settings.deviceToken, body: {
+      chatDigest: payload.chatDigest, messageDigest: payload.messageDigest,
+      currentMessageDigest: payload.currentMessageDigest,
+      reason: '候选人在 AI 分析期间发送了更新消息，旧回复已安全作废。',
+    }, timeoutMs: 8_000,
+  });
+}
+
+async function claimInboundReplySend(payload) {
+  if (!payload || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(payload.taskId || '')
+      || !/^[a-f0-9]{64}$/.test(payload.chatDigest || '') || !/^[a-f0-9]{64}$/.test(payload.messageDigest || '')
+      || !/^[a-f0-9]{64}$/.test(payload.beforeStateDigest || '') || !Number.isFinite(Date.parse(payload.messageAt))
+      || typeof payload.selectedUnread !== 'boolean' || !payload.conversationSignals
+      || !Number.isFinite(Date.parse(payload.observedAt))) throw new Error('AI 回复发送租约参数无效。');
+  const settings = await getSettings();
+  if (!settings.deviceToken) throw new Error('请先完成本机账号配对。');
+  await request(settings.backendUrl, '/api/local-connector/runtime/selected-conversation', {
+    method: 'POST', token: settings.deviceToken, body: {
+      chatDigest: payload.chatDigest, messageDigest: payload.messageDigest, direction: 'INBOUND',
+      messageAt: payload.messageAt, selectedUnread: payload.selectedUnread,
+      conversationSignals: payload.conversationSignals, observedAt: payload.observedAt,
+    },
+  });
+  return request(settings.backendUrl, '/api/local-connector/runtime/inbound-reply-send/claim', {
+    method: 'POST', token: settings.deviceToken, body: {
+      taskId: payload.taskId, chatDigest: payload.chatDigest,
+      messageDigest: payload.messageDigest, beforeStateDigest: payload.beforeStateDigest,
+    }, timeoutMs: 8_000,
+  });
+}
+
+async function receiptInboundReplySend(payload) {
+  if (!payload || typeof payload.leaseToken !== 'string' || !payload.leaseToken
+      || !['SUCCEEDED', 'FAILED', 'UNKNOWN'].includes(payload.outcome)
+      || !/^[a-f0-9]{64}$/.test(payload.beforeStateDigest || '') || !/^[a-f0-9]{64}$/.test(payload.afterStateDigest || '')
+      || !/^[a-f0-9]{64}$/.test(payload.receiptDigest || '') || typeof payload.reason !== 'string'
+      || !payload.reason.trim() || payload.reason.length > 300) throw new Error('AI 回复发送回执无效。');
+  const settings = await getSettings();
+  if (!settings.deviceToken) throw new Error('请先完成本机账号配对。');
+  return request(settings.backendUrl, '/api/local-connector/runtime/inbound-reply-send/receipt', {
+    method: 'POST', token: settings.deviceToken, body: payload, timeoutMs: 8_000,
+  });
+}
+
+async function recordSingleAccountAutoReplyResult(payload) {
+  if (!payload || !/^[a-f0-9]{64}$/.test(payload.chatDigest || '')
+      || !/^[a-f0-9]{64}$/.test(payload.messageDigest || '')
+      || !['SENT', 'SILENT', 'UNKNOWN'].includes(payload.outcome)
+      || typeof payload.reason !== 'string' || payload.reason.length > 300
+      || !Number.isFinite(Date.parse(payload.occurredAt))) throw new Error('持续自动回复结果无效。');
+  const key = `${payload.chatDigest}:${payload.messageDigest}`;
+  await updateSingleAccountProcessedMessage(key, payload.outcome);
+  const runtime = await getRuntime();
+  const previousFailures = Number(runtime.singleAccountConsecutiveFailures || 0);
+  const consecutiveFailures = nextConsecutiveFailureCount(previousFailures, payload.outcome);
+  const shouldStop = consecutiveFailures >= 3;
+  await setRuntime({
+    singleAccountAutoReplyEnabled: shouldStop ? false : runtime.singleAccountAutoReplyEnabled === true,
+    singleAccountConsecutiveFailures: consecutiveFailures,
+    singleAccountAutoReplyState: shouldStop ? `连续 ${consecutiveFailures} 次页面发送结果无法确认，已自动停止，请 HR 检查 BOSS 页面。`
+      : payload.outcome === 'SENT' ? `已发送：${payload.reason}`
+      : payload.outcome === 'SILENT' ? `已静默跳过：${payload.reason}` : `结果待人工确认：${payload.reason}`,
+    lastSingleAccountAutoReplyAt: payload.occurredAt,
+  });
+  return { ok: true, shouldStop, consecutiveFailures };
+}
+
+async function recordSingleAccountAutoReplyState(payload) {
+  if (!payload || typeof payload.state !== 'string' || !payload.state.trim() || payload.state.length > 300
+      || typeof payload.disable !== 'boolean' || !Number.isFinite(Date.parse(payload.observedAt))) {
+    throw new Error('持续自动回复状态无效。');
+  }
+  await setRuntime({
+    singleAccountAutoReplyEnabled: payload.disable ? false : (await getRuntime()).singleAccountAutoReplyEnabled === true,
+    singleAccountAutoReplyState: payload.state.trim(),
+    lastSingleAccountAutoReplyAt: payload.observedAt,
+  });
+  return { ok: true };
+}
+
+async function claimSingleAccountMessage(key) {
+  let outcome = 'CLAIMED';
+  await mutateRuntime((runtime) => {
+    if (runtime.singleAccountAutoReplyEnabled !== true) {
+      outcome = 'DISABLED';
+      return {};
+    }
+    if ((runtime.singleAccountProcessedMessages || []).some((item) => item.key === key)) {
+      outcome = 'DUPLICATE';
+      return {};
+    }
+    const entries = [...(runtime.singleAccountProcessedMessages || []), {
+      key, outcome: 'PROCESSING', at: new Date().toISOString(),
+    }];
+    return {
+      singleAccountProcessedMessages: compactProcessedMessages(entries),
+      singleAccountAutoReplyState: '正在判断未读消息是否与岗位相关…',
+    };
+  });
+  return outcome;
+}
+
+async function updateSingleAccountProcessedMessage(key, outcome) {
+  await mutateRuntime((runtime) => {
+    const entries = (runtime.singleAccountProcessedMessages || []).filter((item) => item.key !== key);
+    entries.push({ key, outcome, at: new Date().toISOString() });
+    return { singleAccountProcessedMessages: compactProcessedMessages(entries) };
+  });
+}
+
+async function attachSingleAccountTask(key, taskId, chatDigest, messageDigest) {
+  await mutateRuntime((runtime) => {
+    const entries = (runtime.singleAccountProcessedMessages || []).filter((item) => item.key !== key);
+    entries.push({ key, taskId, chatDigest, messageDigest, outcome: 'PROCESSING', at: new Date().toISOString() });
+    return { singleAccountProcessedMessages: compactProcessedMessages(entries) };
+  });
+}
+
+async function recordResumePreviewClickDiagnostic(payload) {
+  const diagnostic = validateControlDomDiagnostic(payload);
+  const previewCount = Math.max(0, (diagnostic.resumeCandidates?.length || 1) - 1);
+  const runtime = await getRuntime();
+  const currentResumeState = String(runtime.visibleResumeState || '');
+  const preserveResumeState = /正在加载 PDF|正在通过 BOSS|正在捕获真实 PDF|PDF 已安全读取|已导入|已完成 AI 分析|PDF 尚未导入|识别失败|导入失败/.test(currentResumeState);
+  await setRuntime({
+    controlDiagnostic: diagnostic,
+    controlDiagnosticState: previewCount > 0
+      ? `已自动记录预览按钮及 ${previewCount} 个预览层节点的脱敏 DOM。`
+      : '已自动记录本次“点击预览附件简历”的脱敏 DOM；正在等待预览层出现。',
+    lastControlDiagnosticAt: diagnostic.observedAt,
+    visibleResumeState: preserveResumeState ? currentResumeState : (previewCount > 0
+      ? `已捕获简历预览结构（${previewCount} 个节点），正在判断 PDF 读取方式。`
+      : '已捕获简历预览按钮，正在等待预览内容稳定后导入。'),
+    lastVisibleResumeAt: diagnostic.observedAt,
+  });
+  return { ok: true };
+}
+
+async function importVisibleResumePdf(payload) {
+  const settings = await getSettings();
+  if (!settings.deviceToken) throw new Error('请先完成浏览器桥接配对。');
+  if (!payload || payload.actionType !== 'VISIBLE_RESUME_PDF_CAPTURE'
+      || !/^[a-f0-9]{64}$/.test(payload.chatDigest || '')
+      || !/^[a-f0-9]{64}$/.test(payload.sourceEventDigest || '')
+      || !/^[a-f0-9]{64}$/.test(payload.fileDigest || '')
+      || !Number.isInteger(payload.fileSize) || payload.fileSize < 5 || payload.fileSize > 8 * 1024 * 1024
+      || typeof payload.fileBase64 !== 'string' || payload.fileBase64.length > 12_000_000) throw new Error('PDF 简历采集数据无效。');
+  const runtime = await getRuntime();
+  if (runtime.lastSelectedChatDigest !== payload.chatDigest || !runtime.lastSelectedObservationId)
+    throw new Error('当前 PDF 与最近稳定会话观测不一致，已停止导入。');
+  if (runtime.lastVisibleResumeEventDigest === payload.sourceEventDigest) return { ok: true, duplicate: true };
+  const binary = atob(payload.fileBase64);
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  if (String.fromCharCode(...bytes.slice(0, 5)) !== '%PDF-') throw new Error('PDF 文件头校验失败。');
+  await setRuntime({ visibleResumeState: 'PDF 已安全读取，正在导入并进行 AI 分析…', lastVisibleResumeAt: new Date().toISOString() });
+  const form = new FormData();
+  form.append('file', new Blob([bytes], { type: 'application/pdf' }), 'boss-resume.pdf');
+  const result = await requestMultipart(settings.backendUrl,
+    `/api/local-connector/runtime/resume-documents?observationId=${encodeURIComponent(runtime.lastSelectedObservationId)}&sourceEventDigest=${encodeURIComponent(payload.sourceEventDigest)}`,
+    settings.deviceToken, form, 120_000);
+  await setRuntime({
+    lastVisibleResumeEventDigest: payload.sourceEventDigest,
+    visibleResumeState: result?.analysisStatus === 'SUCCEEDED'
+      ? '当前 BOSS PDF 简历已完成 AI 分析，可在简历分析页查看。'
+      : `当前 BOSS PDF 简历已导入，处理状态：${result?.analysisStatus || result?.processingStatus || '处理中'}。`,
+    lastVisibleResumeAt: new Date().toISOString(),
+  });
+  return { ok: true };
+}
+
+async function recordVisibleResumeImportStatus(payload) {
+  if (!payload || !/^[a-f0-9]{64}$/.test(payload.chatDigest || '')
+      || typeof payload.state !== 'string' || !payload.state.trim() || payload.state.length > 220
+      || !Number.isFinite(Date.parse(payload.observedAt))) throw new Error('简历导入状态无效。');
+  const runtime = await getRuntime();
+  if (runtime.lastSelectedChatDigest && runtime.lastSelectedChatDigest !== payload.chatDigest)
+    throw new Error('简历导入状态与当前稳定会话不一致。');
+  await setRuntime({ visibleResumeState: payload.state.trim(), lastVisibleResumeAt: payload.observedAt });
+  return { ok: true };
+}
+
+async function fetchVisibleResumeFromMainWorld(tabId, payload) {
+  if (!payload || !/^[a-f0-9]{64}$/.test(payload.chatDigest || '')) throw new Error('当前会话摘要无效。');
+  const runtime = await getRuntime();
+  if (runtime.lastSelectedChatDigest !== payload.chatDigest || !runtime.lastSelectedObservationId)
+    throw new Error('当前会话尚未完成稳定复核。');
+  await setRuntime({ visibleResumeState: '正在通过 BOSS 页面登录上下文安全读取 PDF…', lastVisibleResumeAt: new Date().toISOString() });
+  const execution = chrome.scripting.executeScript({
+    target: { tabId, allFrames: true }, world: 'MAIN',
+    func: async () => {
+      const MAX_BYTES = 8 * 1024 * 1024;
+      const sources = [];
+      const frame = document.querySelector('iframe.attachment-iframe, .attachment-view iframe');
+      if (frame?.src) {
+        sources.push(frame.src);
+        try {
+          const viewerUrl = new URL(frame.src, location.href);
+          for (const key of ['file', 'url', 'src', 'downloadUrl']) {
+            const nested = viewerUrl.searchParams.get(key);
+            if (nested && /^(?:blob:|https?:)/i.test(nested)) sources.push(nested);
+          }
+        } catch { /* iframe 地址可能是 blob。 */ }
+      }
+      for (const control of document.querySelectorAll('.attachment-resume-btns a[href], .attachment-resume-btns [data-url], .attachment-resume-btns [data-src], a[download][href]')) {
+        const source = control.href || control.getAttribute('data-url') || control.getAttribute('data-src');
+        if (source && /^(?:blob:|https?:)/i.test(source)) sources.push(source);
+      }
+      for (const entry of performance.getEntriesByType('resource').slice(-120)) {
+        if (/(pdf|resume|attachment|download)/i.test(entry.name || '')) sources.push(entry.name);
+      }
+      if (document.contentType === 'application/pdf' || location.protocol === 'blob:') sources.push(location.href);
+      for (const source of [...new Set(sources)]) {
+        try {
+          const response = await fetch(source, { credentials: 'include', signal: AbortSignal.timeout(8_000) });
+          if (!response.ok) continue;
+          const declared = Number(response.headers.get('content-length') || 0);
+          if (declared > MAX_BYTES) return { ok: false, error: 'PDF 文件超过 8MB 限制。' };
+          const bytes = new Uint8Array(await response.arrayBuffer());
+          if (bytes.length < 5 || bytes.length > MAX_BYTES || String.fromCharCode(...bytes.slice(0, 5)) !== '%PDF-') continue;
+          let binary = '';
+          for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+          return { ok: true, fileBase64: btoa(binary), fileSize: bytes.length };
+        } catch { /* 尝试下一可访问 frame。 */ }
+      }
+      return { ok: false, error: '预览 frame 中没有可直接读取的 PDF；请点击预览器内的“下载”按钮触发文件捕获。' };
+    },
+  });
+  const injections = await Promise.race([
+    execution,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('页面 PDF 读取超过 15 秒，已停止本次尝试。')), 15_000)),
+  ]);
+  const captured = injections.map((entry) => entry.result).find((result) => result?.ok && result.fileBase64);
+  if (!captured) throw new Error(injections.map((entry) => entry.result?.error).find(Boolean) || '页面主环境未返回 PDF 数据。');
+  const fileDigest = await digestText(captured.fileBase64);
+  const sourceEventDigest = await digestText(`${payload.chatDigest}|${runtime.lastSelectedMessageDigest || ''}|${fileDigest}`);
+  await importVisibleResumePdf({ actionType: 'VISIBLE_RESUME_PDF_CAPTURE', chatDigest: payload.chatDigest,
+    sourceEventDigest, fileDigest, fileBase64: captured.fileBase64, fileSize: captured.fileSize });
+  return { ok: true };
 }
 
 async function inspectCurrentControls() {
@@ -128,10 +567,36 @@ async function inspectCurrentControls() {
   return diagnostic;
 }
 
+async function recognizeCurrentResume() {
+  const settings = await getSettings();
+  if (!settings.deviceToken) throw new Error('请先完成本机账号配对。');
+  if (settings.enabled === false) throw new Error('浏览器桥接已暂停。');
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id || !/(^|\.)zhipin\.com$/i.test(safeHostname(tab.url))
+      || !/\/web\/chat\/(?:index|user-center)(?:[/?#]|$)/i.test(tab.url || '')) {
+    throw new Error('请先打开 BOSS 沟通页并选中包含 PDF 简历的会话。');
+  }
+  await setRuntime({ visibleResumeState: '正在识别当前会话中的 PDF 简历并尝试安全导入…' });
+  const response = await sendToBossTab(tab.id, { type: 'BRIDGE_COLLECT' });
+  if (!response?.ok) {
+    const reason = response?.error || '当前会话采集失败。';
+    await setRuntime({ visibleResumeState: `识别失败：${reason}`, lastVisibleResumeAt: new Date().toISOString() });
+    throw new Error(reason);
+  }
+  const runtime = await getRuntime();
+  const state = String(runtime.visibleResumeState || '');
+  if (!state || state.startsWith('正在识别')) {
+    const reason = runtime.detailState || '当前会话没有识别到可预览的 PDF 简历附件。';
+    await setRuntime({ visibleResumeState: `识别未完成：${reason}`, lastVisibleResumeAt: new Date().toISOString() });
+    throw new Error(reason);
+  }
+  return { state, completedAt: runtime.lastVisibleResumeAt || new Date().toISOString() };
+}
+
 async function testCurrentActionEntry(action) {
   const settings = await getSettings();
   const runtime = await getRuntime();
-  const labels = { REQUEST_RESUME: '求简历', EXCHANGE_PHONE: '换电话', EXCHANGE_WECHAT: '换微信', INTERVIEW: '约面试' };
+  const labels = { REQUEST_RESUME: '求简历', EXCHANGE_PHONE: '查看电话', EXCHANGE_WECHAT: '换微信', INTERVIEW: '查看面试' };
   if (!labels[action]) throw new Error('不支持的操作入口测试。');
   if (!settings.deviceToken) throw new Error('请先完成本机账号配对。');
   if (settings.enabled === false) throw new Error('浏览器桥接已暂停。');
@@ -272,6 +737,7 @@ async function armCurrentAutoReplyTest() {
   if (settings.enabled === false) throw new Error('浏览器桥接已暂停。');
   const runtime = await getRuntime();
   if (runtime.autoReplyTestArmed === true) throw new Error('当前已有一轮触发测试处于等待状态。');
+  if (runtime.singleAccountAutoReplyEnabled === true) throw new Error('请先停止单账号持续自动回复，再开启单会话触发测试。');
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id || !/(^|\.)zhipin\.com$/i.test(safeHostname(tab.url)) || !/\/web\/chat\/(?:index|user-center)(?:[/?#]|$)/i.test(tab.url || '')) throw new Error('当前活动标签不是 BOSS 沟通页。');
   const response = await sendToBossTab(tab.id, { type: 'BRIDGE_ARM_CURRENT_AUTO_REPLY_TEST' });
@@ -310,7 +776,7 @@ async function recordAutoReplyTestResult(payload) {
   const runtime = await getRuntime();
   if (payload?.actionType !== 'CURRENT_AUTO_REPLY_TEST_RESULT' || !['SUCCEEDED', 'UNKNOWN', 'BLOCKED', 'CANCELLED', 'EXPIRED'].includes(payload.outcome) || payload.retryTriggered !== false || !String(payload.reason || '').trim() || !Number.isFinite(Date.parse(payload.occurredAt))) throw new Error('触发测试结果无效。');
   if (runtime.autoReplyTestChatDigest && payload.chatDigest && runtime.autoReplyTestChatDigest !== payload.chatDigest) throw new Error('触发测试结果与已武装会话不一致。');
-  const state = payload.outcome === 'SUCCEEDED' ? '触发成功：确认当前会话最后一条消息来自候选人，并自动发送了一次固定测试草稿。'
+  const state = payload.outcome === 'SUCCEEDED' ? '触发成功：消息已通过岗位相关性识别，并自动发送了一次受限岗位事实回复。'
     : payload.outcome === 'UNKNOWN' ? '已点击一次发送，但结果无法确认；本轮已停止且不会重试。'
     : String(payload.reason).slice(0, 300);
   await setRuntime({ autoReplyTestArmed: false, autoReplyTestChatDigest: null, autoReplyTestExpiresAt: null, autoReplyTestOutcome: payload.outcome, autoReplyTestReason: String(payload.reason).slice(0, 300), autoReplyTestState: state, lastAutoReplyTestAt: payload.occurredAt });
@@ -380,6 +846,23 @@ async function collectJobsFromBestTab() {
   }
 }
 
+async function collectJobsFromOpenTabIfAvailable() {
+  const settings = await getSettings();
+  if (!settings.deviceToken || settings.enabled === false) return { ok: true, skipped: true };
+  const tabs = await chrome.tabs.query({ url: BOSS_TAB_PATTERNS });
+  const tab = tabs.find((item) => item.active && isJobManagementUrl(item.url)) || tabs.find((item) => isJobManagementUrl(item.url));
+  if (!tab?.id) return { ok: true, skipped: true };
+  try {
+    const response = await collectJobsFromAllFrames(tab.id);
+    if (!response?.ok) throw new Error(response?.error || '职位页面脚本未连接。');
+    return response;
+  } catch (error) {
+    const reason = `职位自动同步暂未完成：${safeError(error)}；保留上一次成功数据，稍后自动重试。`;
+    await setRuntime({ jobState: reason, lastJobAutoSyncAttemptAt: new Date().toISOString() });
+    return { ok: false, error: reason };
+  }
+}
+
 async function collectJobsFromAllFrames(tabId) {
   const injected = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: ['src/content.js'] });
   const frameIds = [...new Set(injected.map((item) => item.frameId))].sort((a, b) => a - b);
@@ -433,7 +916,7 @@ async function pair(payload) {
   };
   await chrome.storage.local.set({ [SETTINGS_KEY]: settings });
   await setRuntime({ state: 'PAIRED', reason: '已配对，等待 BOSS 沟通页的稳定只读快照。' });
-  void collectFromBestTab();
+  void runObservationCycle();
   return { ok: true, status: await getPublicStatus() };
 }
 
@@ -442,11 +925,42 @@ async function setEnabled(enabled) {
   await chrome.storage.local.set({ [SETTINGS_KEY]: { ...settings, enabled } });
   if (!enabled) {
     await sendHeartbeatIfPaired({ ...settings, enabled }, 'PAUSED', '已由 HR 暂停只读桥接。', (await getRuntime()).pageContext);
-    await setRuntime({ state: 'PAUSED', reason: '已由 HR 暂停只读桥接。' });
+    await setRuntime({ state: 'PAUSED', reason: '已由 HR 暂停只读桥接。', singleAccountAutoReplyEnabled: false, singleAccountAutoReplyState: '页面观测已暂停，持续自动回复同步停止。' });
+    const tabs = await chrome.tabs.query({ url: BOSS_TAB_PATTERNS });
+    await Promise.all(tabs.filter((tab) => tab.id && /\/web\/chat\/(?:index|user-center)(?:[/?#]|$)/i.test(tab.url || ''))
+      .map((tab) => sendToBossTab(tab.id, { type: 'BRIDGE_SET_SINGLE_ACCOUNT_AUTO_REPLY', enabled: false }).catch(() => null)));
   } else {
     await setRuntime({ state: 'IDLE', reason: '已恢复只读桥接，等待下一次检测。' });
-    void collectFromBestTab();
+    void runObservationCycle();
   }
+  return { ok: true, status: await getPublicStatus() };
+}
+
+async function setSingleAccountAutoReply(enabled) {
+  const settings = await getSettings();
+  if (!settings.deviceToken) throw new Error('请先完成本机账号配对。');
+  if (settings.enabled === false) throw new Error('请先开启页面观测。');
+  if (enabled && (await getRuntime()).autoReplyTestArmed === true) throw new Error('请先取消当前单会话一次触发测试。');
+  const tabs = await chrome.tabs.query({ url: BOSS_TAB_PATTERNS });
+  const chatTabs = tabs.filter((item) => item.id && /\/web\/chat\/(?:index|user-center)(?:[/?#]|$)/i.test(item.url || ''));
+  if (enabled && chatTabs.length === 0) throw new Error('请先打开当前配对账号的 BOSS 沟通页。');
+  if (enabled && chatTabs.length > 1) throw new Error('检测到多个 BOSS 沟通页。单账号模式只允许保留一个沟通页后再开启。');
+  await setRuntime({
+    singleAccountAutoReplyEnabled: enabled,
+    ...(enabled ? {} : { singleAccountUnreadBaseline: [], singleAccountSelectedMessageBaseline: [] }),
+    singleAccountConsecutiveFailures: enabled ? 0 : Number((await getRuntime()).singleAccountConsecutiveFailures || 0),
+    singleAccountAutoReplyState: enabled
+      ? `正在监测“${settings.accountName || '当前配对账号'}”的未读消息。`
+      : '已由 HR 停止；不会再选择会话或发送消息。',
+    lastSingleAccountAutoReplyAt: new Date().toISOString(),
+  });
+  const responses = await Promise.all(chatTabs.map((tab) => sendToBossTab(tab.id, { type: 'BRIDGE_SET_SINGLE_ACCOUNT_AUTO_REPLY', enabled }).catch((error) => ({ ok: false, error: safeError(error) }))));
+  const response = responses[0] || { ok: true };
+  if (enabled && !response?.ok) {
+    await setRuntime({ singleAccountAutoReplyEnabled: false, singleAccountAutoReplyState: `未能启动：${response?.error || 'BOSS 页面脚本未连接。'}` });
+    throw new Error(response?.error || 'BOSS 页面脚本未连接。');
+  }
+  if (enabled) await setRuntime({ singleAccountAutoReplyState: `运行中：已将当前列表的 ${Number(response.initialUnreadCount || 0)} 条未读纳入队列，并持续监测新来信。` });
   return { ok: true, status: await getPublicStatus() };
 }
 
@@ -471,9 +985,86 @@ async function collectFromBestTab() {
   try {
     const response = await sendToBossTab(tab.id, { type: 'BRIDGE_COLLECT' });
     if (!response?.ok) throw new Error(response?.error || '页面脚本未连接。');
+    const runtime = await getRuntime();
+    await sendToBossTab(tab.id, { type: 'BRIDGE_SET_SINGLE_ACCOUNT_AUTO_REPLY', enabled: runtime.singleAccountAutoReplyEnabled === true, restore: true });
   } catch {
     await sendHeartbeatIfPaired(settings, 'PAUSED', 'BOSS 页面脚本尚未就绪，请手动刷新该页面。', 'CHAT');
     await setRuntime({ state: 'PAUSED', reason: 'BOSS 页面脚本尚未就绪，请手动刷新该页面。', pageContext: 'CHAT' });
+  }
+}
+
+async function runObservationCycle() {
+  await collectJobsFromOpenTabIfAvailable();
+  await collectFromBestTab();
+  await executeReadyAction().catch((error) => setRuntime({
+    productionActionState: `完整周期动作未执行：${safeError(error)}`,
+    lastProductionActionAt: new Date().toISOString(),
+  }));
+}
+
+async function executeReadyAction() {
+  if (actionExecutionInFlight) return actionExecutionInFlight;
+  actionExecutionInFlight = doExecuteReadyAction().finally(() => { actionExecutionInFlight = null; });
+  return actionExecutionInFlight;
+}
+
+async function doExecuteReadyAction() {
+  const settings = await getSettings();
+  if (!settings.deviceToken || settings.enabled === false) return;
+  if ((await getRuntime()).singleAccountAutoReplyEnabled === true) return;
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id || !/(^|\.)zhipin\.com$/i.test(safeHostname(tab.url)) || !/\/web\/chat\/(?:index|user-center)(?:[/?#]|$)/i.test(tab.url || '')) return;
+  const prepared = await sendToBossTab(tab.id, { type: 'BRIDGE_PREPARE_ACTION_LEASE' });
+  if (!prepared?.ok) return;
+  const context = prepared.context;
+  if (!/^[a-f0-9]{64}$/.test(context?.targetDigest || '')
+      || !/^[a-f0-9]{64}$/.test(context.messageDigest || '')
+      || !['INBOUND', 'OUTBOUND'].includes(context.direction) || context.stableCycles !== 3 || !Number.isFinite(Date.parse(context.observedAt))) {
+    throw new Error('当前会话的完整周期动作准备证据无效。');
+  }
+  let lease = null;
+  for (const actionType of ['SEND_MESSAGE', 'REQUEST_RESUME', 'EXCHANGE_WECHAT', 'EXCHANGE_PHONE']) {
+    const candidate = await request(settings.backendUrl, '/api/local-connector/runtime/action-leases/claim', {
+      method: 'POST', token: settings.deviceToken, body: { actionType, targetDigest: context.targetDigest },
+    });
+    if (candidate?.available) { lease = candidate; break; }
+  }
+  if (!lease?.available) return;
+  if (!['SEND_MESSAGE', 'REQUEST_RESUME', 'EXCHANGE_WECHAT', 'EXCHANGE_PHONE'].includes(lease.actionType) || lease.targetDigest !== context.targetDigest || !lease.leaseToken
+      || !Number.isFinite(Date.parse(lease.leaseUntil)) || Date.parse(lease.leaseUntil) <= Date.now() || !isSupportedActionLeaseMode(lease.mode)) {
+    throw new Error('后端返回的页面动作租约无效。');
+  }
+  let result;
+  try {
+    const response = await sendToBossTab(tab.id, { type: 'BRIDGE_EXECUTE_ACTION_LEASE', lease: {
+      actionType: lease.actionType, targetDigest: lease.targetDigest, leaseUntil: lease.leaseUntil,
+      payload: lease.payload,
+    } });
+    if (!response?.ok) {
+      const reason = String(response?.error || '页面在点击前拒绝了索要简历租约。').slice(0, 240);
+      const beforeStateDigest = await digestText(`${lease.leaseId}|${lease.actionType}|PRECLICK`);
+      const afterStateDigest = await digestText(`${lease.leaseId}|${lease.actionType}|FAILED|${reason}`);
+      result = { outcome: 'FAILED', beforeStateDigest, afterStateDigest,
+        receiptDigest: await digestText(`${beforeStateDigest}|${afterStateDigest}|FAILED`), reason };
+    } else {
+      result = validateActionLeaseExecutionResult(response.result, lease.targetDigest, lease.actionType);
+    }
+  } catch (error) {
+    const reason = `页面执行通信中断，无法证明是否已点击；已停止且不会重试。${safeError(error)}`.slice(0, 240);
+    const beforeStateDigest = await digestText(`${lease.leaseId}|${lease.actionType}|UNKNOWN-BEFORE`);
+    const afterStateDigest = await digestText(`${lease.leaseId}|${lease.actionType}|UNKNOWN-AFTER`);
+    result = { outcome: 'UNKNOWN', beforeStateDigest, afterStateDigest,
+      receiptDigest: await digestText(`${beforeStateDigest}|${afterStateDigest}|UNKNOWN`), reason };
+  }
+  await request(settings.backendUrl, '/api/local-connector/runtime/action-leases/receipt', {
+    method: 'POST', token: settings.deviceToken, body: { leaseToken: lease.leaseToken, outcome: result.outcome,
+      beforeStateDigest: result.beforeStateDigest, afterStateDigest: result.afterStateDigest,
+      receiptDigest: result.receiptDigest, reason: result.reason },
+  });
+  await setRuntime({ productionActionState: result.reason, productionActionOutcome: result.outcome,
+    lastProductionActionAt: new Date().toISOString() });
+  if (result.outcome === 'UNKNOWN') {
+    await sendHeartbeatIfPaired(settings, 'OFFLINE', `${lease.actionType} 页面结果无法确认，已冻结当前账号自动动作。`, 'CHAT');
   }
 }
 
@@ -503,9 +1094,10 @@ async function doSubmitJobSnapshot(settings, payload) {
   const now = Date.now();
   if (runtime.lastJobSignature === signature && now - Number(runtime.lastJobSubmittedAt || 0) < MIN_SYNC_INTERVAL_MS) return { ok: true, skipped: true };
   const sync = await request(settings.backendUrl, '/api/local-connector/runtime/job-observations', {
-    method: 'POST', token: settings.deviceToken, body: { entries: payload.entries, observedAt: payload.observedAt },
+    method: 'POST', token: settings.deviceToken, body: { entries: payload.entries, observedAt: payload.observedAt, scope: payload.scope, authoritative: payload.authoritative },
   });
-  const jobState = `职位页同步完成：识别 ${sync.received} 个，新增 ${sync.created} 个，更新 ${sync.updated} 个，重复或无需变更 ${sync.unchanged} 个。`;
+  const lifecycle = [sync.automaticallyClosed ? `自动关闭 ${sync.automaticallyClosed} 个` : '', sync.reopenedForReview ? `恢复待核对 ${sync.reopenedForReview} 个` : ''].filter(Boolean).join('，');
+  const jobState = `职位页同步完成：识别 ${sync.received} 个，新增 ${sync.created} 个，更新 ${sync.updated} 个，重复或无需变更 ${sync.unchanged} 个${lifecycle ? `，${lifecycle}` : ''}。`;
   const pageContext = payload.entries.some((entry) => entry.completeness > 5) ? 'JOB_DETAIL' : 'JOB_LIST';
   await sendHeartbeatIfPaired(settings, 'RUNNING', jobState, pageContext);
   await setRuntime({ jobState, jobTotal: sync.received, lastJobSyncAt: new Date().toISOString(), lastJobSignature: signature, lastJobSubmittedAt: now, pageContext });
@@ -516,7 +1108,9 @@ async function doSubmitSnapshot(settings, payload) {
   const runtime = await getRuntime();
   const signature = snapshotSignature(payload);
   const now = Date.now();
-  if (runtime.lastSignature === signature && now - Number(runtime.lastSubmittedAt || 0) < MIN_SYNC_INTERVAL_MS) {
+  const resumeAwaitingImport = payload.selected?.conversationSignals?.resumeReceived === true
+    && !String(runtime.visibleResumeState || '').includes('已完成 AI 分析');
+  if (!resumeAwaitingImport && runtime.lastSignature === signature && now - Number(runtime.lastSubmittedAt || 0) < MIN_SYNC_INTERVAL_MS) {
     return { ok: true, skipped: true };
   }
   const sync = await request(settings.backendUrl, '/api/local-connector/runtime/unread-observations', {
@@ -525,10 +1119,30 @@ async function doSubmitSnapshot(settings, payload) {
   let detailState = payload.detailStatus?.reason || '尚未复核当前会话详情。';
   if (payload.selected) {
     try {
-      await request(settings.backendUrl, '/api/local-connector/runtime/selected-conversation', {
+      const observation = await request(settings.backendUrl, '/api/local-connector/runtime/selected-conversation', {
         method: 'POST', token: settings.deviceToken, body: payload.selected,
       });
-      detailState = '当前会话详情已稳定复核并安全入库。';
+      await setRuntime({ lastSelectedObservationId: observation.id, lastSelectedChatDigest: payload.selected.chatDigest,
+        lastSelectedMessageDigest: payload.selected.messageDigest });
+      const stageLabel = { UNKNOWN: '阶段待识别', INITIAL_CONTACT: '首次联系', AWAITING_REPLY: '等待求职者回复', CAN_REQUEST_RESUME: '可索要简历', RESUME_REQUESTED: '已索要简历', RESUME_RECEIVED: '简历已到达', RESUME_APPROVED: '简历已通过复核', CAN_EXCHANGE_CONTACT: '可交换联系方式', CONTACT_EXCHANGED: '联系方式已交换', CAN_SCHEDULE_INTERVIEW: '等待人工约面', INTERVIEW_SCHEDULED: '面试已确认' }[observation?.conversationStage] || '阶段待识别';
+      detailState = `当前会话详情已稳定复核：${stageLabel}。`;
+      if (observation?.conversationSignals?.resumeReceived === true) {
+        try {
+          await ingestVisibleResumeFromCurrentTab(settings, observation, payload.selected.chatDigest);
+        } catch (textError) {
+          const tabs = await chrome.tabs.query({ url: BOSS_TAB_PATTERNS });
+          const tab = tabs.find((item) => /\/web\/chat\/(?:index|user-center)(?:[/?#]|$)/i.test(item.url || ''));
+          try {
+            if (!tab?.id) throw new Error('没有找到已打开的 BOSS 沟通页。');
+            await fetchVisibleResumeFromMainWorld(tab.id, { chatDigest: payload.selected.chatDigest });
+          } catch (pdfError) {
+            await setRuntime({
+              visibleResumeState: `PDF 尚未导入：${safeError(pdfError)}（在线文本分支：${safeError(textError)}）`.slice(0, 300),
+              lastVisibleResumeAt: new Date().toISOString(),
+            });
+          }
+        }
+      }
     } catch (error) {
       detailState = `详情暂未入库：${safeError(error)}`;
     }
@@ -539,6 +1153,36 @@ async function doSubmitSnapshot(settings, payload) {
   await sendHeartbeatIfPaired(settings, 'RUNNING', reason, 'CHAT');
   await setRuntime({ state: 'RUNNING', reason, detailState, lastSyncAt: new Date().toISOString(), total: payload.entries.length, currentUnread, trackedUnread, lastSignature: signature, lastSubmittedAt: now, pageContext: 'CHAT' });
   return { ok: true };
+}
+
+async function ingestVisibleResumeFromCurrentTab(settings, observation, expectedChatDigest) {
+  const runtime = await getRuntime();
+  const tabs = await chrome.tabs.query({ url: BOSS_TAB_PATTERNS });
+  const tab = tabs.find((item) => /\/web\/chat\/(?:index|user-center)(?:[/?#]|$)/i.test(item.url || ''));
+  if (!tab?.id) throw new Error('在线简历已识别，但没有找到已打开的 BOSS 沟通页。');
+  let response = await sendToBossTab(tab.id, { type: 'BRIDGE_COLLECT_VISIBLE_RESUME' });
+  if (!response?.ok) {
+    const opened = await sendToBossTab(tab.id, { type: 'BRIDGE_OPEN_VISIBLE_RESUME', expectedChatDigest });
+    if (!opened?.ok) throw new Error(opened?.error || response?.error || '在线简历入口尚未稳定呈现。');
+    response = await sendToBossTab(tab.id, { type: 'BRIDGE_COLLECT_VISIBLE_RESUME' });
+  }
+  if (!response?.ok) throw new Error(response?.error || '在线简历正文尚未稳定呈现。');
+  const capture = validateVisibleResumeTextCapture(response.resume, expectedChatDigest);
+  if (runtime.lastVisibleResumeEventDigest === capture.sourceEventDigest) return;
+  const result = await request(settings.backendUrl, '/api/local-connector/runtime/visible-resume-text', {
+    method: 'POST', token: settings.deviceToken, body: {
+      observationId: observation.id,
+      sourceEventDigest: capture.sourceEventDigest,
+      resumeText: capture.resumeText,
+    }, timeoutMs: 120_000,
+  });
+  await setRuntime({
+    lastVisibleResumeEventDigest: capture.sourceEventDigest,
+    visibleResumeState: result?.analysisStatus === 'SUCCEEDED'
+      ? '当前 BOSS 在线简历已完成 AI 分析，可在简历分析页查看。'
+      : `当前 BOSS 在线简历已接收，处理状态：${result?.analysisStatus || result?.processingStatus || '处理中'}。`,
+    lastVisibleResumeAt: new Date().toISOString(),
+  });
 }
 
 async function reportBlocked(payload) {
@@ -564,7 +1208,7 @@ async function request(backendUrl, path, options) {
       method: options.method,
       headers: { 'Content-Type': 'application/json', ...(options.token ? { Authorization: `Device ${options.token}` } : {}) },
       body: options.body ? JSON.stringify(options.body) : undefined,
-      signal: AbortSignal.timeout(8_000),
+      signal: AbortSignal.timeout(options.timeoutMs || 8_000),
     });
   } catch (error) {
     throw new Error(`无法连接本机招聘值守台：${safeError(error)}`);
@@ -572,6 +1216,19 @@ async function request(backendUrl, path, options) {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body?.message || `本地服务返回 HTTP ${response.status}`);
   return body;
+}
+
+async function requestMultipart(backendUrl, path, token, body, timeoutMs) {
+  let response;
+  try {
+    response = await fetch(`${validateBackendUrl(backendUrl)}${path}`, {
+      method: 'POST', headers: { Authorization: `Device ${token}` }, body,
+      signal: AbortSignal.timeout(timeoutMs || 120_000),
+    });
+  } catch (error) { throw new Error(`无法连接本机招聘值守台：${safeError(error)}`); }
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result?.message || `本地服务返回 HTTP ${response.status}`);
+  return result;
 }
 
 async function sendHeartbeatIfPaired(settings, state, reason, pageContext = 'NO_BOSS_PAGE') {
@@ -592,7 +1249,24 @@ async function getRuntime() {
 }
 
 async function setRuntime(patch) {
-  await chrome.storage.local.set({ [RUNTIME_KEY]: { ...(await getRuntime()), ...patch } });
+  return mutateRuntime(() => patch);
+}
+
+async function mutateRuntime(createPatch) {
+  const previous = runtimeMutationTail;
+  let release;
+  runtimeMutationTail = new Promise((resolve) => { release = resolve; });
+  await previous;
+  try {
+    const current = await getRuntime();
+    const patch = await createPatch(current);
+    if (patch && Object.keys(patch).length > 0) {
+      await chrome.storage.local.set({ [RUNTIME_KEY]: { ...current, ...patch } });
+    }
+    return patch;
+  } finally {
+    release();
+  }
 }
 
 async function getPublicStatus() {
