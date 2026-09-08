@@ -10,7 +10,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 16px 24px;
-  margin-bottom: 24px;
+  margin-bottom: 16px;
 }
 .page-heading :deep(h1) {
   margin: 0 0 8px;

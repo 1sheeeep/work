@@ -14,5 +14,6 @@ class LocalConnectorActionLeaseTest {
     @Test void rejectsSuccessWithoutObservableStateChange(){LocalConnectorActionLease lease=new LocalConnectorActionLease(task("READY"),mock(BrowserDevice.class),"a".repeat(64),now);assertThatThrownBy(()->lease.receipt("SUCCEEDED","b".repeat(64),"b".repeat(64),"c".repeat(64),"无变化",now.plusSeconds(5))).hasMessage("成功回执必须包含可验证的页面状态变化");}
     @Test void expiresToUnknownAndNeverReturnsToReady(){LocalConnectorActionTask task=task("READY");LocalConnectorActionLease lease=new LocalConnectorActionLease(task,mock(BrowserDevice.class),"a".repeat(64),now);lease.expire(now.plusSeconds(31));assertThat(lease.getStatus()).isEqualTo("EXPIRED");assertThat(task.getStatus()).isEqualTo("UNKNOWN");}
     @Test void refusesToLeaseAnUnapprovedTask(){assertThatThrownBy(()->new LocalConnectorActionLease(task("WAITING_MANUAL_TEST"),mock(BrowserDevice.class),"a".repeat(64),now)).hasMessage("动作任务尚未批准执行");}
+    @Test void cancelsAnUnleasedTaskWhenTheObservedStageHasAdvanced(){LocalConnectorActionTask task=task("READY");task.cancelIfPending("简历已交换",now);assertThat(task.getStatus()).isEqualTo("CANCELLED");assertThat(task.getReason()).isEqualTo("简历已交换");}
     private LocalConnectorActionTask task(String status){return new LocalConnectorActionTask(mock(BossAccount.class),null,"SEND_MESSAGE",status,mock(SystemUser.class),"测试");}
 }

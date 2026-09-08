@@ -1,4 +1,4 @@
-const elements = Object.fromEntries(['stateBadge','summary','pairForm','accountName','totalCount','currentUnreadCount','trackedUnreadCount','reason','continuousReplyState','continuousReplyBadge','startContinuousReply','stopContinuousReply','lastContinuousReply','detailState','lastSync','jobState','lastJobSync','collectJobs','readinessState','lastReadiness','checkReadiness','controlDiagnosticState','lastControlDiagnostic','inspectControls','controlDiagnosticReport','copyControlDiagnostic','visibleResumeState','lastVisibleResume','recognizeCurrentResume','resumeStageBadge','resumeStepDetected','resumeStepImported','resumeStepAnalyzing','resumeStepCompleted','resumeRecovery','pluginVersion','actionTestState','lastActionTest','testRequestResume','testExchangePhone','testExchangeWechat','testInterview','exchangeConfirmState','lastExchangeConfirm','confirmExchangePhone','confirmExchangeWechat','productionActionState','lastProductionAction','draftTestState','lastDraftTest','fillTestDraft','sendTestState','lastSendTest','prepareCurrentSendTest','sendCurrentTestDraft','autoReplyTestResult','autoReplyTestState','autoReplyTestExpiry','autoReplyDiagnosticState','lastAutoReplyDiagnostic','diagnoseCurrentAutoReply','armCurrentAutoReplyTest','cancelCurrentAutoReplyTest','approvedDraftFillState','lastApprovedDraftFill','fillApprovedDraft','enabled','collect','forget','message','deviceName','pairingToken','pageContext','openConsole'].map((id) => [id, document.getElementById(id)]));
+const elements = Object.fromEntries(['stateBadge','summary','pairForm','accountName','totalCount','currentUnreadCount','trackedUnreadCount','reason','continuousReplyState','continuousReplyBadge','lastContinuousReply','detailState','lastSync','jobState','lastJobSync','collectJobs','readinessState','lastReadiness','checkReadiness','controlDiagnosticState','lastControlDiagnostic','inspectControls','controlDiagnosticReport','copyControlDiagnostic','visibleResumeState','lastVisibleResume','recognizeCurrentResume','resumeStageBadge','resumeStepDetected','resumeStepImported','resumeStepAnalyzing','resumeStepCompleted','resumeRecovery','pluginVersion','actionTestState','lastActionTest','testRequestResume','testExchangePhone','testExchangeWechat','testInterview','exchangeConfirmState','lastExchangeConfirm','confirmExchangePhone','confirmExchangeWechat','productionActionState','lastProductionAction','draftTestState','lastDraftTest','fillTestDraft','sendTestState','lastSendTest','prepareCurrentSendTest','sendCurrentTestDraft','autoReplyTestResult','autoReplyTestState','autoReplyTestExpiry','autoReplyDiagnosticState','lastAutoReplyDiagnostic','diagnoseCurrentAutoReply','armCurrentAutoReplyTest','cancelCurrentAutoReplyTest','approvedDraftFillState','lastApprovedDraftFill','fillApprovedDraft','enabled','collect','forget','message','deviceName','pairingToken','pageContext','openConsole'].map((id) => [id, document.getElementById(id)]));
 
 elements.pluginVersion.textContent = chrome.runtime.getManifest().version;
 
@@ -13,18 +13,6 @@ elements.pairForm.addEventListener('submit', async (event) => {
   });
 });
 elements.enabled.addEventListener('change', () => void act({ type: 'BRIDGE_SET_ENABLED', enabled: elements.enabled.checked }));
-elements.startContinuousReply.addEventListener('click', () => void busy(elements.startContinuousReply, async () => {
-  const confirmed = window.confirm(`确定为当前配对账号“${elements.accountName.textContent || '-'}”开启全未读自动回复吗？\n\n扩展会从当前列表开始遍历全部未读会话，并持续处理后续新来信。只有末条来自求职者、未约面且通过岗位事实校验时才真实发送；消息无法撤回。`);
-  if (!confirmed) { show('已取消，持续自动回复未开启。'); return; }
-  const result = await send({ type: 'BRIDGE_SET_SINGLE_ACCOUNT_AUTO_REPLY', enabled: true });
-  if (!result.ok) throw new Error(result.error);
-  render(result.status); show(result.status.singleAccountAutoReplyState);
-}, '开启中…'));
-elements.stopContinuousReply.addEventListener('click', () => void busy(elements.stopContinuousReply, async () => {
-  const result = await send({ type: 'BRIDGE_SET_SINGLE_ACCOUNT_AUTO_REPLY', enabled: false });
-  if (!result.ok) throw new Error(result.error);
-  render(result.status); show('当前账号的全未读自动回复已停止。');
-}, '停止中…'));
 elements.collect.addEventListener('click', () => void busy(elements.collect, async () => { const result = await send({ type: 'BRIDGE_COLLECT_NOW' }); if (!result.ok) throw new Error(result.error); render(result.status); }));
 elements.collectJobs.addEventListener('click', () => void busy(elements.collectJobs, async () => {
   show('正在读取当前职位页并进行稳定性校验，请稍候…');
@@ -149,8 +137,6 @@ function render(status) {
   elements.continuousReplyState.textContent = status.singleAccountAutoReplyState;
   elements.continuousReplyBadge.textContent = status.singleAccountAutoReplyEnabled ? '运行中' : '已停止';
   elements.continuousReplyBadge.className = `badge ${status.singleAccountAutoReplyEnabled ? 'running' : 'paused'}`;
-  elements.startContinuousReply.dataset.locked = status.singleAccountAutoReplyEnabled ? 'true' : 'false'; elements.startContinuousReply.disabled = status.singleAccountAutoReplyEnabled === true;
-  elements.stopContinuousReply.dataset.locked = status.singleAccountAutoReplyEnabled ? 'false' : 'true'; elements.stopContinuousReply.disabled = status.singleAccountAutoReplyEnabled !== true;
   elements.lastContinuousReply.textContent = status.lastSingleAccountAutoReplyAt ? `最近处理：${new Date(status.lastSingleAccountAutoReplyAt).toLocaleString('zh-CN')} · 已检查 ${status.singleAccountAutoReplyProcessedCount} 条` : '尚未处理消息';
   elements.jobState.textContent = status.jobState; elements.lastJobSync.textContent = status.lastJobSyncAt ? `最近职位同步：${new Date(status.lastJobSyncAt).toLocaleString('zh-CN')} · ${status.jobTotal} 个` : '尚未同步职位管理页';
   elements.readinessState.textContent = status.readinessState; elements.lastReadiness.textContent = status.lastReadinessAt ? `最近检查：${new Date(status.lastReadinessAt).toLocaleString('zh-CN')}` : '尚未形成人工验收证据';

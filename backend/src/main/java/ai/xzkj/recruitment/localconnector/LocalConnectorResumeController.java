@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.UUID;
+import java.time.Instant;
 
 @RestController
 class LocalConnectorResumeController {
@@ -58,6 +59,40 @@ class LocalConnectorResumeController {
                 throw bad("RESUME_REQUEST_TASK_MISMATCH", "简历事件与已成功的本轮索要简历任务不一致");
         }
         return pipeline.processVisibleResume(job, observation.getChatDigest(), sourceEventDigest, sourceActionTaskId, file);
+    }
+
+    @PostMapping(value="/api/local-connector/runtime/visible-resume-text", consumes=MediaType.APPLICATION_JSON_VALUE)
+    ResumeDocumentProcessingResponse receiveVisibleText(@RequestHeader(HttpHeaders.AUTHORIZATION) String authorization,
+                                                         @RequestBody @jakarta.validation.Valid VisibleResumeTextRequest request) {
+        BrowserDevice device = connectors.authenticate(authorization);
+        BrowserUnreadObservation observation = observations.findWithAccountById(request.observationId())
+                .orElseThrow(() -> bad("OBSERVATION_NOT_FOUND", "简历对应的会话观测不存在"));
+        if (!observation.getDevice().getId().equals(device.getId())
+                || !observation.getAccount().getId().equals(device.getBossAccount().getId()))
+            throw new ApiException(HttpStatus.FORBIDDEN, "RESUME_OBSERVATION_DEVICE_MISMATCH", "简历事件不属于当前账号和浏览器设备");
+        if (!observation.getConversationSignals().resumeReceived())
+            throw bad("VISIBLE_RESUME_NOT_CONFIRMED", "当前会话尚未稳定识别到真实在线简历");
+        if (observation.getMatchedJobPositionId() == null)
+            throw bad("RESUME_JOB_MATCH_REQUIRED", "会话尚未唯一匹配真实岗位，简历已停止入库");
+        JobPosition job = jobs.findWithDetailsById(observation.getMatchedJobPositionId())
+                .orElseThrow(() -> bad("RESUME_JOB_NOT_FOUND", "会话匹配的真实岗位不存在"));
+        if (!job.getBossAccount().getId().equals(device.getBossAccount().getId()))
+            throw new ApiException(HttpStatus.FORBIDDEN, "RESUME_JOB_ACCOUNT_MISMATCH", "简历岗位与当前 BOSS 账号不一致");
+        observation.markResumeImporting(Instant.now());
+        observations.saveAndFlush(observation);
+        try {
+            ResumeDocumentProcessingResponse result = pipeline.processVisibleResumeText(
+                    job, observation.getChatDigest(), request.sourceEventDigest(), request.resumeText());
+            String failureReason = result.analysisFailureReason() != null
+                    ? result.analysisFailureReason() : result.failureReason();
+            observation.recordResumePipelineResult(result.intakeId(), result.analysisStatus(), failureReason, Instant.now());
+            observations.saveAndFlush(observation);
+            return result;
+        } catch (RuntimeException exception) {
+            observation.markResumePipelineFailed(exception.getMessage(), Instant.now());
+            observations.saveAndFlush(observation);
+            throw exception;
+        }
     }
 
     private ApiException bad(String code,String message){return new ApiException(HttpStatus.CONFLICT,code,message);}

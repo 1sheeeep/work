@@ -77,7 +77,7 @@ public class SecurityConfig {
                         .requireExplicitSave(true))
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers(HttpMethod.OPTIONS, "/api/local-connector/runtime/**").permitAll()
-                        .requestMatchers("/actuator/health/**", "/api/auth/csrf", "/api/auth/login", "/api/local-connector/runtime/**").permitAll()
+                        .requestMatchers("/actuator/health/**", "/actuator/prometheus", "/api/auth/csrf", "/api/auth/login", "/api/local-connector/runtime/**").permitAll()
                         .anyRequest().authenticated())
                 .formLogin(form -> form.disable())
                 .httpBasic(basic -> basic.disable())

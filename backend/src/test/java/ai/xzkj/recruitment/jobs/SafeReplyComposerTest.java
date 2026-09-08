@@ -42,9 +42,26 @@ class SafeReplyComposerTest {
         SafeReplyComposer.Composition result = SafeReplyComposer.compose(job);
 
         assertThat(result.mode()).isEqualTo("KNOWLEDGE");
-        assertThat(result.content()).contains("Java 开发工程师", "企业软件服务", "20-35K·13薪");
+        assertThat(result.content()).contains("Java 开发工程师", "上海", "20-35K·13薪", "欢迎继续沟通");
+        assertThat(result.content()).hasSizeLessThanOrEqualTo(SafeReplyComposer.MAX_REPLY_LENGTH);
+        assertThat(result.content()).doesNotContain("专注于企业数字化产品", "负责稳定的后端服务开发");
         assertThat(result.reason()).contains("公司知识 v1", "岗位知识 v1");
         assertThat(result.blockerCodes()).isEmpty();
+    }
+
+    @Test
+    void keepsGeneratedReplyShortEvenWhenApprovedKnowledgeIsVeryLong() {
+        JobPosition job = job("跨境客服主管与全球客户体验运营负责人（高级岗位）".repeat(3));
+        Company company = job.getCompany();
+        company.updateKnowledge("跨境电商", "100-499人", "公司介绍".repeat(300), true);
+        job.updateKnowledge("负责内容".repeat(300), "8-13K·13薪，具体面议", true);
+        job.changeStatus(JobPositionStatus.ACTIVE);
+
+        SafeReplyComposer.Composition result = SafeReplyComposer.compose(job);
+
+        assertThat(result.mode()).isEqualTo("KNOWLEDGE");
+        assertThat(result.content()).hasSizeLessThanOrEqualTo(SafeReplyComposer.MAX_REPLY_LENGTH);
+        assertThat(result.content()).contains("欢迎继续沟通");
     }
 
     @Test

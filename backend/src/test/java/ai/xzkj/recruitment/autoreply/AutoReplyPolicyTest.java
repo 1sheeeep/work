@@ -39,6 +39,19 @@ class AutoReplyPolicyTest {
         assertThat(policy.canSend(end)).isFalse();
     }
 
+    @Test void dashboardDutyStartsImmediateAutomaticReplyAndStopsItTogether() {
+        var user = mock(SystemUser.class); var account = mock(BossAccount.class);
+        var policy = new AutoReplyPolicy(account, user, AutoReplyService.DEFAULT_TEMPLATE);
+        Instant end = Instant.now().plus(Duration.ofHours(2));
+        policy.changeDutyAutomation(AwayMode.TEMPORARY, end, true, user);
+        assertThat(policy.isAwayActive(end.minusSeconds(1))).isTrue();
+        assertThat(policy.isAutoSendEnabled()).isTrue();
+        assertThat(policy.getResponseTimeoutMinutes()).isZero();
+        policy.changeDutyAutomation(AwayMode.IN_OFFICE, null, false, user);
+        assertThat(policy.isAwayActive(Instant.now())).isFalse();
+        assertThat(policy.isAutoSendEnabled()).isFalse();
+    }
+
     private AutoReplyPolicy policy(int interval, int maxFailures) {
         var user = mock(SystemUser.class); var account = mock(BossAccount.class);
         var policy = new AutoReplyPolicy(account, user, AutoReplyService.DEFAULT_TEMPLATE);

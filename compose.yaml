@@ -41,6 +41,12 @@ services:
       OPENAI_MODEL: ${OPENAI_MODEL:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
       OPENAI_TIMEOUT: ${OPENAI_TIMEOUT:-60s}
+      APP_INBOUND_REPLY_MAX_PENDING_PER_ACCOUNT: ${APP_INBOUND_REPLY_MAX_PENDING_PER_ACCOUNT:-100}
+      APP_INBOUND_REPLY_AUTO_SEND_ENABLED: ${APP_INBOUND_REPLY_AUTO_SEND_ENABLED:-false}
+      APP_INBOUND_REPLY_MODEL_CONCURRENCY: ${APP_INBOUND_REPLY_MODEL_CONCURRENCY:-8}
+      APP_INBOUND_REPLY_MAX_PENDING_GLOBAL: ${APP_INBOUND_REPLY_MAX_PENDING_GLOBAL:-1000}
+      APP_INBOUND_REPLY_SEND_LIMIT_PER_HOUR: ${APP_INBOUND_REPLY_SEND_LIMIT_PER_HOUR:-20}
+      APP_INBOUND_REPLY_SEND_LIMIT_PER_DAY: ${APP_INBOUND_REPLY_SEND_LIMIT_PER_DAY:-100}
       APP_RESUME_MALWARE_SCAN_ENABLED: ${APP_RESUME_MALWARE_SCAN_ENABLED:-false}
       APP_RESUME_MALWARE_SCAN_HOST: ${APP_RESUME_MALWARE_SCAN_HOST:-clamav}
       APP_RESUME_MALWARE_SCAN_PORT: ${APP_RESUME_MALWARE_SCAN_PORT:-3310}
@@ -58,6 +64,7 @@ services:
       timeout: 5s
       retries: 12
     restart: unless-stopped
+    stop_grace_period: 75s
     read_only: true
     tmpfs:
       - /tmp
@@ -117,6 +124,25 @@ services:
       - /config
       - /data
 
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    profiles: ["monitoring"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - recruitment_prometheus_data:/prometheus
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+
 volumes:
   recruitment_postgres_data:
   clamav_signatures:
+  recruitment_prometheus_data:

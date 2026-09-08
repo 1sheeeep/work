@@ -3,11 +3,11 @@ import PageHeader from '../components/PageHeader.vue'
 import AsyncState from '../components/AsyncState.vue'
 import MetricCard from '../components/MetricCard.vue'
 import StatusBadge from '../components/StatusBadge.vue'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { CircleCheck, Clock, DocumentCopy, Refresh, Search, Warning } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { api, apiErrorMessage } from '../services/api'
-import type { AuditLog, OperationsSummary } from '../types'
+import type { AuditLog, InboundReplyRuntimeEvent, OperationsSummary } from '../types'
 
 const loading = ref(true)
 const errorMessage = ref('')
@@ -16,6 +16,8 @@ const logs = ref<AuditLog[]>([])
 const resultFilter = ref<'ALL' | 'FAILURE'>('ALL')
 const keyword = ref('')
 const selectedLog = ref<AuditLog | null>(null)
+const refreshWarning = ref('')
+let refreshTimer: ReturnType<typeof setInterval> | null = null
 const detailDrawerOpen = computed({
   get: () => !!selectedLog.value,
   set: value => { if (!value) selectedLog.value = null },
@@ -42,10 +44,48 @@ const actionLabels: Record<string, string> = {
   ENABLE_COMPANY_AI_AUTO_ANALYSIS: '启用公司 AI 自动分析',
   BROWSER_DEVICE_OFFLINE: '浏览器桥接离线', BROWSER_DEVICE_ONLINE: '浏览器桥接恢复',
 }
+const queueState = computed(() => {
+  const q = summary.value?.inboundReplyQueue
+  if (!q) return { tone: 'green', label: '队列正常' }
+  if (!q.autoSendEnabled) return { tone: 'amber', label: '自动发送已关闭' }
+  if (q.sendUnknown > 0 || q.failedLastHour > 0) return { tone: 'red', label: '需要人工检查' }
+  if (q.retryWaiting > 0 || (q.oldestPendingSeconds || 0) > 60) return { tone: 'amber', label: '存在延迟' }
+  return { tone: 'green', label: '队列正常' }
+})
+const automationState = computed(() => {
+  const q = summary.value?.inboundReplyQueue
+  if (!q?.autoSendEnabled) return { tone: 'danger' as const, label: '总开关关闭', note: '后端禁止自动发送，请检查部署环境配置。' }
+  if (q.sendUnknown > 0) return { tone: 'danger' as const, label: '发送结果待确认', note: '存在未收到回执的发送，系统已禁止重复发送，请人工核对。' }
+  if (q.failedLastHour > 0) return { tone: 'danger' as const, label: '运行异常', note: '近一小时存在失败任务，请查看下方自动回复记录。' }
+  if (!summary.value?.activeDutyPolicies) return { tone: 'warning' as const, label: '挂机未开启', note: '请在“今日值守”开启挂机，未读会话才会进入自动处理。' }
+  if (!summary.value?.activeBrowserDevices || summary.value.staleBrowserDevices > 0) return { tone: 'warning' as const, label: '桥接未就绪', note: '挂机策略已开启，但浏览器桥接离线或心跳异常。' }
+  return { tone: 'success' as const, label: '自动回复运行中', note: '插件采集、持久队列与页面发送链路均已开启。' }
+})
+const recentReplyEvents = computed(() => summary.value?.recentInboundReplyEvents || [])
+function queueAge(seconds?: number) { if (seconds == null) return '当前无积压'; if (seconds < 60) return `最久等待 ${seconds} 秒`; return `最久等待 ${Math.floor(seconds / 60)} 分钟` }
 
-async function load() {
-  loading.value = true
-  errorMessage.value = ''
+function replyEventState(event: InboundReplyRuntimeEvent) {
+  if (event.sendStatus === 'SUCCEEDED') return { label: '已自动回复', tone: 'success' as const }
+  if (event.sendStatus === 'UNKNOWN') return { label: '发送待确认', tone: 'danger' as const }
+  if (event.taskStatus === 'FAILED' || event.sendStatus === 'FAILED') return { label: '处理失败', tone: 'danger' as const }
+  if (event.taskStatus === 'RETRY_WAIT') return { label: '等待重试', tone: 'warning' as const }
+  if (event.sendStatus === 'READY') return { label: '等待页面发送', tone: 'warning' as const }
+  if (event.sendStatus === 'CLAIMED') return { label: '正在发送', tone: 'info' as const }
+  if (event.taskStatus === 'PROCESSING') return { label: 'AI 处理中', tone: 'info' as const }
+  if (event.sendStatus === 'SKIPPED') return { label: '已安全跳过', tone: 'neutral' as const }
+  return { label: '等待处理', tone: 'neutral' as const }
+}
+function replyEventDetail(event: InboundReplyRuntimeEvent) {
+  if (event.detail) return event.detail
+  if (event.sendStatus === 'SUCCEEDED') return '回复已通过页面回执确认。'
+  if (event.taskStatus === 'PROCESSING') return '正在理解求职者问题并生成受控回复。'
+  if (event.sendStatus === 'READY') return 'AI 已完成，等待插件领取并发送。'
+  return '任务状态已记录。'
+}
+
+async function load(silent = false) {
+  if (!silent) { loading.value = true; errorMessage.value = '' }
+  refreshWarning.value = ''
   try {
     const [operationsResponse, logsResponse] = await Promise.all([
       api.get<OperationsSummary>('/operations'),
@@ -53,8 +93,12 @@ async function load() {
     ])
     summary.value = operationsResponse.data
     logs.value = logsResponse.data
-  } catch (error) { errorMessage.value = apiErrorMessage(error, '项目运行日志加载失败') }
-  finally { loading.value = false }
+  } catch (error) {
+    const message = apiErrorMessage(error, '项目运行日志加载失败')
+    if (silent) refreshWarning.value = `自动刷新失败：${message}`
+    else errorMessage.value = message
+  }
+  finally { if (!silent) loading.value = false }
 }
 
 function formatDate(value: string) {
@@ -72,7 +116,7 @@ async function copyDetails(log: AuditLog) {
     `对象：${log.targetLabel || '系统'}`,
     `来源：${log.actorName || '系统'}`,
     `结果：${log.result === 'SUCCESS' ? '成功' : '失败'}`,
-    `详情：${log.details || '—'}`,
+    `详情：${log.details || '无'}`,
     log.requestId ? `请求标识：${log.requestId}` : '',
   ].filter(Boolean).join('\n')
   try {
@@ -83,24 +127,64 @@ async function copyDetails(log: AuditLog) {
   }
 }
 
-onMounted(load)
+onMounted(() => { void load(); refreshTimer = setInterval(() => void load(true), 30_000) })
+onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
 </script>
 
 <template>
   <div class="page-shell logs-page">
     <PageHeader>
       <div><span class="page-kicker">运行监测与问题定位</span><h1>项目运行日志</h1><p>查看关键事件、失败影响与对应对象，快速定位运行问题。</p></div>
-      <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
+      <el-button :icon="Refresh" :loading="loading" @click="load()">刷新</el-button>
     </PageHeader>
 
     <AsyncState v-if="loading" state="loading" :rows="8" aria-label="正在加载项目运行日志" />
     <AsyncState v-else-if="errorMessage" state="error" title="日志暂时无法加载" :message="errorMessage" @retry="load"><template #icon><el-icon><Warning /></el-icon></template></AsyncState>
     <template v-else>
+      <div v-if="refreshWarning" class="refresh-warning" role="status">{{ refreshWarning }}；当前仍显示上一次成功数据。</div>
       <section v-if="summary" class="runtime-strip" aria-label="系统运行摘要">
         <MetricCard class="runtime-card runtime-card--healthy" label="系统状态" description="核心服务当前可用" tone="green"><template #value><el-icon><CircleCheck /></el-icon>运行正常</template></MetricCard>
         <MetricCard class="runtime-card runtime-card--bridge" label="在线桥接" :value="summary.activeBrowserDevices" :description="summary.staleBrowserDevices ? `${summary.staleBrowserDevices} 个桥接已失联` : '浏览器连接无失联'" tone="teal" />
         <MetricCard class="runtime-card runtime-card--unread" label="未读会话" :value="summary.unreadObservations" description="等待值守流程处理" tone="blue" />
         <MetricCard class="runtime-card runtime-card--jobs" label="待核对岗位" :value="summary.unverifiedPageCaptures" :description="summary.unverifiedPageCaptures ? '需人工确认页面资料' : '岗位页面均已核对'" tone="amber" />
+      </section>
+
+      <section v-if="summary?.inboundReplyQueue" class="card-panel queue-health" aria-label="AI 自动回复队列状态">
+        <header class="queue-health__head">
+          <div><span class="section-kicker">无人值守链路</span><h2>AI 自动回复队列</h2><p>数据来自后端持久队列，浏览器重启不会清空。</p></div>
+          <StatusBadge :label="queueState.label" :tone="queueState.tone === 'red' ? 'danger' : queueState.tone === 'amber' ? 'warning' : 'success'" />
+        </header>
+        <div class="queue-health__grid">
+          <div><span>等待 / 处理中</span><strong>{{ summary.inboundReplyQueue.pending }} / {{ summary.inboundReplyQueue.processing }}</strong><small>{{ queueAge(summary.inboundReplyQueue.oldestPendingSeconds) }}</small></div>
+          <div><span>等待重试</span><strong>{{ summary.inboundReplyQueue.retryWaiting }}</strong><small>失败后按退避策略重试</small></div>
+          <div><span>等待页面发送</span><strong>{{ summary.inboundReplyQueue.readyToSend }}</strong><small>{{ summary.inboundReplyQueue.sendLeased }} 条已领取租约</small></div>
+          <div :class="{ danger: summary.inboundReplyQueue.sendUnknown > 0 }"><span>结果待确认</span><strong>{{ summary.inboundReplyQueue.sendUnknown }}</strong><small>必须人工核对，系统不会重发</small></div>
+          <div :class="{ danger: summary.inboundReplyQueue.failedLastHour > 0 }"><span>近一小时失败</span><strong>{{ summary.inboundReplyQueue.failedLastHour }}</strong><small>AI 处理终止任务</small></div>
+          <div><span>发送额度</span><strong>{{ summary.inboundReplyQueue.sentLastHour }} / {{ summary.inboundReplyQueue.sendLimitPerHour }}</strong><small>今日 {{ summary.inboundReplyQueue.sentLastDay }} / {{ summary.inboundReplyQueue.sendLimitPerDay }}</small></div>
+        </div>
+      </section>
+
+      <section v-if="summary" class="card-panel automation-runtime" aria-label="自动回复运行状态与最近记录">
+        <header class="automation-runtime__head">
+          <div><span class="section-kicker">状态与追踪</span><h2>自动回复运行状态</h2><p>{{ automationState.note }}</p></div>
+          <StatusBadge :label="automationState.label" :tone="automationState.tone" />
+        </header>
+        <div class="automation-runtime__facts">
+          <div><span>挂机账号</span><strong>{{ summary.activeDutyPolicies }}</strong><small>由今日值守统一控制</small></div>
+          <div><span>在线桥接</span><strong>{{ summary.activeBrowserDevices }}</strong><small>{{ summary.staleBrowserDevices ? `${summary.staleBrowserDevices} 个心跳异常` : '采集链路正常' }}</small></div>
+          <div><span>近一小时已回复</span><strong>{{ summary.inboundReplyQueue.sentLastHour }}</strong><small>以页面成功回执为准</small></div>
+        </div>
+        <div class="reply-events__title flex-between"><div><h3>最近自动回复记录</h3><p>已发送内容以页面成功回执为准；候选人原始消息不在这里展示。</p></div><span>最近 {{ recentReplyEvents.length }} 条</span></div>
+        <AsyncState v-if="!recentReplyEvents.length" state="empty" embedded class="reply-events__empty" title="暂无自动回复记录" message="开启挂机并处理到符合条件的未读会话后，阶段状态会显示在这里。" />
+        <div v-else class="reply-events">
+          <article v-for="event in recentReplyEvents" :key="event.id" class="reply-event" :class="{ 'reply-event--danger': replyEventState(event).tone === 'danger' }">
+            <div class="reply-event__main"><span class="result-dot" :class="`result-dot--${replyEventState(event).tone === 'success' ? 'success' : replyEventState(event).tone === 'danger' ? 'failure' : 'pending'}`" aria-hidden="true"></span><div><strong>{{ event.jobTitle }}</strong><p>{{ event.accountName }} · 会话 {{ event.anonymousChatKey }}</p></div></div>
+            <StatusBadge compact :label="replyEventState(event).label" :tone="replyEventState(event).tone" />
+            <blockquote v-if="event.sendStatus === 'SUCCEEDED' && event.replyContent" class="reply-event__content">“{{ event.replyContent }}”</blockquote>
+            <p class="reply-event__detail" :title="replyEventDetail(event)">{{ replyEventDetail(event) }}</p>
+            <div class="reply-event__meta"><span v-if="event.errorCode" class="error-code">{{ event.errorCode }}</span><span>尝试 {{ event.attemptCount }} 次</span><time>{{ formatDate(event.updatedAt) }}</time></div>
+          </article>
+        </div>
       </section>
 
       <section class="card-panel log-panel">
@@ -147,7 +231,7 @@ onMounted(load)
           <div><dt>来源</dt><dd>{{ selectedLog.actorName || '系统' }}</dd></div>
           <div><dt>处理结果</dt><dd><StatusBadge :label="selectedLog.result === 'SUCCESS' ? '成功' : '失败'" :tone="selectedLog.result === 'SUCCESS' ? 'success' : 'danger'" /></dd></div>
           <div v-if="selectedLog.requestId"><dt>请求标识</dt><dd class="detail-mono">{{ selectedLog.requestId }}</dd></div>
-          <div class="log-detail-list__wide"><dt>详情</dt><dd class="detail-content">{{ selectedLog.details || '—' }}</dd></div>
+          <div class="log-detail-list__wide"><dt>详情</dt><dd class="detail-content">{{ selectedLog.details || '无' }}</dd></div>
         </dl>
         <el-button :icon="DocumentCopy" @click="copyDetails(selectedLog)">复制错误与事件信息</el-button>
       </template>
@@ -162,8 +246,8 @@ onMounted(load)
 .logs-heading h1 { margin-top: 6px; }
 .loading-panel { padding: 28px; }
 .runtime-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-bottom: 18px; }
-.runtime-card { min-width:0; min-height:112px; padding:18px 20px; border-color:var(--runtime-border,var(--border)); background:linear-gradient(145deg,var(--runtime-surface,var(--surface)),var(--surface)); border-radius:var(--radius-lg); box-shadow:var(--shadow-card); }
-.runtime-card--healthy { --runtime-accent:var(--success); --runtime-surface:#eff9f3; --runtime-border:#d1eadb; }
+.runtime-card { min-width:0; min-height:112px; padding:18px 20px; border-color:var(--runtime-border,var(--border)); background:linear-gradient(145deg,var(--runtime-surface,var(--surface)),var(--surface)); border-radius:var(--radius-panel); box-shadow:var(--shadow-card); }
+.runtime-card--healthy { --runtime-accent:var(--success); --runtime-surface:var(--surface-green); --runtime-border:var(--border-green); }
 .runtime-card--bridge { --runtime-accent:var(--brand-600); --runtime-surface:var(--surface-teal); --runtime-border:var(--border-teal); }
 .runtime-card--unread { --runtime-accent:var(--color-info); --runtime-surface:var(--surface-blue); --runtime-border:var(--border-blue); }
 .runtime-card--jobs { --runtime-accent:var(--warning); --runtime-surface:var(--surface-amber); --runtime-border:var(--border-amber); }
@@ -173,40 +257,83 @@ onMounted(load)
 .runtime-card--healthy :deep(.metric-card-ui__content > strong) { display:flex; align-items:center; gap:7px; color:var(--success); font-size:18px; }
 .runtime-card :deep(.metric-card-ui__content > small) { color:var(--text-tertiary); font-size:11px; }
 .runtime-card .warning { color: var(--warning); }
-.log-panel { overflow: hidden; padding: 0; border-radius: var(--radius-lg); }
+.refresh-warning { margin-bottom:12px; padding:9px 12px; border:1px solid var(--border-amber); border-radius:var(--radius-control); background:var(--surface-amber); color:var(--warning); font-size:12px; }
+.queue-health { margin-bottom:18px; padding:0; overflow:hidden; }
+.queue-health__head { display:flex; align-items:center; justify-content:space-between; gap:18px; padding:18px 22px; border-bottom:1px solid var(--border); }
+.queue-health__head h2 { margin:5px 0 0; font-size:18px; }
+.queue-health__head p { margin:4px 0 0; color:var(--text-secondary); font-size:12px; }
+.queue-health__grid { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); }
+.queue-health__grid > div { display:flex; min-width:0; flex-direction:column; gap:5px; padding:16px 18px; border-right:1px solid var(--border-subtle); background:var(--surface); }
+.queue-health__grid > div:last-child { border-right:0; }
+.queue-health__grid span,.queue-health__grid small { color:var(--text-secondary); font-size:11px; }
+.queue-health__grid strong { color:var(--text-main); font-size:22px; line-height:1.15; }
+.queue-health__grid .danger { background:var(--surface-red); }
+.queue-health__grid .danger strong { color:var(--danger); }
+.automation-runtime { margin-bottom:18px; padding:0; overflow:hidden; }
+.automation-runtime__head { display:flex; align-items:center; justify-content:space-between; gap:18px; padding:18px 22px; border-bottom:1px solid var(--border); }
+.automation-runtime__head h2 { margin:5px 0 0; font-size:18px; }
+.automation-runtime__head p { margin:4px 0 0; color:var(--text-secondary); font-size:12px; }
+.automation-runtime__facts { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); border-bottom:1px solid var(--border-subtle); background:var(--surface-soft); }
+.automation-runtime__facts>div { display:flex; flex-direction:column; gap:4px; padding:14px 22px; border-right:1px solid var(--border-subtle); }
+.automation-runtime__facts>div:last-child { border-right:0; }
+.automation-runtime__facts span,.automation-runtime__facts small { color:var(--text-secondary); font-size:11px; }
+.automation-runtime__facts strong { color:var(--text-main); font-size:22px; }
+.reply-events__title { padding:16px 22px 12px; }
+.reply-events__title h3 { margin:0; font-size:14px; }
+.reply-events__title p { margin:4px 0 0; color:var(--text-tertiary); font-size:11px; }
+.reply-events__title>span { color:var(--text-tertiary); font-size:11px; white-space:nowrap; }
+.reply-events { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; padding:0 22px 20px; }
+.reply-event { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:9px 12px; min-width:0; padding:13px 14px; border:1px solid var(--border-subtle); border-radius:var(--radius-control); background:var(--surface); }
+.reply-event--danger { border-color:var(--border-rose); background:var(--surface-rose); }
+.reply-event__main { display:flex; min-width:0; align-items:center; gap:10px; }
+.reply-event__main>div { min-width:0; }
+.reply-event__main strong,.reply-event__main p { display:block; overflow:hidden; margin:0; text-overflow:ellipsis; white-space:nowrap; }
+.reply-event__main strong { color:var(--text-main); font-size:13px; }
+.reply-event__main p { margin-top:3px; color:var(--text-tertiary); font-size:11px; }
+.reply-event__detail { grid-column:1/-1; overflow:hidden; margin:0; color:var(--text-secondary); font-size:12px; text-overflow:ellipsis; white-space:nowrap; }
+.reply-event__content { grid-column:1/-1; margin:0; padding:9px 11px; border-left:3px solid var(--color-primary); border-radius:0 7px 7px 0; background:var(--surface-teal); color:var(--text-main); font-size:12px; line-height:1.55; overflow-wrap:anywhere; }
+.reply-event__meta { display:flex; grid-column:1/-1; align-items:center; gap:10px; color:var(--text-tertiary); font-size:10px; }
+.reply-event__meta time { margin-left:auto; }
+.error-code { max-width:180px; overflow:hidden; padding:2px 6px; border-radius:5px; background:var(--surface-red); color:var(--danger); font-family:ui-monospace,SFMono-Regular,Consolas,monospace; text-overflow:ellipsis; white-space:nowrap; }
+.result-dot--pending { background:var(--warning); box-shadow:0 0 0 4px rgba(217,119,6,.08); }
+.reply-events__empty { min-height:150px; }
+@media (max-width:1100px){.queue-health__grid{grid-template-columns:repeat(3,minmax(0,1fr))}.queue-health__grid>div:nth-child(3){border-right:0}}
+@media (max-width:640px){.queue-health__head{align-items:flex-start}.queue-health__grid{grid-template-columns:repeat(2,minmax(0,1fr))}.queue-health__grid>div:nth-child(3){border-right:1px solid var(--border-subtle)}.queue-health__grid>div:nth-child(even){border-right:0}}
+.log-panel { overflow: hidden; padding: 0; border-radius: var(--radius-panel); }
 .log-head { display: flex; min-height: 92px; align-items: center; justify-content: space-between; gap: 20px; padding: 18px 22px; border-bottom: 1px solid var(--border); }
 .log-head__title { min-width: 0; }
 .log-head h2 { margin: 5px 0 0; font-size: 19px; }
 .log-head p { margin: 5px 0 0; color: var(--text-secondary); font-size: 12px; }
 .log-tools { display: flex; flex: 0 1 auto; align-items: center; gap: 10px; }
 .log-tools .el-input { width: min(300px, 30vw); }
-.log-tabs { display: flex; flex: 0 0 auto; padding: 4px; border: 1px solid var(--border-subtle); border-radius: 10px; background: var(--surface-soft); }
-.log-tabs button { min-width: 56px; padding: 7px 12px; border: 0; border-radius: 7px; background: transparent; color: var(--text-secondary); font-size: 12px; cursor: pointer; transition: background .15s ease, color .15s ease, box-shadow .15s ease; }
-.log-tabs button.active { background: #fff; color: var(--text-main); font-weight: 700; box-shadow: 0 1px 4px rgba(17,28,45,.09); }
+.log-tabs { display: flex; flex: 0 0 auto; padding: 4px; border: 1px solid var(--border-subtle); border-radius: var(--radius-control); background: var(--surface-soft); }
+.log-tabs button { min-width: 56px; padding: 7px 12px; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: 12px; cursor: pointer; transition: background .15s ease, color .15s ease, box-shadow .15s ease; }
+.log-tabs button.active { background: var(--surface); color: var(--text-main); font-weight: 700; box-shadow: 0 1px 4px rgba(17,28,45,.09); }
 .log-tabs button:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
 .log-table { width: 100%; }
-.log-table :deep(.el-table__header th) { height: 44px; background: #f7f9fa; color: var(--text-secondary); font-size: 11px; }
-.log-table :deep(.el-table__cell) { height: 54px; vertical-align: middle; }
-.log-table :deep(.el-table__row:hover > td.el-table__cell) { background: #f7fbfa; }
+.log-table :deep(.el-table__header th) { height: 44px; background: var(--surface-muted); color: var(--text-secondary); font-size: 11px; }
+.log-table :deep(.el-table__cell) { height: 54px; vertical-align: middle; background:var(--surface); }
+.log-table :deep(.el-table__row:nth-child(even) > td.el-table__cell) { background: var(--surface-soft); }
+.log-table :deep(.el-table__row:hover > td.el-table__cell) { background: var(--surface-row); }
 .log-time { color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .event-cell { display: flex; min-width: 0; align-items: center; gap: 9px; }
 .event-cell strong, .target-cell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.result-dot { display: block; width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: #98a2b3; }
+.result-dot { display: block; width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: var(--text-tertiary); }
 .result-dot--success { background: var(--success); box-shadow: 0 0 0 4px rgba(22,163,74,.08); }
 .result-dot--failure { background: var(--danger); box-shadow: 0 0 0 4px rgba(220,38,38,.07); }
 .result-cell { display: flex; min-width: 0; align-items: center; gap: 9px; }
 .result-cell > span:last-child { min-width: 0; overflow: hidden; color: var(--text-secondary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.result-cell--failure > span:last-child { color: #8a3a32; }
+.result-cell--failure > span:last-child { color: var(--danger); }
 .log-cards { display: none; }
 .log-empty { min-height: 280px; }
 .log-empty p { margin: 0; color: var(--text-tertiary); font-size: 12px; }
-.drawer-result { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 18px; padding: 15px; border-radius: 12px; background: #f4faf7; }
-.drawer-result--failure { background: #fff5f3; }
+.drawer-result { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 18px; padding: 15px; border-radius: var(--radius-panel); background: var(--surface-teal); }
+.drawer-result--failure { background: var(--surface-rose); }
 .drawer-result .result-dot { margin-top: 5px; }
 .drawer-result strong, .drawer-result p { display: block; margin: 0; }
 .drawer-result p { margin-top: 5px; color: var(--text-secondary); font-size: 12px; line-height: 1.55; }
 .log-detail-list { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 0 0 20px; }
-.log-detail-list > div { min-width: 0; padding: 13px; border: 1px solid var(--border-subtle); border-radius: 11px; background: #f8faf9; }
+.log-detail-list > div { min-width: 0; padding: 13px; border: 1px solid var(--border-subtle); border-radius: var(--radius-control); background: var(--surface-soft); }
 .log-detail-list dt { color: var(--text-tertiary); font-size: 11px; }
 .log-detail-list dd { margin: 5px 0 0; color: var(--text-main); font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
 .log-detail-list__wide { grid-column: 1 / -1; }
@@ -214,18 +341,21 @@ onMounted(load)
 .detail-mono { font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; font-size: 11px !important; }
 @media (max-width: 900px) {
   .runtime-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .reply-events { grid-template-columns:1fr; }
   .log-head { align-items: stretch; flex-direction: column; }
   .log-tools .el-input { width: 100%; }
 }
 @media (max-width: 1180px) {
   .log-table { display: none; }
   .log-cards { display: grid; }
-  .log-card { padding: 15px 16px; border: 0; border-top: 1px solid var(--border-subtle); border-radius: 0; box-shadow: none; }
-  .log-card--failure { background: #fffaf9; }
+  .log-card { padding: 15px 16px; border: 0; border-top: 1px solid var(--border-subtle); border-radius: 0; box-shadow: none; background:var(--surface); transition:background var(--transition-fast); }
+  .log-card:nth-child(even) { background:var(--surface-soft); }
+  .log-card:hover { background:var(--surface-row); }
+  .log-card--failure { background:linear-gradient(90deg,var(--surface-rose),var(--surface) 72%); box-shadow:inset 0 0 0 1px var(--border-rose); }
   .log-card header, .log-card footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .log-card header strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .log-card__target { margin: 8px 0 0; overflow: hidden; color: var(--text-secondary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-  .log-card__impact { display: -webkit-box; margin: 8px 0 0; overflow: hidden; color: #8a3a32; font-size: 12px; line-height: 1.5; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+  .log-card__impact { display: -webkit-box; margin: 8px 0 0; overflow: hidden; color: var(--danger); font-size: 12px; line-height: 1.5; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
   .log-card footer { margin-top: 12px; color: var(--text-tertiary); font-size: 11px; }
   .log-card footer span { color: var(--color-primary); font-weight: 700; }
 }
@@ -236,6 +366,11 @@ onMounted(load)
   .log-tabs button { flex: 1; min-height: 36px; }
   .log-detail-list { grid-template-columns: 1fr; }
   .log-detail-list__wide { grid-column: auto; }
+  .automation-runtime__head { align-items:flex-start; flex-direction:column; }
+  .automation-runtime__facts { grid-template-columns:1fr; }
+  .automation-runtime__facts>div { border-right:0; border-bottom:1px solid var(--border-subtle); }
+  .automation-runtime__facts>div:last-child { border-bottom:0; }
+  .reply-events { padding-inline:12px; }
 }
 @media (prefers-reduced-motion: reduce) { .log-tabs button { transition: none; } }
 </style>

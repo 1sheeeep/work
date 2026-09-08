@@ -27,6 +27,10 @@ describe('DashboardView', () => {
         firstSeenAt: '2026-08-31T08:00:00Z', lastSeenAt: '2026-08-31T08:01:00Z',
       }] })
       .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [] })
 
     const wrapper = mount(DashboardView)
     await flushPromises()
@@ -45,6 +49,8 @@ describe('DashboardView', () => {
         accountStatus: 'ACTIVE', connectionStatus: 'CONNECTED', autoSendEnabled: false,
       }] })
       .mockResolvedValueOnce({ data: [{ id: 'd1', accountId: 'a1', status: 'ACTIVE', runtimeState: 'RUNNING', pageContext: 'CHAT' }] })
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [] })
       .mockResolvedValueOnce({ data: [] })
       .mockResolvedValueOnce({ data: [] })
 
@@ -66,13 +72,15 @@ describe('DashboardView', () => {
         firstSeenAt: '2026-08-31T08:00:00Z', lastSeenAt: '2026-08-31T08:01:00Z',
       }] })
       .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [] })
 
     const wrapper = mount(DashboardView)
     await flushPromises()
     await wrapper.get('.message-list article').trigger('click')
 
-    expect(document.body.textContent).toContain('已填入未发送')
-    expect(document.body.textContent).not.toContain('已发送')
+    expect(wrapper.text()).toContain('已填入未发送')
+    expect(wrapper.text()).not.toContain('已发送')
   })
 
   it('pins the recently verified browser conversation and shows its locator', async () => {
@@ -80,13 +88,13 @@ describe('DashboardView', () => {
     vi.mocked(api.get).mockResolvedValueOnce({ data: [] }).mockResolvedValueOnce({ data: [] }).mockResolvedValueOnce({ data: [
       { id: 'current', accountId: 'a1', accountName: '主招聘账号', anonymousKey: 'current001', unreadCount: 1, unread: true, observedJobTitle: '当前岗位', eligibilityStatus: 'OBSERVING', resolutionStatus: 'UNRESOLVED', reviewStatus: 'PENDING', fillStatus: 'NONE', detailVerifiedAt: '2026-08-31T10:01:00Z', latestMessageAt: '2026-08-31T09:00:00Z', firstSeenAt: '2026-08-31T08:00:00Z', lastSeenAt: '2026-08-31T10:01:00Z' },
       { id: 'newer', accountId: 'a1', accountName: '主招聘账号', anonymousKey: 'latest0001', unreadCount: 1, unread: true, observedJobTitle: '最新岗位', eligibilityStatus: 'OBSERVING', resolutionStatus: 'UNRESOLVED', reviewStatus: 'PENDING', fillStatus: 'NONE', latestMessageAt: '2026-08-31T10:01:30Z', firstSeenAt: '2026-08-31T08:00:00Z', lastSeenAt: '2026-08-31T10:01:30Z' },
-    ] }).mockResolvedValueOnce({ data: [] })
+    ] }).mockResolvedValueOnce({ data: [] }).mockResolvedValueOnce({ data: [] }).mockResolvedValueOnce({ data: [] })
     const wrapper = mount(DashboardView)
     await flushPromises()
     const rows = wrapper.findAll('.message-list article')
     expect(rows[0].text()).toContain('当前岗位')
     expect(rows[0].text()).toContain('当前浏览器会话')
-    expect(rows[0].text()).toContain('定位码 current001')
+    expect(rows[0].text()).toContain('匿名求职者')
     vi.useRealTimers()
   })
 
@@ -105,12 +113,63 @@ describe('DashboardView', () => {
         observationIds: ['unmatched-1'], conversations: 1, unreadCount: 1, firstSeenAt: '2026-08-31T08:00:00Z', lastSeenAt: '2026-08-31T08:01:00Z',
         candidates: [{ id: 'job-1', title: 'Node.js 全栈开发工程师', knowledgeReady: true, blockers: [] }],
       }] })
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [] })
 
     const wrapper = mount(DashboardView)
     await flushPromises()
     await wrapper.get('.message-list article').trigger('click')
 
-    expect(document.body.textContent).toContain('关联真实岗位')
-    expect(document.body.textContent).toContain('选择同账号已就绪岗位')
+    expect(wrapper.text()).toContain('关联真实岗位')
+    expect(wrapper.text()).toContain('选择同账号已就绪岗位')
+  })
+
+  it('shows only confirmed AI send receipts in the duty review', async () => {
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [{ id:'o1', accountId:'a1', accountName:'主招聘账号', anonymousKey:'abc123', unreadCount:1, unread:true, observedJobTitle:'跨境客服', eligibilityStatus:'OBSERVING', resolutionStatus:'UNRESOLVED', reviewStatus:'PENDING', fillStatus:'NONE', latestDirection:'INBOUND', firstSeenAt:'2026-08-31T08:00:00Z', lastSeenAt:'2026-08-31T08:01:00Z' }] })
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [{ id:'r1', observationId:'o1', anonymousKey:'abc123', accountName:'主招聘账号', jobTitle:'跨境客服', category:'SALARY', replyContent:'您好，该岗位薪资为 8-13K。', sentAt:'2026-08-31T08:01:00Z', needsFollowUp:true }] })
+      .mockResolvedValueOnce({ data: [] })
+
+    const wrapper = mount(DashboardView)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('AI 值守回顾')
+    expect(wrapper.text()).toContain('您好，该岗位薪资为 8-13K。')
+    expect(wrapper.text()).toContain('有新回复，待跟进')
+  })
+
+  it('labels a partial AI answer with its HR follow-up reason', async () => {
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [{ id:'r2', observationId:'o2', anonymousKey:'partial01', accountName:'主招聘账号', jobTitle:'跨境客服', category:'LOCATION', replyContent:'地点在广州，排班需要招聘人员确认。', sentAt:'2026-08-31T08:01:00Z', needsFollowUp:true, followUpReason:'已部分回答，仍需 HR 补充：OTHER_RECRUITMENT' }] })
+      .mockResolvedValueOnce({ data: [] })
+
+    const wrapper = mount(DashboardView)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('已部分回答，仍需 HR 补充')
+  })
+
+  it('shows AI-read but intentionally unanswered unrelated conversations for HR review', async () => {
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [{ id:'o3', accountId:'a1', accountName:'主招聘账号', anonymousKey:'offtopic01', unreadCount:1, unread:true, observedJobTitle:'跨境客服', eligibilityStatus:'OBSERVING', resolutionStatus:'UNRESOLVED', reviewStatus:'PENDING', fillStatus:'NONE', latestDirection:'INBOUND', firstSeenAt:'2026-08-31T08:00:00Z', lastSeenAt:'2026-08-31T08:01:00Z' }] })
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [{ id:'skip1', observationId:'o3', anonymousKey:'offtopic01', accountName:'主招聘账号', jobTitle:'跨境客服', category:'UNRELATED', reason:'AI 判定该消息与当前岗位无关，未自动回复', decidedAt:'2026-08-31T08:01:00Z' }] })
+
+    const wrapper = mount(DashboardView)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('已读未回复 · 待 HR 复核')
+    expect(wrapper.text()).toContain('AI 判定该消息与当前岗位无关')
+    expect(wrapper.text()).toContain('匿名求职者')
   })
 })

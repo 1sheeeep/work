@@ -57,6 +57,7 @@ public class JobPosition {
     @Column(name = "observed_source_key", length = 64) private String observedSourceKey;
     @Column(name = "last_observed_at") private Instant lastObservedAt;
     @Column(name = "observation_count", nullable = false) private int observationCount;
+    @Column(name = "missing_from_open_snapshot_count", nullable = false) private int missingFromOpenSnapshotCount;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 16)
@@ -149,39 +150,82 @@ public class JobPosition {
                                                int completeness, Instant observedAt) {
         this.lastObservedAt = observedAt;
         this.observationCount++;
+        this.missingFromOpenSnapshotCount = 0;
         if (this.observedSourceKey == null) this.observedSourceKey = sourceKey;
-        if (this.status != JobPositionStatus.DRAFT || this.captureVerified || "MANUAL".equals(this.captureSource)) {
+        if (this.status == JobPositionStatus.CLOSED) {
             return false;
         }
-        boolean changed = false;
-        changed |= assignTitle(observedTitle);
-        changed |= assignText("location", observedLocation);
-        changed |= assignText("experience", observedExperience);
-        changed |= assignText("education", observedEducation);
-        changed |= assignText("description", observedDescription);
-        changed |= assignDetail("recruitmentType", observedRecruitmentType);
-        changed |= assignDetail("jobCategory", observedJobCategory);
-        changed |= assignDetail("overseasRequirement", observedOverseasRequirement);
-        changed |= assignDetail("jobKeywords", observedJobKeywords);
-        changed |= assignDetail("workAddress", observedWorkAddress);
+        boolean requiresReviewOnChange = this.status == JobPositionStatus.ACTIVE || this.captureVerified;
+        if (requiresReviewOnChange && completeness < 5) return false;
+        if ("MANUAL".equals(this.captureSource)) {
+            this.captureSource = "VISIBLE_PAGE";
+            this.captureCompleteness = (short) completeness;
+            this.capturedAt = observedAt;
+            this.captureVerified = false;
+            this.captureVerifiedAt = null;
+            return true;
+        }
+        boolean contentChanged = false;
+        contentChanged |= assignTitle(observedTitle);
+        contentChanged |= assignText("location", observedLocation);
+        contentChanged |= assignText("experience", observedExperience);
+        contentChanged |= assignText("education", observedEducation);
+        contentChanged |= assignText("description", observedDescription);
+        contentChanged |= assignDetail("recruitmentType", observedRecruitmentType);
+        contentChanged |= assignDetail("jobCategory", observedJobCategory);
+        contentChanged |= assignDetail("overseasRequirement", observedOverseasRequirement);
+        contentChanged |= assignDetail("jobKeywords", observedJobKeywords);
+        contentChanged |= assignDetail("workAddress", observedWorkAddress);
         if (observedSalaryMinK != null && observedSalaryMaxK != null && observedSalaryMaxK >= observedSalaryMinK) {
-            if (salaryMinK != observedSalaryMinK || salaryMaxK != observedSalaryMaxK) changed = true;
+            if (salaryMinK != observedSalaryMinK || salaryMaxK != observedSalaryMaxK) contentChanged = true;
             salaryMinK = observedSalaryMinK;
             salaryMaxK = observedSalaryMaxK;
         }
         if (observedSalaryMonths != null && observedSalaryMonths >= 12 && observedSalaryMonths <= 16) {
-            if (salaryMonths != observedSalaryMonths.shortValue()) changed = true;
+            if (salaryMonths != observedSalaryMonths.shortValue()) contentChanged = true;
             salaryMonths = observedSalaryMonths.shortValue();
         }
         String cleanSalary = cleanObserved(observedSalaryDisplay);
-        if (cleanSalary != null && !cleanSalary.equals(salaryDisplay)) { salaryDisplay = cleanSalary; changed = true; }
-        if (!"VISIBLE_PAGE".equals(captureSource) || captureCompleteness == null || captureCompleteness != (short) completeness) changed = true;
+        if (cleanSalary != null && !cleanSalary.equals(salaryDisplay)) { salaryDisplay = cleanSalary; contentChanged = true; }
+        boolean metadataChanged = !"VISIBLE_PAGE".equals(captureSource) || captureCompleteness == null || captureCompleteness != (short) completeness;
         captureSource = "VISIBLE_PAGE";
         captureCompleteness = (short) completeness;
         capturedAt = observedAt;
-        captureVerified = false;
-        captureVerifiedAt = null;
-        return changed;
+        if (contentChanged) {
+            captureVerified = false;
+            captureVerifiedAt = null;
+            if (requiresReviewOnChange) {
+                status = JobPositionStatus.DRAFT;
+                knowledgeApproved = false;
+                knowledgeApprovedAt = null;
+            }
+        }
+        return contentChanged || metadataChanged;
+    }
+
+    public boolean reconcilePlatformStatus(String platformStatus) {
+        this.missingFromOpenSnapshotCount = 0;
+        if ("CLOSED".equals(platformStatus) && this.status != JobPositionStatus.CLOSED) {
+            this.status = JobPositionStatus.CLOSED;
+            return true;
+        }
+        if ("OPEN".equals(platformStatus) && this.status == JobPositionStatus.CLOSED) {
+            this.status = JobPositionStatus.DRAFT;
+            this.captureVerified = false;
+            this.captureVerifiedAt = null;
+            this.knowledgeApproved = false;
+            this.knowledgeApprovedAt = null;
+            return true;
+        }
+        return false;
+    }
+
+    public boolean markMissingFromCompleteOpenSnapshot() {
+        if (this.status == JobPositionStatus.CLOSED || !"VISIBLE_PAGE".equals(this.captureSource)) return false;
+        this.missingFromOpenSnapshotCount++;
+        if (this.missingFromOpenSnapshotCount < 2) return false;
+        this.status = JobPositionStatus.CLOSED;
+        return true;
     }
 
     private boolean assignTitle(String value) {
@@ -266,6 +310,7 @@ public class JobPosition {
     public Instant getCaptureVerifiedAt() { return captureVerifiedAt; }
     public Instant getLastObservedAt() { return lastObservedAt; }
     public int getObservationCount() { return observationCount; }
+    public int getMissingFromOpenSnapshotCount() { return missingFromOpenSnapshotCount; }
     public String getObservedSourceKey() { return observedSourceKey; }
     public JobPositionStatus getStatus() { return status; }
     public long getVersion() { return version; }

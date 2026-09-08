@@ -49,6 +49,21 @@ class ResumeDocumentPipelineServiceTest {
         verifyNoInteractions(f.malware, f.ocr);
     }
 
+    @Test
+    void ingestsRenderedBossResumeTextAndStartsAutomaticAnalysisWithoutPersistingRawText() {
+        Fixture f = new Fixture();
+        String visibleText = "候选人姓名 林嘉明\n工作经历 跨境电商客服主管五年\n技能 客诉处理 团队管理 英语沟通".repeat(4);
+
+        ResumeDocumentProcessingResponse result = f.service.processVisibleResumeText(
+                f.job, "b".repeat(64), "d".repeat(64), visibleText);
+
+        assertThat(result.processingStatus()).isEqualTo("READY_FOR_AI");
+        assertThat(result.documentType()).isEqualTo("BOSS_VISIBLE_TEXT");
+        assertThat(result.malwareScanned()).isFalse();
+        assertThat(result.duplicate()).isFalse();
+        verify(f.automatedAnalysis).analyzeInMemory(any(ResumeIntake.class), eq(visibleText));
+    }
+
     private static class Fixture {
         final CandidateProfileRepository candidates=mock(CandidateProfileRepository.class);
         final CandidateJobContactRepository contacts=mock(CandidateJobContactRepository.class);

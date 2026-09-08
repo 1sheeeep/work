@@ -64,6 +64,11 @@ public class AutoReplyPolicy {
         updatedBy = user;
         if (!active) pausedUntil = null;
     }
+    public void changeDutyAutomation(AwayMode mode, Instant endsAt, boolean automaticReply, SystemUser user) {
+        changeAwayMode(mode, endsAt, user);
+        autoSendEnabled = mode != AwayMode.IN_OFFICE && automaticReply;
+        responseTimeoutMinutes = 0;
+    }
     public void prepareQuota(LocalDate today) { if (!today.equals(quotaDate)) { quotaDate = today; sentToday = 0; } }
     public boolean isAwayActive(Instant now) { return enabled && awayMode != AwayMode.IN_OFFICE && (awayEndsAt == null || awayEndsAt.isAfter(now)); }
     public boolean canSend(Instant now) { return isAwayActive(now) && (pausedUntil == null || !pausedUntil.isAfter(now)); }

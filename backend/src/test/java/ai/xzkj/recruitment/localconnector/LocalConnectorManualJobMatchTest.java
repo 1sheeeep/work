@@ -60,7 +60,7 @@ class LocalConnectorManualJobMatchTest {
             SystemUser user=mock(SystemUser.class);when(user.getRole()).thenReturn(UserRole.SYSTEM_ADMIN);when(users.requireCurrentUser()).thenReturn(user);
             service=new LocalConnectorService(mock(BrowserDeviceRepository.class),mock(BrowserPairingCodeRepository.class),observations,
                     mock(LocalConnectorCapabilityRepository.class),mock(LocalConnectorActionTaskRepository.class),mock(LocalConnectorValidationCaseRepository.class),
-                    mock(AutoReplyPolicyRepository.class),mock(BossAccountRepository.class),jobs,users,mock(AuditService.class));
+                    mock(AutoReplyPolicyRepository.class),mock(BossAccountRepository.class),jobs,users,mock(AuditService.class),mock(InboundAiReplyQueueService.class));
         }
 
         BrowserUnreadObservation observation(UUID id,UUID accountId,String title){

@@ -78,19 +78,20 @@ async function submit() {
 
 <style scoped>
 .login-page { display: grid; min-height: 100dvh; grid-template-columns: minmax(0,1fr) minmax(0,1fr); background: #fff; }
-.login-context { position: relative; display: grid; place-items: center; overflow: hidden; padding: 64px; background: var(--brand-950); color: #fff; }
+.login-context { position: relative; display: grid; place-items: center; overflow: hidden; padding: 64px; background: var(--bg-sidebar); color: #fff; }
 
 .context-inner { position: relative; z-index: 1; width: min(100%,620px); }
-.product-lockup { display: flex; align-items: center; gap: 12px; color: #c9dfdc; font-size: 14px; font-weight: 600; }
-.product-mark { display: grid; width: 44px; height: 44px; place-items: center; border-radius: 11px; background: var(--brand-600); color: #fff; font-size: 20px; font-weight: 800; }
+.product-lockup { display: flex; align-items: center; gap: 12px; color: rgba(255,255,255,.7); font-size: 14px; font-weight: 600; }
+.product-mark { display: grid; width: 44px; height: 44px; place-items: center; border-radius: var(--radius-control); background: var(--brand-600); color: #fff; font-size: 20px; font-weight: 800; }
 h1 { max-width: 620px; margin: 64px 0 20px; font-size: clamp(30px,3vw,44px); line-height: 1.12; letter-spacing: -.04em; }
-.context-inner > p { max-width: 560px; margin: 0; color: #b8d0cc; font-size: 17px; line-height: 1.8; }
-.context-points { display: grid; grid-template-columns: repeat(3,1fr); gap: 1px; margin: 64px 0 0; border: 1px solid rgba(255,255,255,.13); border-radius: 12px; background: rgba(255,255,255,.13); overflow: hidden; }
+.context-inner > p { max-width: 560px; margin: 0; color: rgba(255,255,255,.6); font-size: 17px; line-height: 1.8; }
+.context-points { display: grid; grid-template-columns: repeat(3,1fr); gap: 1px; margin: 64px 0 0; border: 1px solid rgba(255,255,255,.13); border-radius: var(--radius-panel); background: rgba(255,255,255,.13); overflow: hidden; }
 .context-points div { padding: 20px; background: var(--brand-950); }
 .context-points dt { color: #5eead4; font-weight: 700; }
-.context-points dd { margin: 7px 0 0; color: #a9c4c0; font-size: 13px; line-height: 1.45; }
-.login-panel { display:grid; place-items:center; padding:48px; background:linear-gradient(145deg,var(--surface-blue),var(--surface-teal)); }
-.login-card { width:min(100%,430px); padding:40px; border:1px solid var(--border-teal); border-radius:16px; background:linear-gradient(155deg,var(--surface),#f8fcfb); box-shadow:var(--shadow-rest); }
+.context-points dd { margin: 7px 0 0; color: rgba(255,255,255,.55); font-size: 13px; line-height: 1.45; }
+.login-panel { display:grid; place-items:center; padding:48px; background:var(--surface-page); }
+.login-card { width:min(100%,430px); padding:40px; border:1px solid var(--border-subtle); border-radius:var(--radius-panel); background:var(--surface); box-shadow:var(--shadow-rest); }
+.login-card > * { position:relative; z-index:1; }
 .login-heading > span { color: var(--brand-700); font-size: 13px; font-weight: 700; }
 .login-heading h2 { margin: 10px 0; font-size: 28px; letter-spacing: -.02em; }
 .login-heading p { margin: 0 0 28px; color: var(--text-secondary); font-size: 14px; line-height: 1.65; }
@@ -99,7 +100,7 @@ h1 { max-width: 620px; margin: 64px 0 20px; font-size: clamp(30px,3vw,44px); lin
 .login-options a { color: var(--brand-700); font-weight: 700; text-decoration: none; }
 .login-options a:hover { text-decoration: underline; }
 .login-submit { width: 100%; min-height: 44px; margin-top: 4px; }
-.security-note { margin: 18px 0 0; color: #71817e; font-size: 12px; line-height: 1.6; text-align: center; }
+.security-note { margin: 18px 0 0; color: var(--text-tertiary); font-size: 12px; line-height: 1.6; text-align: center; }
 @media (max-width: 900px) {
   .login-page { grid-template-columns: 1fr; }
   .login-context { min-height: auto; place-items: start; padding: 32px 24px; }

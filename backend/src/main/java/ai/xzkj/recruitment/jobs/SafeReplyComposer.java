@@ -13,6 +13,7 @@ import java.util.Optional;
  */
 public final class SafeReplyComposer {
     public static final String GENERIC_REPLY = "您好，已收到您的消息。招聘同事当前暂时不在线，稍后会尽快与您沟通。";
+    public static final int MAX_REPLY_LENGTH = 240;
 
     private SafeReplyComposer() {
     }
@@ -33,11 +34,14 @@ public final class SafeReplyComposer {
                     "资料不完整，已使用通用回退：" + String.join("、", missing));
         }
 
-        String salary = isBlank(job.getSalaryDisplay()) ? "" : "，薪资说明为" + job.getSalaryDisplay();
-        String content = "您好，已收到您关于「" + job.getTitle() + "」的消息。该岗位工作地点为"
-                + job.getLocation() + salary + "，主要工作是" + job.getReplySummary() + "。"
-                + company.getName() + "属于" + company.getKnowledgeIndustry() + "行业，"
-                + company.getKnowledgeSummary() + "。招聘同事当前暂时不在线，稍后会继续与您沟通。";
+        String title = concise(job.getTitle(), 48);
+        String location = concise(job.getLocation(), 36);
+        String salary = isBlank(job.getSalaryDisplay()) ? "" : "，薪资为" + concise(job.getSalaryDisplay(), 28);
+        String content = "您好，已收到您关于「" + title + "」的消息。岗位地点为" + location
+                + salary + "；如果您有兴趣，欢迎继续沟通。";
+        if (content.length() > MAX_REPLY_LENGTH) {
+            content = "您好，已收到您关于「" + concise(title, 32) + "」的消息。如果您有兴趣，欢迎继续沟通。";
+        }
         return new Composition("KNOWLEDGE", content, List.of(), List.of(),
                 "已使用审核通过的公司知识 v" + company.getKnowledgeVersion()
                         + " 与岗位知识 v" + job.getKnowledgeVersion());
@@ -74,6 +78,11 @@ public final class SafeReplyComposer {
 
     private static boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    private static String concise(String value, int maxLength) {
+        String cleaned = value == null ? "" : value.replaceAll("\\s+", " ").trim();
+        return cleaned.length() <= maxLength ? cleaned : cleaned.substring(0, maxLength - 1) + "…";
     }
 
     private static void addIf(boolean condition, List<String> blockers, List<String> missing, String code, String label) {

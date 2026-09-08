@@ -1,0 +1,97 @@
+groups:
+  - name: recruitment-inbound-reply
+    rules:
+      - alert: RecruitmentBackendUnavailable
+        expr: up{job="recruitment-backend"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: 招聘值守台后端不可用
+          runbook: docs/unattended-operations-runbook.md#后端不可用
+
+      - alert: InboundReplyQueueBacklog
+        expr: recruitment_inbound_reply_queue_depth > 50
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: AI 自动回复队列持续积压
+          runbook: docs/unattended-operations-runbook.md#队列持续积压
+
+      - alert: InboundReplyQueueStalled
+        expr: recruitment_inbound_reply_queue_oldest_seconds > 180
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: 最早 AI 回复任务等待超过 3 分钟
+          runbook: docs/unattended-operations-runbook.md#任务等待超时
+
+      - alert: InboundReplySendUnknown
+        expr: recruitment_inbound_reply_send_unknown > 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: 存在发送结果不确定的回复，系统不会自动重试
+          runbook: docs/unattended-operations-runbook.md#发送结果不确定
+
+      - alert: InboundReplyRetriesGrowing
+        expr: recruitment_inbound_reply_retry_waiting > 10
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: AI 回复重试任务持续增加
+          runbook: docs/unattended-operations-runbook.md#重试任务持续增加
+
+      - alert: InboundReplyModelSaturated
+        expr: recruitment_inbound_reply_model_slots_available == 0
+        for: 2m
+        labels: { severity: warning }
+        annotations:
+          summary: AI 并发槽位持续耗尽
+          runbook: docs/unattended-operations-runbook.md#ai-并发饱和
+
+      - alert: RecruitmentBrowserBridgeUnavailable
+        expr: recruitment_browser_devices_active == 0
+        for: 3m
+        labels: { severity: critical }
+        annotations:
+          summary: 没有可工作的浏览器桥接设备
+          runbook: docs/unattended-operations-runbook.md#浏览器桥接不可用
+
+      - alert: RecruitmentBrowserBridgeStale
+        expr: recruitment_browser_devices_stale > 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: 浏览器桥接心跳已经过期
+          runbook: docs/unattended-operations-runbook.md#浏览器桥接不可用
+
+      - alert: InboundReplyAutoSendDisabled
+        expr: recruitment_inbound_reply_auto_send_enabled == 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: AI 自动发送总开关处于关闭状态
+          runbook: docs/unattended-operations-runbook.md#自动发送开关关闭
+
+      - alert: RecruitmentBackendHeapHigh
+        expr: sum(jvm_memory_used_bytes{job="recruitment-backend",area="heap"}) / sum(jvm_memory_max_bytes{job="recruitment-backend",area="heap"}) > 0.85
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: 后端 JVM 堆内存持续超过 85%
+          runbook: docs/unattended-operations-runbook.md#jvm-内存持续偏高
+
+      - alert: RecruitmentDatabasePoolWaiting
+        expr: hikaricp_connections_pending{job="recruitment-backend"} > 0
+        for: 2m
+        labels: { severity: warning }
+        annotations:
+          summary: 数据库连接池持续存在等待请求
+          runbook: docs/unattended-operations-runbook.md#数据库连接池等待
+
+      - alert: RecruitmentBackendRestartLoop
+        expr: changes(process_start_time_seconds{job="recruitment-backend"}[15m]) > 2
+        labels: { severity: critical }
+        annotations:
+          summary: 后端在 15 分钟内发生多次重启
+          runbook: docs/unattended-operations-runbook.md#后端反复重启

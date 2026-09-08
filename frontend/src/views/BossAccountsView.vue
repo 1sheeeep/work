@@ -52,24 +52,7 @@ const attentionCount = computed(() => visibleAccounts.value.filter(account => {
   const device = activeDevice(account.id)
   return device?.runtimeState !== 'RUNNING' || !device.lastSuccessfulChatSyncAt || device.recoveryStatus === 'WAITING_RECOLLECTION' || unreadTotal(account.id) > 0 || draftJobCount(account.id) > 0
 }).length)
-const accountDistribution = computed(() => {
-  const total = visibleAccounts.value.length
-  const paused = visibleAccounts.value.filter(account => account.status !== 'ACTIVE' || activeDevice(account.id)?.runtimeState === 'PAUSED').length
-  const attention = visibleAccounts.value.filter(account => {
-    const device = activeDevice(account.id)
-    return account.status === 'ACTIVE' && device?.runtimeState !== 'PAUSED' && (device?.runtimeState !== 'RUNNING' || collectionState(account).tone !== 'healthy')
-  }).length
-  const normal = Math.max(0, total - paused - attention)
-  const normalEnd = total ? normal / total * 360 : 0
-  const attentionEnd = total ? normalEnd + attention / total * 360 : 0
-  return {
-    total,
-    normal,
-    attention,
-    paused,
-    ringStyle: { background: `conic-gradient(var(--success) 0deg ${normalEnd}deg, var(--warning) ${normalEnd}deg ${attentionEnd}deg, #98a6bb ${attentionEnd}deg 360deg)` },
-  }
-})
+
 const filteredAccounts = computed(() => visibleAccounts.value.filter(account => {
   const device = activeDevice(account.id)
   if (accountFilter.value === 'ONLINE') return device?.runtimeState === 'RUNNING' && collectionState(account).tone === 'healthy'
@@ -106,7 +89,7 @@ function collectionState(account: BossAccount) {
   if (device.recoveryStatus === 'RECOLLECTED') return { label: '恢复已确认', type: 'success' as const, tone: 'healthy' }
   return { label: '采集正常', type: 'success' as const, tone: 'healthy' }
 }
-function syncTypeLabel(type?: BrowserDevice['lastSuccessfulSyncType']) { return type === 'CHAT' ? '沟通页' : type === 'JOB' ? '职位页' : '—' }
+function syncTypeLabel(type?: BrowserDevice['lastSuccessfulSyncType']) { return type === 'CHAT' ? '沟通页' : type === 'JOB' ? '职位页' : '无' }
 function lastSuccessfulSync(device?: BrowserDevice) {
   return device?.lastSuccessfulSyncAt ? `${formatDate(device.lastSuccessfulSyncAt)} · ${syncTypeLabel(device.lastSuccessfulSyncType)}` : '尚无成功采集记录'
 }
@@ -256,7 +239,7 @@ function showFilterHelp() {
 }
 
 function formatDate(value?: string) {
-  return value ? new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) : '—'
+  return value ? new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) : '无'
 }
 
 onMounted(loadData)
@@ -286,17 +269,7 @@ onMounted(loadData)
             <p v-if="!activeUnread.length && !collectionBlockedCount">桥接和沟通页采集状态正常，暂时没有需要立即处理的项目。</p>
           </div>
         </article>
-        <article class="surface-panel section-card card-panel account-distribution-overview">
-          <div class="overview-heading"><div><span>账号总览</span><strong>运行分布</strong></div></div>
-          <div class="distribution-content">
-            <div class="distribution-ring" :style="accountDistribution.ringStyle"><div><b>{{ accountDistribution.total }}</b><small>总账号</small></div></div>
-            <dl>
-              <div><dt><i class="normal"></i>运行正常</dt><dd>{{ accountDistribution.normal }}<small>（{{ accountDistribution.total ? Math.round(accountDistribution.normal / accountDistribution.total * 100) : 0 }}%）</small></dd></div>
-              <div><dt><i class="attention"></i>需要关注</dt><dd>{{ accountDistribution.attention }}<small>（{{ accountDistribution.total ? Math.round(accountDistribution.attention / accountDistribution.total * 100) : 0 }}%）</small></dd></div>
-              <div><dt><i class="paused"></i>已暂停</dt><dd>{{ accountDistribution.paused }}<small>（{{ accountDistribution.total ? Math.round(accountDistribution.paused / accountDistribution.total * 100) : 0 }}%）</small></dd></div>
-            </dl>
-          </div>
-        </article>
+
       </section>
       <section class="account-workspace card-panel" aria-label="招聘账号工作区">
       <div v-if="visibleAccounts.length" class="account-toolbar" aria-label="账号状态筛选">
@@ -355,45 +328,60 @@ onMounted(loadData)
 </template>
 
 <style scoped>
-.accounts-overview { display:grid; grid-template-columns:minmax(0,1.4fr) minmax(0,1fr) minmax(0,1fr); gap:16px; margin-bottom:24px; }
-.section-card { padding:22px; }
-.overview-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+.accounts-overview { display:grid; grid-template-columns:minmax(0,1.3fr) minmax(0,1fr); gap:16px; margin-bottom:24px; }
+.section-card { padding:22px; position:relative; overflow:hidden; }
+.overview-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; position:relative; z-index:1; }
 .overview-heading > div { min-width:0; }
 .overview-heading span,.overview-heading strong { display:block; }
 .overview-heading span { color:var(--text-secondary); font-size:12px; }
 .overview-heading strong { margin-top:8px; font-size:22px; line-height:1.4; font-variant-numeric:tabular-nums; }
 .connection-overview .overview-heading strong { font-size:32px; }
 .overview-heading .overview-state { display:flex; align-items:center; gap:6px; font-size:11px; flex-shrink:0; }
-.overview-state i,.attention-mark,.distribution-content i,.status-dot { width:8px; height:8px; border-radius:50%; background:var(--text-tertiary); flex:0 0 auto; }
+.overview-state i,.attention-mark,.status-dot { width:8px; height:8px; border-radius:50%; background:var(--text-tertiary); flex:0 0 auto; }
 .overview-state.healthy { color:var(--success); }.overview-state.healthy i { background:var(--success); }
 .overview-state.warning { color:var(--warning); }.overview-state.warning i,.attention-mark { background:var(--warning); }
-.connection-overview > p { margin:14px 0 20px; color:var(--text-secondary); font-size:12px; line-height:1.65; }
-.overview-metrics { display:flex; flex-wrap:wrap; gap:10px 16px; }
+.connection-overview > p { margin:14px 0 20px; color:var(--text-secondary); font-size:12px; line-height:1.65; position:relative; z-index:1; }
+.overview-metrics { display:flex; flex-wrap:wrap; gap:10px 16px; position:relative; z-index:1; }
 .overview-metrics span { color:var(--text-secondary); font-size:12px; }
 .overview-metrics b { color:var(--text); font-variant-numeric:tabular-nums; }
-.connection-overview { border-color:var(--border-teal); background:linear-gradient(145deg,var(--surface-teal),var(--surface)); }
-.attention-overview { border-color:var(--border-amber); background:linear-gradient(145deg,var(--surface-amber),var(--surface)); }
-.attention-overview--warning { background:linear-gradient(145deg,#fff2d9,var(--surface)); border-color:var(--border-amber); }
+.connection-overview { border-color:var(--border-teal); background:linear-gradient(145deg, var(--surface-teal) 0%, var(--surface) 86%); }
+.connection-overview::before {
+  content: '';
+  position: absolute;
+  top: -48px;
+  right: -48px;
+  width: 180px;
+  height: 180px;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--brand-600) 8%, transparent) 0%, transparent 70%);
+  pointer-events: none;
+}
+.attention-overview { border-color:var(--border-amber); background:linear-gradient(145deg, var(--surface-amber) 0%, var(--surface) 86%); }
+.attention-overview::before {
+  content: '';
+  position: absolute;
+  top: -48px;
+  right: -48px;
+  width: 180px;
+  height: 180px;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--warning) 7%, transparent) 0%, transparent 70%);
+  pointer-events: none;
+}
+.attention-overview--warning { background:linear-gradient(145deg, var(--surface-amber) 0%, var(--surface) 72%); border-color:var(--border-amber); }
 .attention-mark { margin-top:7px; }.attention-mark--quiet { background:var(--success); }
 .attention-list { display:grid; gap:12px; margin-top:18px; }.attention-list p { margin:0; color:var(--text-secondary); font-size:12px; line-height:1.65; }
-.distribution-content { display:flex; align-items:center; gap:20px; margin-top:18px; }
-.distribution-ring { width:94px; height:94px; flex:0 0 auto; display:grid; place-items:center; border-radius:50%; }
-.account-distribution-overview { border-color:var(--border-blue); background:linear-gradient(145deg,var(--surface-blue),var(--surface)); }
-.distribution-ring > div { width:72px; height:72px; border-radius:50%; background:rgba(255,255,255,.86); display:flex; flex-direction:column; align-items:center; justify-content:center; }
-.distribution-ring b { font-size:24px; }.distribution-ring small { color:var(--text-secondary); font-size:11px; }
-.distribution-content dl { flex:1; margin:0; display:grid; gap:10px; font-size:12px; }
-.distribution-content dl > div,.distribution-content dt { display:flex; align-items:center; gap:7px; }
-.distribution-content dd { margin:0 0 0 auto; font-weight:600; white-space:nowrap; }
-.distribution-content dd small { color:var(--text-secondary); font-size:10px; }
-.distribution-content .normal { background:var(--success); }.distribution-content .attention { background:var(--warning); }
 .account-workspace { overflow:hidden; }
-.account-toolbar { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:20px 22px; border-bottom:1px solid var(--border-subtle); }
+.account-toolbar { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:20px 22px; border-bottom:1px solid var(--border-subtle); background:var(--surface); }
 .account-toolbar strong { display:block; font-size:17px; }.account-toolbar > div > span { display:block; color:var(--text-secondary); font-size:12px; margin-top:5px; }
-.account-filter-tabs { display:flex; flex-wrap:wrap; gap:4px; padding:4px; border-radius:10px; background:var(--surface-soft); }
-.account-filter-tabs button { padding:8px 12px; border:0; border-radius:7px; color:var(--text-secondary); background:transparent; cursor:pointer; font-size:12px; }
+.account-filter-tabs { display:flex; flex-wrap:wrap; gap:4px; padding:4px; border-radius:var(--radius-control); background:var(--surface-soft); }
+.account-filter-tabs button { padding:8px 12px; border:0; border-radius:6px; color:var(--text-secondary); background:transparent; cursor:pointer; font-size:12px; }
 .account-filter-tabs button.active { background:var(--primary); color:white; }.account-filter-tabs button:hover:not(.active) { background:var(--border-subtle); }
 .account-grid { display:grid; grid-template-columns:1fr; }
-.account-card { padding:24px; background:linear-gradient(90deg,var(--surface),#fbfdfd); border:0; border-bottom:1px solid var(--border); }
+.account-card { padding:24px; background:var(--surface); border:0; border-bottom:1px solid var(--border-subtle); transition:background var(--transition-fast); position:relative; }
+.account-card:nth-child(even) { background:var(--surface-soft); }
+.account-card:hover { background:var(--surface-row); }
+.account-card--attention { background:linear-gradient(90deg,var(--surface-amber),var(--surface) 70%); box-shadow:inset 0 0 0 1px var(--border-amber); }
 .account-card:last-child { border-bottom:0; }
 .account-card > header { display:flex; align-items:center; gap:12px; }.account-card > header > div { flex:1; min-width:0; }
 .account-card > header strong { display:block; font-size:17px; overflow-wrap:anywhere; }.account-card > header small { display:block; margin-top:4px; color:var(--text-secondary); font-size:12px; }
@@ -416,6 +404,10 @@ onMounted(loadData)
 .connection-dialog li b { display:grid; place-items:center; width:28px; height:28px; flex:0 0 auto; border-radius:50%; background:var(--brand-50); color:var(--primary); }
 .token-box { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px; }.token-box code { padding:12px; background:var(--surface-soft); overflow-wrap:anywhere; }.token-box small { grid-column:1/-1; color:var(--text-secondary); }
 .dialog-alert { margin-bottom:16px; }
-@media(max-width:1200px) { .accounts-overview { grid-template-columns:repeat(2,minmax(0,1fr)); }.connection-overview { grid-column:1/-1; } }
-@media(max-width:760px) { .accounts-overview { grid-template-columns:1fr; }.account-toolbar { align-items:stretch; flex-direction:column; }.account-filter-tabs button { flex:1; padding-inline:6px; }.collection-health dl { grid-template-columns:1fr; gap:14px; }.collection-health dl > div + div { padding-left:0; border-left:0; }.account-card { padding:18px; }.overview-heading { flex-wrap:wrap; }.distribution-content { max-width:360px; }.account-card > header { flex-wrap:wrap; } }
+
+:global(:root[data-theme="dark"]) .connection-overview::before { background: radial-gradient(circle, color-mix(in srgb, var(--brand-600) 14%, transparent) 0%, transparent 70%); }
+:global(:root[data-theme="dark"]) .attention-overview::before { background: radial-gradient(circle, color-mix(in srgb, var(--warning) 12%, transparent) 0%, transparent 70%); }
+
+@media(max-width:760px) { .accounts-overview { grid-template-columns:1fr; }.account-toolbar { align-items:stretch; flex-direction:column; }.account-filter-tabs button { flex:1; padding-inline:6px; }.collection-health dl { grid-template-columns:1fr; gap:14px; }.collection-health dl > div + div { padding-left:0; border-left:0; }.account-card { padding:18px; }.overview-heading { flex-wrap:wrap; }.account-card > header { flex-wrap:wrap; } }
+@media(max-width:480px) { .account-facts { gap:8px 16px; }.account-facts b { font-size:14px; }.account-card > footer { flex-wrap:wrap; gap:8px; }.bridge-state { flex-wrap:wrap; }.account-card { padding:14px; }.section-card { padding:16px; } }
 </style>

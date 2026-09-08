@@ -2,7 +2,7 @@
 import PageHeader from '../components/PageHeader.vue'
 import AsyncState from '../components/AsyncState.vue'
 import MetricCard from '../components/MetricCard.vue'
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
 import type { FormInstance, FormRules } from "element-plus";
 import { ElMessage, ElMessageBox, ElNotification } from "element-plus";
 import { Briefcase, Connection, DocumentChecked, InfoFilled, Refresh, Search, Warning } from "@element-plus/icons-vue";
@@ -46,6 +46,7 @@ const companyDialogOpen = ref(false);
 const companySaving = ref(false);
 const selectedCompany = ref<Company | null>(null);
 const companyForm = reactive({ industry: "", scale: "", summary: "", approved: false });
+let refreshTimer: ReturnType<typeof setInterval> | null = null;
 const reviewForm = reactive<JobReviewFormValue>({
   location: "",
   salaryMinK: 1,
@@ -119,9 +120,11 @@ function statusTagType(status: JobPositionStatus) {
   ];
 }
 
-async function loadData() {
-  loading.value = true;
-  loadError.value = "";
+async function loadData(silent = false) {
+  if (!silent) {
+    loading.value = true;
+    loadError.value = "";
+  }
   try {
     const [jobResponse, companyResponse] = await Promise.all([
       api.get<JobPosition[]>("/job-positions", {
@@ -137,9 +140,15 @@ async function loadData() {
     );
     companies.value = companyResponse.data;
   } catch (error) {
-    loadError.value = apiErrorMessage(error, "职位资料加载失败，请重试");
+    if (!silent) loadError.value = apiErrorMessage(error, "职位资料加载失败，请重试");
   } finally {
-    loading.value = false;
+    if (!silent) loading.value = false;
+  }
+}
+
+function refreshVisibleJobs() {
+  if (document.visibilityState === "visible" && !loading.value && !reviewDialogOpen.value && !companyDialogOpen.value) {
+    void loadData(true);
   }
 }
 
@@ -328,7 +337,17 @@ async function completeImportedReview() {
   }
 }
 
-onMounted(loadData);
+onMounted(() => {
+  void loadData();
+  refreshTimer = setInterval(refreshVisibleJobs, 15_000);
+  window.addEventListener("focus", refreshVisibleJobs);
+  document.addEventListener("visibilitychange", refreshVisibleJobs);
+});
+onUnmounted(() => {
+  if (refreshTimer) clearInterval(refreshTimer);
+  window.removeEventListener("focus", refreshVisibleJobs);
+  document.removeEventListener("visibilitychange", refreshVisibleJobs);
+});
 
 function showMetricsHelp() {
   ElNotification({
@@ -376,10 +395,10 @@ function showJobsHelp() {
         <h1>岗位资料 · 运营面板</h1>
         <p>同步、核对并维护当前实际招聘岗位。<el-button :icon="InfoFilled" size="small" type="text" @click="showMetricsHelp">查看说明</el-button></p>
       </div>
-      <el-button :icon="Refresh" :loading="loading" @click="loadData">刷新</el-button>
+      <el-button :icon="Refresh" :loading="loading" @click="loadData()">刷新</el-button>
     </PageHeader>
     <AsyncState v-if="loading" state="loading" aria-label="正在加载岗位资料" />
-    <AsyncState v-else-if="loadError" state="error" title="职位暂时无法加载" :message="loadError" retry-label="重新加载" @retry="loadData">
+    <AsyncState v-else-if="loadError" state="error" title="职位暂时无法加载" :message="loadError" retry-label="重新加载" @retry="loadData()">
       <template #icon><el-icon><Refresh /></el-icon></template>
     </AsyncState>
     <template v-else>
@@ -476,10 +495,8 @@ function showJobsHelp() {
                 label="草稿"
                 value="DRAFT" /><el-option
                 label="已启用"
-                value="ACTIVE" /><el-option
-                label="已关闭"
-                value="CLOSED" /></el-select
-            ><el-button @click="loadData">查询</el-button>
+                value="ACTIVE" /></el-select
+            ><el-button @click="loadData()">查询</el-button>
           </div>
         </div>
         <AsyncState v-if="jobs.length === 0" state="empty" embedded title="还没有符合条件的职位" message="真实岗位同步后会显示在这里。">

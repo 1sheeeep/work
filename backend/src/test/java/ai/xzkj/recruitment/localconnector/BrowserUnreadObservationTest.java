@@ -15,6 +15,121 @@ import static org.mockito.Mockito.when;
 class BrowserUnreadObservationTest {
     private static final String DIGEST="a".repeat(64);
 
+    @Test void advancesAnExplicitReadConversationCycleAndStopsForHumanInterview(){
+        BrowserDevice device=mock(BrowserDevice.class);when(device.getBossAccount()).thenReturn(mock(BossAccount.class));
+        SystemUser hr=mock(SystemUser.class);
+        Instant now=Instant.parse("2026-09-06T10:00:00Z");
+        BrowserUnreadObservation observation=new BrowserUnreadObservation(device,DIGEST,now,now);
+        observation.prepareDraft("KNOWLEDGE","已收到您的消息","已匹配岗位","KNOWLEDGE_READY",UUID.randomUUID(),List.of(),1,1,now);
+        observation.verifyDetail("b".repeat(64),"OUTBOUND",now,false,ConversationSignals.none(),now);
+
+        observation.startCycleTest("已收到您的消息",hr,now.plusSeconds(1));
+        assertThat(observation.getConversationStage()).isEqualTo("INITIAL_CONTACT");
+        observation.recordActionOutcome("SEND_MESSAGE","SUCCEEDED",now.plusSeconds(2));
+        assertThat(observation.getConversationStage()).isEqualTo("AWAITING_REPLY");
+
+        observation.verifyDetail("c".repeat(64),"INBOUND",now.plusSeconds(3),false,
+                new ConversationSignals(true,false,false,false,false,false,false,false),now.plusSeconds(3));
+        assertThat(observation.getConversationStage()).isEqualTo("CAN_REQUEST_RESUME");
+        observation.recordActionOutcome("REQUEST_RESUME","SUCCEEDED",now.plusSeconds(4));
+        assertThat(observation.getConversationStage()).isEqualTo("RESUME_REQUESTED");
+
+        observation.verifyDetail("d".repeat(64),"INBOUND",now.plusSeconds(5),false,
+                new ConversationSignals(false,true,true,true,false,false,false,false),now.plusSeconds(5));
+        assertThat(observation.getCycleTestStatus()).isEqualTo("WAITING_RESUME_REVIEW");
+        assertThat(observation.getConversationStage()).isEqualTo("RESUME_RECEIVED");
+
+        observation.reviewCycleResume("APPROVED",hr,"简历匹配，可交换联系方式",now.plusSeconds(6));
+        assertThat(observation.getConversationStage()).isEqualTo("CAN_EXCHANGE_CONTACT");
+        observation.recordActionOutcome("EXCHANGE_WECHAT","SUCCEEDED",now.plusSeconds(7));
+        assertThat(observation.getConversationStage()).isEqualTo("CONTACT_EXCHANGED");
+        assertThat(observation.getCycleTestStatus()).isEqualTo("WAITING_HUMAN_INTERVIEW");
+        assertThat(observation.getResolutionStatus()).isEqualTo("HUMAN_TAKEOVER");
+    }
+
+    @Test void derivesConversationStageFromPositiveDomSignals(){
+        BrowserDevice device=mock(BrowserDevice.class);when(device.getBossAccount()).thenReturn(mock(BossAccount.class));
+        Instant now=Instant.parse("2026-09-06T10:00:00Z");
+        BrowserUnreadObservation observation=new BrowserUnreadObservation(device,DIGEST,now,now);
+        observation.verifyDetail("b".repeat(64),"OUTBOUND",now,false,
+                new ConversationSignals(true,false,true,false,false,true,true,false),now);
+        assertThat(observation.getConversationStage()).isEqualTo("CAN_REQUEST_RESUME");
+
+        observation.verifyDetail("c".repeat(64),"OUTBOUND",now,false,
+                new ConversationSignals(false,true,true,false,false,false,true,false),now);
+        assertThat(observation.getConversationStage()).isEqualTo("CAN_SCHEDULE_INTERVIEW");
+
+        observation.verifyDetail("d".repeat(64),"OUTBOUND",now,false,
+                new ConversationSignals(false,true,false,false,true,false,true,true),now);
+        assertThat(observation.getConversationStage()).isEqualTo("INTERVIEW_SCHEDULED");
+    }
+
+    @Test void keepsConfirmedResumeMilestoneWhenAFormerControlDisappears(){
+        BrowserDevice device=mock(BrowserDevice.class);when(device.getBossAccount()).thenReturn(mock(BossAccount.class));
+        Instant now=Instant.parse("2026-09-06T10:00:00Z");
+        BrowserUnreadObservation observation=new BrowserUnreadObservation(device,DIGEST,now,now);
+
+        observation.verifyDetail("b".repeat(64),"INBOUND",now,false,
+                new ConversationSignals(false,true,false,false,false,false,false,false),now);
+        observation.verifyDetail("c".repeat(64),"INBOUND",now.plusSeconds(1),false,
+                ConversationSignals.none(),now.plusSeconds(1));
+
+        assertThat(observation.getConversationSignals().resumeReceived()).isTrue();
+        assertThat(observation.getResumePipelineStatus()).isEqualTo("DETECTED");
+    }
+
+    @Test void keepsInterviewScheduledAsATerminalMilestoneAndClosesLaterUnreadMessages(){
+        BrowserDevice device=mock(BrowserDevice.class);when(device.getBossAccount()).thenReturn(mock(BossAccount.class));
+        Instant now=Instant.parse("2026-09-06T10:00:00Z");
+        BrowserUnreadObservation observation=new BrowserUnreadObservation(device,DIGEST,now,now);
+        observation.verifyDetail("b".repeat(64),"OUTBOUND",now,false,
+                new ConversationSignals(false,true,false,false,true,false,true,true),now);
+
+        observation.verifyDetail("c".repeat(64),"INBOUND",now.plusSeconds(60),true,
+                ConversationSignals.none(),now.plusSeconds(60));
+
+        assertThat(observation.getConversationStage()).isEqualTo("INTERVIEW_SCHEDULED");
+        assertThat(observation.getConversationSignals().interviewScheduled()).isTrue();
+        assertThat(observation.isUnread()).isFalse();
+        assertThat(observation.getUnreadCount()).isZero();
+        assertThat(observation.getEligibilityStatus()).isEqualTo("HUMAN_TAKEOVER");
+        assertThat(observation.getResolutionStatus()).isEqualTo("HUMAN_TAKEOVER");
+    }
+
+    @Test void keepsInitialContactUntilTheAutomaticReplyHasSucceeded(){
+        BrowserDevice device=mock(BrowserDevice.class);when(device.getBossAccount()).thenReturn(mock(BossAccount.class));
+        SystemUser hr=mock(SystemUser.class);
+        Instant now=Instant.parse("2026-09-06T10:00:00Z");
+        BrowserUnreadObservation observation=new BrowserUnreadObservation(device,DIGEST,now,now);
+        observation.prepareDraft("KNOWLEDGE","已收到您的消息","已匹配岗位","KNOWLEDGE_READY",UUID.randomUUID(),List.of(),1,1,now);
+        observation.verifyDetail("b".repeat(64),"OUTBOUND",now,false,ConversationSignals.none(),now);
+        observation.startCycleTest("已收到您的消息",hr,now.plusSeconds(1));
+
+        observation.verifyDetail("c".repeat(64),"OUTBOUND",now.plusSeconds(2),false,
+                new ConversationSignals(true,false,false,false,false,false,false,false),now.plusSeconds(2));
+
+        assertThat(observation.getConversationStage()).isEqualTo("INITIAL_CONTACT");
+    }
+
+    @Test void cancelsAnActiveCycleAndAllowsItToBeStartedAgain(){
+        BrowserDevice device=mock(BrowserDevice.class);when(device.getBossAccount()).thenReturn(mock(BossAccount.class));
+        SystemUser hr=mock(SystemUser.class);
+        Instant now=Instant.parse("2026-09-06T10:00:00Z");
+        BrowserUnreadObservation observation=new BrowserUnreadObservation(device,DIGEST,now,now);
+        observation.prepareDraft("KNOWLEDGE","已收到您的消息","已匹配岗位","KNOWLEDGE_READY",UUID.randomUUID(),List.of(),1,1,now);
+        observation.verifyDetail("b".repeat(64),"OUTBOUND",now,false,ConversationSignals.none(),now);
+        observation.startCycleTest("已收到您的消息",hr,now.plusSeconds(1));
+
+        observation.cancelCycleTest(hr,"测试取消",now.plusSeconds(2));
+
+        assertThat(observation.getCycleTestStatus()).isEqualTo("CANCELLED");
+        assertThat(observation.getResolutionStatus()).isEqualTo("HUMAN_TAKEOVER");
+        observation.verifyDetail("c".repeat(64),"OUTBOUND",now.plusSeconds(3),false,ConversationSignals.none(),now.plusSeconds(3));
+        observation.startCycleTest("重新开始",hr,now.plusSeconds(4));
+        assertThat(observation.getCycleTestStatus()).isEqualTo("ACTIVE");
+        assertThat(observation.getConversationStage()).isEqualTo("INITIAL_CONTACT");
+    }
+
     @Test void confirmsHrReplyAndResetsForNextInboundCycle(){
         BrowserDevice device=mock(BrowserDevice.class);when(device.getBossAccount()).thenReturn(mock(BossAccount.class));
         Instant first=Instant.parse("2026-08-29T12:00:00Z"),now=first.plusSeconds(10);

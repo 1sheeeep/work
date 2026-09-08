@@ -26,6 +26,7 @@
   let singleAccountAutoReplyEnabled = false;
   let singleAccountAutoReplyTimer = null;
   let singleAccountAutoReplyBusy = false;
+  let dutyControlTimer = null;
   let singleAccountPendingChatDigest = null;
   let singleAccountUnreadBaseline = new Map();
   let singleAccountSelectedMessageBaseline = new Map();
@@ -35,9 +36,11 @@
   let pendingJobConfirmationSignature = '';
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (!['BRIDGE_COLLECT', 'BRIDGE_COLLECT_JOBS', 'BRIDGE_CHECK_REPLY_READINESS', 'BRIDGE_INSPECT_CURRENT_CONTROLS', 'BRIDGE_TEST_CURRENT_ACTION_ENTRY', 'BRIDGE_CONFIRM_CURRENT_EXCHANGE', 'BRIDGE_PREPARE_ACTION_LEASE', 'BRIDGE_EXECUTE_ACTION_LEASE', 'BRIDGE_FILL_TEST_DRAFT', 'BRIDGE_PREPARE_CURRENT_SEND_TEST', 'BRIDGE_SEND_CURRENT_TEST_DRAFT', 'BRIDGE_DIAGNOSE_CURRENT_AUTO_REPLY', 'BRIDGE_ARM_CURRENT_AUTO_REPLY_TEST', 'BRIDGE_CANCEL_CURRENT_AUTO_REPLY_TEST', 'BRIDGE_SET_SINGLE_ACCOUNT_AUTO_REPLY', 'BRIDGE_PREPARE_APPROVED_DRAFT_FILL', 'BRIDGE_FILL_APPROVED_DRAFT', 'BRIDGE_COLLECT_VISIBLE_RESUME', 'BRIDGE_OPEN_VISIBLE_RESUME'].includes(message?.type)) return false;
+    if (!['BRIDGE_COLLECT', 'BRIDGE_COLLECT_JOBS', 'BRIDGE_LOCATE_CONVERSATION', 'BRIDGE_CHECK_REPLY_READINESS', 'BRIDGE_INSPECT_CURRENT_CONTROLS', 'BRIDGE_TEST_CURRENT_ACTION_ENTRY', 'BRIDGE_CONFIRM_CURRENT_EXCHANGE', 'BRIDGE_PREPARE_ACTION_LEASE', 'BRIDGE_EXECUTE_ACTION_LEASE', 'BRIDGE_FILL_TEST_DRAFT', 'BRIDGE_PREPARE_CURRENT_SEND_TEST', 'BRIDGE_SEND_CURRENT_TEST_DRAFT', 'BRIDGE_DIAGNOSE_CURRENT_AUTO_REPLY', 'BRIDGE_ARM_CURRENT_AUTO_REPLY_TEST', 'BRIDGE_CANCEL_CURRENT_AUTO_REPLY_TEST', 'BRIDGE_SET_SINGLE_ACCOUNT_AUTO_REPLY', 'BRIDGE_PREPARE_APPROVED_DRAFT_FILL', 'BRIDGE_FILL_APPROVED_DRAFT', 'BRIDGE_COLLECT_VISIBLE_RESUME', 'BRIDGE_OPEN_VISIBLE_RESUME'].includes(message?.type)) return false;
     const task = message.type === 'BRIDGE_COLLECT_JOBS'
       ? collectJobsAndPublish(Boolean(message.allowEmbeddedJobList))
+      : message.type === 'BRIDGE_LOCATE_CONVERSATION'
+        ? locateConversation(message.chatDigest)
       : message.type === 'BRIDGE_CHECK_REPLY_READINESS'
         ? collectReplyReadiness()
         : message.type === 'BRIDGE_INSPECT_CURRENT_CONTROLS'
@@ -86,11 +89,22 @@
     if (!/^https:\/\/(?:[^./]+\.)?zhipin\.com$/i.test(event.origin)) return;
     if (event.data?.type === 'RECRUITMENT_VISIBLE_RESUME_PDF') void forwardMainWorldResumePdf(event.data);
     if (event.data?.type === 'RECRUITMENT_RESUME_DOWNLOAD_DETECTED') void reportResumeDownloadDetected();
+    if (event.data?.type === 'RECRUITMENT_RESUME_CAPTURE_STATUS') void forwardResumeCaptureStatus(event.data);
   });
   window.addEventListener('focus', () => scheduleCollect(500), { passive: true });
   document.addEventListener('visibilitychange', () => { if (!document.hidden) scheduleCollect(500); }, { passive: true });
   scheduleCollect(1_500);
   void restoreSingleAccountAutoReply();
+  scheduleDutyControlSync(1_000);
+
+  function scheduleDutyControlSync(delay = 5_000) {
+    clearTimeout(dutyControlTimer);
+    dutyControlTimer = setTimeout(async () => {
+      dutyControlTimer = null;
+      try { await send({ type: 'BRIDGE_SYNC_DUTY_AUTOMATION' }); } catch { /* 后端暂时不可用时保持当前安全状态。 */ }
+      scheduleDutyControlSync();
+    }, delay);
+  }
 
   function scheduleCollect(delay) {
     clearTimeout(collectTimer);
@@ -164,14 +178,14 @@
       if (!second.messageText) return void finishAutoReplyTest('BLOCKED', '最后一条候选人消息不是可识别的纯文本，已转人工且未发送。');
       const replyResult = await send({ type: 'BRIDGE_DECIDE_INBOUND_REPLY', payload: {
         chatDigest: second.chatDigest, messageDigest: second.messageDigest,
-        messageText: second.messageText, messageAt: second.messageAt,
+        messageText: second.messageText, conversationContext: second.conversationContext, messageAt: second.messageAt,
         selectedUnread: second.selectedUnread, conversationSignals: second.conversationSignals,
         observedAt: new Date().toISOString(),
       } });
       if (!replyResult?.ok) return void finishAutoReplyTest('BLOCKED', `岗位相关性识别失败：${replyResult?.error || '后端不可用'}；未发送。`);
       const decision = replyResult.decision;
       if (!decision?.replyAllowed || !decision.content) return void finishAutoReplyTest('BLOCKED', `${decision?.reason || '消息不符合自动回复条件'}；未发送。`);
-      const replyText = compact(decision.content).slice(0, 90);
+      const replyText = compact(decision.content).slice(0, 200);
       if (!replyText) return void finishAutoReplyTest('BLOCKED', '后端没有返回可发送的安全短回复；未发送。');
       const controls = findReplyControls();
       if (!controls.editor || readEditorText(controls.editor).trim()) return void finishAutoReplyTest('BLOCKED', '回复输入框不可用或已有内容，未发送。');
@@ -235,8 +249,8 @@
   }
 
   async function restoreSingleAccountAutoReply() {
-    const result = await send({ type: 'BRIDGE_GET_STATUS' });
-    if (result?.ok && result.status?.singleAccountAutoReplyEnabled) await setSingleAccountAutoReply(true, true);
+    const result = await send({ type: 'BRIDGE_SYNC_DUTY_AUTOMATION' });
+    if (result?.ok && result.enabled) await setSingleAccountAutoReply(true, true);
   }
 
   async function setSingleAccountAutoReply(enabled, restore = false) {
@@ -372,6 +386,20 @@
       return identity && await digest(identity) === chatDigest ? item : null;
     });
     return found;
+  }
+
+  async function locateConversation(chatDigest) {
+    if (!/^[a-f0-9]{64}$/.test(chatDigest || '')) return blocked('INVALID_TARGET', '定位目标无效。');
+    let target = await findConversationByDigest(chatDigest);
+    if (!target) target = await findConversationByDigestDeep(chatDigest);
+    if (!target) return blocked('CONVERSATION_NOT_VISIBLE', '当前会话列表中未找到目标，可能已不在已加载范围。');
+    target.scrollIntoView({ block: 'center', behavior: 'auto' });
+    target.click();
+    await delay(260);
+    const selected = [...document.querySelectorAll(SELECTORS.selectedConversation)].find(visible);
+    const identity = selected && stableIdentity(selected);
+    if (!identity || await digest(identity) !== chatDigest) return blocked('TARGET_NOT_SELECTED', '目标会话点击后未能确认选中状态。');
+    return { ok: true, reason: '已准确定位并打开 BOSS 会话。' };
   }
 
   async function findNewOrChangedUnreadConversationDeep() {
@@ -553,6 +581,7 @@
       if (!decision) {
         const replyResult = await send({ type: 'BRIDGE_DECIDE_INBOUND_REPLY', payload: {
           chatDigest: second.chatDigest, messageDigest: second.messageDigest, messageText: second.messageText,
+          conversationContext: second.conversationContext,
           messageAt: second.messageAt, selectedUnread: second.selectedUnread,
           conversationSignals: second.conversationSignals, observedAt: new Date().toISOString(), continuous: true,
         } });
@@ -620,8 +649,8 @@
         decision = { ...decision, content: claim.content };
       }
       const replyText = compact(decision.content);
-      if (!replyText || replyText.length > 90) {
-        if (sendLease) await receiptInboundReplySend(sendLease, 'FAILED', `${second.chatDigest}|${second.messageDigest}|INVALID_REPLY_LENGTH`, '租约内容为空或超过 90 字，未发送。');
+      if (!replyText || replyText.length > 200) {
+        if (sendLease) await receiptInboundReplySend(sendLease, 'FAILED', `${second.chatDigest}|${second.messageDigest}|INVALID_REPLY_LENGTH`, '租约内容为空或超过 200 字，未发送。');
         await reportSingleAccountResult(second, 'SILENT', '后端没有返回可发送的安全短回复。');
         singleAccountPendingChatDigest = null;
         return scheduleSingleAccountAutoReply(1_500);
@@ -1956,7 +1985,13 @@
     const conversationSignals = collectConversationSignals();
     const signalSignature = Object.values(conversationSignals).map((value) => value ? '1' : '0').join('');
     const messageText = direction === 'INBOUND' && content ? compact(content).slice(0, 1000) : null;
-    return { ok: true, chatDigest, messageDigest, direction, messageAt, selectedUnread, conversationSignals, messageText, signature: `${chatDigest}:${messageDigest}:${direction}:${messageAt}:${selectedUnread}:${signalSignature}` };
+    const conversationContext = messages.filter((item) => directionOf(item)).slice(-7, -1)
+      .map((item) => {
+        const text = compact(item.textContent).slice(0, 300);
+        if (!text) return null;
+        return `${directionOf(item) === 'INBOUND' ? '候选人' : 'HR'}：${text}`;
+      }).filter(Boolean).join('\n').slice(0, 2400);
+    return { ok: true, chatDigest, messageDigest, direction, messageAt, selectedUnread, conversationSignals, messageText, conversationContext, signature: `${chatDigest}:${messageDigest}:${direction}:${messageAt}:${selectedUnread}:${signalSignature}` };
   }
 
   function collectConversationSignals() {
@@ -2066,18 +2101,52 @@
     return [...document.querySelectorAll('iframe.attachment-iframe, .attachment-view iframe')].find(visible) || null;
   }
 
+  let resumePdfForwardInFlight = null;
+  let lastResumePdfForwardKey = '';
+  let lastResumePdfForwardAt = 0;
+
   async function forwardMainWorldResumePdf(data) {
+    const captureKey = `${data?.fileSize || 0}:${String(data?.fileBase64 || '').slice(0, 96)}`;
+    if (resumePdfForwardInFlight) {
+      showResumeCaptureStatus('content：PDF 正在发送中，忽略重复捕获。');
+      return resumePdfForwardInFlight;
+    }
+    if (captureKey === lastResumePdfForwardKey && Date.now() - lastResumePdfForwardAt < 10_000) {
+      showResumeCaptureStatus('content：同一份 PDF 已提交，忽略重复捕获。');
+      return;
+    }
+    lastResumePdfForwardKey = captureKey;
+    lastResumePdfForwardAt = Date.now();
+    resumePdfForwardInFlight = forwardMainWorldResumePdfOnce(data).finally(() => { resumePdfForwardInFlight = null; });
+    return resumePdfForwardInFlight;
+  }
+
+  async function forwardMainWorldResumePdfOnce(data) {
+    showResumeCaptureStatus('content：收到 PDF 数据，大小=' + (data.fileSize || '?') + ' bytes');
     if (typeof data.fileBase64 !== 'string' || !Number.isInteger(data.fileSize)
-        || data.fileSize < 5 || data.fileSize > 8 * 1024 * 1024 || data.fileBase64.length > 12_000_000) return;
+        || data.fileSize < 5 || data.fileSize > 8 * 1024 * 1024 || data.fileBase64.length > 12_000_000) {
+      showResumeCaptureStatus('content：PDF 数据校验失败');
+      return;
+    }
     const selected = await collectSelectedConversation();
-    if (!selected.ok) return;
+    if (!selected.ok) {
+      showResumeCaptureStatus('content：collectSelectedConversation 失败: ' + (selected.reason || 'unknown'));
+      return;
+    }
+    showResumeCaptureStatus('content：会话识别成功，chatDigest=' + (selected.chatDigest || '').slice(0, 12));
     await collectAndPublish(true);
     const fileDigest = await digest(data.fileBase64);
     const sourceEventDigest = await digest(`${selected.chatDigest}|${selected.messageDigest}|${fileDigest}`);
-    await send({ type: 'BRIDGE_VISIBLE_RESUME_PDF_CAPTURE', payload: {
+    showResumeCaptureStatus('content：正在发送 BRIDGE_VISIBLE_RESUME_PDF_CAPTURE...');
+    const response = await send({ type: 'BRIDGE_VISIBLE_RESUME_PDF_CAPTURE', payload: {
       actionType: 'VISIBLE_RESUME_PDF_CAPTURE', chatDigest: selected.chatDigest,
       sourceEventDigest, fileDigest, fileBase64: data.fileBase64, fileSize: data.fileSize,
     } });
+    if (response?.ok) {
+      showResumeCaptureStatus('content：background 返回成功' + (response.duplicate ? ' (重复)' : ''));
+    } else {
+      showResumeCaptureStatus('content：background 返回失败: ' + (response?.error || '无响应'));
+    }
   }
 
   async function reportResumeDownloadDetected() {
@@ -2085,6 +2154,41 @@
     if (!selected.ok) return;
     await send({ type: 'BRIDGE_VISIBLE_RESUME_IMPORT_STATUS', payload: {
       chatDigest: selected.chatDigest, state: '已识别简历下载操作，正在捕获真实 PDF 文件…', observedAt: new Date().toISOString(),
+    } });
+  }
+
+  let resumeCaptureStatusBar = null;
+  let resumeCaptureStatusTimer = 0;
+
+  function ensureResumeCaptureStatusBar() {
+    if (resumeCaptureStatusBar && document.body.contains(resumeCaptureStatusBar)) return;
+    resumeCaptureStatusBar = document.createElement('div');
+    resumeCaptureStatusBar.id = '__recruitment_capture_status';
+    resumeCaptureStatusBar.style.cssText = 'position:fixed;top:60px;right:12px;z-index:2147483647;max-width:420px;background:rgba(0,0,0,0.82);color:#fff;font:12px/1.5 monospace;padding:8px 12px;border-radius:6px;white-space:pre-wrap;word-break:break-all;user-select:text;transition:opacity 0.3s;';
+    document.body.appendChild(resumeCaptureStatusBar);
+  }
+
+  function showResumeCaptureStatus(text) {
+    ensureResumeCaptureStatusBar();
+    if (!resumeCaptureStatusBar) return;
+    const lines = resumeCaptureStatusBar.textContent.split('\n').filter(Boolean);
+    lines.push('[' + new Date().toLocaleTimeString() + '] ' + text);
+    if (lines.length > 6) lines.splice(0, lines.length - 6);
+    resumeCaptureStatusBar.textContent = lines.join('\n');
+    resumeCaptureStatusBar.style.opacity = '1';
+    clearTimeout(resumeCaptureStatusTimer);
+    resumeCaptureStatusTimer = setTimeout(() => {
+      if (resumeCaptureStatusBar) resumeCaptureStatusBar.style.opacity = '0.25';
+    }, 12000);
+  }
+
+  async function forwardResumeCaptureStatus(data) {
+    if (typeof data.state !== 'string' || !data.state.trim()) return;
+    showResumeCaptureStatus(data.state.trim());
+    const selected = await collectSelectedConversation();
+    if (!selected.ok || !/^[a-f0-9]{64}$/.test(selected.chatDigest || '')) return;
+    await send({ type: 'BRIDGE_VISIBLE_RESUME_IMPORT_STATUS', payload: {
+      chatDigest: selected.chatDigest, state: '[MAIN] ' + data.state.trim().slice(0, 200), observedAt: new Date().toISOString(),
     } });
   }
 
@@ -2120,5 +2224,10 @@
   function blocked(code, reason) { return { ok: false, code, reason }; }
   function stripSelected(value) { return { chatDigest: value.chatDigest, messageDigest: value.messageDigest, direction: value.direction, messageAt: value.messageAt, selectedUnread: value.selectedUnread, conversationSignals: value.conversationSignals, observedAt: new Date().toISOString() }; }
   function delay(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
-  async function send(message) { try { return await chrome.runtime.sendMessage(message); } catch { return null; } }
+  async function send(message) {
+    try { return await chrome.runtime.sendMessage(message); }
+    catch (error) {
+      return { ok: false, error: `扩展后台通信失败：${String(error?.message || error || '未知错误')}` };
+    }
+  }
 })();

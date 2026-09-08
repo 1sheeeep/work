@@ -9,6 +9,7 @@ let syncInFlight = null;
 let jobSyncInFlight = null;
 let actionExecutionInFlight = null;
 let runtimeMutationTail = Promise.resolve();
+let locationPolling = false;
 
 chrome.runtime.onInstalled.addListener(() => initialise());
 chrome.runtime.onStartup.addListener(() => initialise());
@@ -49,6 +50,34 @@ async function initialise() {
   }
   await recoverVerifiedInterviewEntryLock();
   await chrome.alarms.create(ALARM_NAME, { delayInMinutes: 0.1, periodInMinutes: 1 });
+  void pollConversationLocations();
+}
+
+async function pollConversationLocations() {
+  if (locationPolling) return;
+  locationPolling = true;
+  try {
+    while (true) {
+      const settings = await getSettings();
+      if (!settings.deviceToken || settings.enabled === false) { await new Promise(resolve => setTimeout(resolve, 3_000)); continue; }
+      let claim;
+      try { claim = await request(settings.backendUrl, '/api/local-connector/runtime/conversation-locations/claim', { method: 'GET', token: settings.deviceToken, timeoutMs: 22_000 }); }
+      catch { await new Promise(resolve => setTimeout(resolve, 1_500)); continue; }
+      if (!claim?.id) continue;
+      let success = false; let reason = '未找到已打开的 BOSS 沟通页。';
+      try {
+        const tabs = await chrome.tabs.query({ url: BOSS_TAB_PATTERNS });
+        const tab = tabs.find(item => /\/web\/chat\/(?:index|user-center)(?:[/?#]|$)/i.test(item.url || ''));
+        if (tab?.id) {
+          const result = await sendToBossTab(tab.id, { type: 'BRIDGE_LOCATE_CONVERSATION', chatDigest: claim.chatDigest });
+          success = result?.ok === true; reason = result?.reason || result?.error || reason;
+          if (success) { await chrome.tabs.update(tab.id, { active: true }); if (tab.windowId) await chrome.windows.update(tab.windowId, { focused: true }); }
+        }
+      } catch (error) { reason = safeError(error); }
+      await request(settings.backendUrl, '/api/local-connector/runtime/conversation-locations/receipt', { method: 'POST', token: settings.deviceToken, body: { id: claim.id, success, reason: String(reason).slice(0, 300) } }).catch(() => {});
+      await flashActionBadge(success ? '已定位' : '失败', success ? '#0D9488' : '#C2410C');
+    }
+  } finally { locationPolling = false; }
 }
 
 async function recoverVerifiedInterviewEntryLock() {
@@ -77,6 +106,9 @@ async function handleMessage(message, sender) {
       return setEnabled(Boolean(message.enabled));
     case 'BRIDGE_SET_SINGLE_ACCOUNT_AUTO_REPLY':
       return setSingleAccountAutoReply(Boolean(message.enabled));
+    case 'BRIDGE_SYNC_DUTY_AUTOMATION':
+      if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的挂机状态同步。');
+      return syncDutyAutomation();
     case 'BRIDGE_FORGET_DEVICE':
       return forgetDevice();
     case 'BRIDGE_COLLECT_NOW':
@@ -180,6 +212,7 @@ async function decideInboundReply(payload) {
       || !/^[a-f0-9]{64}$/.test(payload.messageDigest || '')
       || typeof payload.messageText !== 'string' || !payload.messageText.trim()
       || payload.messageText.length > 1000 || !Number.isFinite(Date.parse(payload.messageAt))
+      || (payload.conversationContext != null && (typeof payload.conversationContext !== 'string' || payload.conversationContext.length > 2400))
       || typeof payload.selectedUnread !== 'boolean' || !payload.conversationSignals
       || !Number.isFinite(Date.parse(payload.observedAt))) {
     throw new Error('候选人消息识别请求无效。');
@@ -453,27 +486,36 @@ async function recordResumePreviewClickDiagnostic(payload) {
 }
 
 async function importVisibleResumePdf(payload) {
+  console.log('[background] importVisibleResumePdf 收到请求', { chatDigest: payload?.chatDigest?.slice(0, 12), fileSize: payload?.fileSize });
   const settings = await getSettings();
-  if (!settings.deviceToken) throw new Error('请先完成浏览器桥接配对。');
+  if (!settings.deviceToken) { console.error('[background] 缺少 deviceToken'); throw new Error('请先完成浏览器桥接配对。'); }
   if (!payload || payload.actionType !== 'VISIBLE_RESUME_PDF_CAPTURE'
       || !/^[a-f0-9]{64}$/.test(payload.chatDigest || '')
       || !/^[a-f0-9]{64}$/.test(payload.sourceEventDigest || '')
       || !/^[a-f0-9]{64}$/.test(payload.fileDigest || '')
       || !Number.isInteger(payload.fileSize) || payload.fileSize < 5 || payload.fileSize > 8 * 1024 * 1024
-      || typeof payload.fileBase64 !== 'string' || payload.fileBase64.length > 12_000_000) throw new Error('PDF 简历采集数据无效。');
+      || typeof payload.fileBase64 !== 'string' || payload.fileBase64.length > 12_000_000) {
+    console.error('[background] PDF 简历采集数据无效', { actionType: payload?.actionType, chatDigest: payload?.chatDigest?.slice(0, 12), fileSize: payload?.fileSize });
+    throw new Error('PDF 简历采集数据无效。');
+  }
   const runtime = await getRuntime();
-  if (runtime.lastSelectedChatDigest !== payload.chatDigest || !runtime.lastSelectedObservationId)
+  console.log('[background] runtime', { lastSelectedChatDigest: runtime.lastSelectedChatDigest?.slice(0, 12), lastSelectedObservationId: runtime.lastSelectedObservationId, payloadChatDigest: payload.chatDigest?.slice(0, 12) });
+  if (runtime.lastSelectedChatDigest !== payload.chatDigest || !runtime.lastSelectedObservationId) {
+    console.error('[background] 会话不一致', { runtime: runtime.lastSelectedChatDigest?.slice(0, 12), payload: payload.chatDigest?.slice(0, 12), observationId: runtime.lastSelectedObservationId });
     throw new Error('当前 PDF 与最近稳定会话观测不一致，已停止导入。');
-  if (runtime.lastVisibleResumeEventDigest === payload.sourceEventDigest) return { ok: true, duplicate: true };
+  }
   const binary = atob(payload.fileBase64);
   const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
-  if (String.fromCharCode(...bytes.slice(0, 5)) !== '%PDF-') throw new Error('PDF 文件头校验失败。');
+  if (String.fromCharCode(...bytes.slice(0, 5)) !== '%PDF-') { console.error('[background] PDF 文件头校验失败'); throw new Error('PDF 文件头校验失败。'); }
+  console.log('[background] 准备发送到后端, observationId=' + runtime.lastSelectedObservationId);
   await setRuntime({ visibleResumeState: 'PDF 已安全读取，正在导入并进行 AI 分析…', lastVisibleResumeAt: new Date().toISOString() });
   const form = new FormData();
   form.append('file', new Blob([bytes], { type: 'application/pdf' }), 'boss-resume.pdf');
+  console.log('[background] 开始调用后端 API...');
   const result = await requestMultipart(settings.backendUrl,
     `/api/local-connector/runtime/resume-documents?observationId=${encodeURIComponent(runtime.lastSelectedObservationId)}&sourceEventDigest=${encodeURIComponent(payload.sourceEventDigest)}`,
     settings.deviceToken, form, 120_000);
+  console.log('[background] 后端响应:', result);
   await setRuntime({
     lastVisibleResumeEventDigest: payload.sourceEventDigest,
     visibleResumeState: result?.analysisStatus === 'SUCCEEDED'
@@ -964,6 +1006,18 @@ async function setSingleAccountAutoReply(enabled) {
   return { ok: true, status: await getPublicStatus() };
 }
 
+async function syncDutyAutomation() {
+  const settings = await getSettings();
+  if (!settings.deviceToken) return { ok: true, enabled: false };
+  const control = await request(settings.backendUrl, '/api/local-connector/runtime/duty-automation', {
+    method: 'GET', token: settings.deviceToken, timeoutMs: 5_000,
+  });
+  const desired = settings.enabled !== false && control?.enabled === true;
+  const runtime = await getRuntime();
+  if (runtime.singleAccountAutoReplyEnabled !== desired) await setSingleAccountAutoReply(desired);
+  return { ok: true, enabled: desired, endsAt: control?.endsAt || null };
+}
+
 async function forgetDevice() {
   await chrome.storage.local.set({ [SETTINGS_KEY]: { backendUrl: DEFAULT_BACKEND_URL, enabled: true } });
   await chrome.storage.local.remove(RUNTIME_KEY);
@@ -994,6 +1048,9 @@ async function collectFromBestTab() {
 }
 
 async function runObservationCycle() {
+  await syncDutyAutomation().catch((error) => setRuntime({
+    singleAccountAutoReplyState: `挂机控制同步失败：${safeError(error)}`,
+  }));
   await collectJobsFromOpenTabIfAvailable();
   await collectFromBestTab();
   await executeReadyAction().catch((error) => setRuntime({

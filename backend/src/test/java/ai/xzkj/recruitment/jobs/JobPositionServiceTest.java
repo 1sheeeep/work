@@ -111,16 +111,23 @@ class JobPositionServiceTest {
         BossAccount hiddenAccount = account(hiddenCompany, "隐藏账号");
         JobPosition hiddenJob = job(hiddenCompany, hiddenAccount, "隐藏职位");
         JobPosition visibleJob = job(allowedCompany, eligibleAccount, "可见职位");
+        JobPosition closedJob = job(allowedCompany, eligibleAccount, "已关闭职位");
         hiddenJob.markVisiblePageCapture(5);
         visibleJob.markVisiblePageCapture(5);
+        closedJob.markVisiblePageCapture(5);
+        closedJob.changeStatus(JobPositionStatus.CLOSED);
         when(currentUserService.requireCurrentUser()).thenReturn(user(UserRole.RECRUITER, allowedCompany));
         when(jobRepository.findAllByOrderByCreatedAtDesc()).thenReturn(List.of(
                 hiddenJob,
-                visibleJob));
+                visibleJob,
+                closedJob));
 
         List<JobPositionResponse> response = service.list(null, null, null, null);
 
         assertThat(response).extracting(JobPositionResponse::title).containsExactly("可见职位");
+
+        assertThat(service.list(null, null, null, JobPositionStatus.CLOSED))
+                .extracting(JobPositionResponse::title).containsExactly("已关闭职位");
     }
 
     @Test
@@ -151,7 +158,9 @@ class JobPositionServiceTest {
         ReplyPreviewResponse response = service.previewReply(job.getId());
 
         assertThat(response.mode()).isEqualTo("KNOWLEDGE");
-        assertThat(response.content()).contains("Java 开发工程师", "企业软件服务", "负责稳定的后端服务开发");
+        assertThat(response.content()).contains("Java 开发工程师", "上海", "20-35K·13薪", "欢迎继续沟通");
+        assertThat(response.content()).hasSizeLessThanOrEqualTo(SafeReplyComposer.MAX_REPLY_LENGTH);
+        assertThat(response.content()).doesNotContain("企业软件服务", "负责稳定的后端服务开发");
         assertThat(response.missingFields()).isEmpty();
     }
 

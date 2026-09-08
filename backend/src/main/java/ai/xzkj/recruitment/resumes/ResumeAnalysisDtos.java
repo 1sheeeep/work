@@ -10,6 +10,8 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.Locale;
 import java.util.UUID;
 
 record ResumeAnalysisRequest(
@@ -92,7 +94,15 @@ record ResumeAnalysisResult(
     static ResumeAnalysisResult parseExternal(String json, ObjectMapper mapper) {
         try {
             return validate(normalize(mapper.readValue(extractJsonObject(json), ResumeAnalysisResult.class)));
+        } catch (IllegalArgumentException exception) {
+            System.getLogger(ResumeAnalysisResult.class.getName())
+                    .log(System.Logger.Level.WARNING, "简历分析 JSON 校验失败: " + exception.getMessage()
+                            + "\n原始 JSON 前500字符: " + (json != null ? json.substring(0, Math.min(500, json.length())) : "null"));
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "OPENAI_RESPONSE_INVALID",
+                    "OpenAI 返回的简历分析格式无效: " + exception.getMessage());
         } catch (RuntimeException exception) {
+            System.getLogger(ResumeAnalysisResult.class.getName())
+                    .log(System.Logger.Level.WARNING, "简历分析 JSON 解析异常: " + exception.getMessage());
             throw new ApiException(HttpStatus.BAD_GATEWAY, "OPENAI_RESPONSE_INVALID", "OpenAI 返回的简历分析格式无效，未生成可用结论");
         }
     }
@@ -125,26 +135,56 @@ record ResumeAnalysisResult(
         if (value == null) return null;
         List<ResumeAnalysisEvidence> evidence = value.evidence() == null ? null : value.evidence().stream()
                 .filter(item -> item != null && meaningful(item.criterion()) && meaningful(item.finding()))
-                .map(item -> new ResumeAnalysisEvidence(item.criterion().trim(), item.finding().trim(), item.status()))
+                .map(item -> new ResumeAnalysisEvidence(item.criterion().trim(), item.finding().trim(),
+                        item.status() == null ? "UNCLEAR" : item.status().trim().toUpperCase(Locale.ROOT)))
                 .toList();
-        return new ResumeAnalysisResult(value.recommendation(), trim(value.summary()), evidence,
-                cleanTextList(value.gaps()), cleanTextList(value.risks()), cleanTextList(value.followUpQuestions()));
+        List<String> followUpQuestions = new ArrayList<>(cleanTextList(value.followUpQuestions()));
+        List<String> defaults = List.of("请补充说明最近一份工作的主要职责？", "请介绍一个与岗位相关的项目成果？", "最快何时可以到岗？");
+        for (String question : defaults) {
+            if (followUpQuestions.size() >= 3) break;
+            if (!followUpQuestions.contains(question)) followUpQuestions.add(question);
+        }
+        return new ResumeAnalysisResult(value.recommendation() == null ? null : value.recommendation().trim().toUpperCase(Locale.ROOT), trim(value.summary()), evidence,
+                cleanTextList(value.gaps()), cleanTextList(value.risks()), followUpQuestions);
     }
 
     private static List<String> cleanTextList(List<String> values) {
-        return values == null ? null : values.stream().filter(ResumeAnalysisResult::meaningful).map(String::trim).toList();
+        return values == null ? new ArrayList<>() : values.stream().filter(ResumeAnalysisResult::meaningful).map(String::trim).toList();
     }
 
     private static String trim(String value) { return value == null ? null : value.trim(); }
 
     private static ResumeAnalysisResult validate(ResumeAnalysisResult value) {
-        if (value == null || !RECOMMENDATIONS.contains(value.recommendation()) || !usable(value.summary(), 1200)
-                || !validTextList(value.gaps(), 8, 400) || !validTextList(value.risks(), 8, 400)
-                || !validTextList(value.followUpQuestions(), 5, 400) || value.followUpQuestions().size() < 3
-                || value.evidence() == null || value.evidence().isEmpty() || value.evidence().size() > 8
-                || value.evidence().stream().anyMatch(item -> item == null || !usable(item.criterion(), 160)
-                || !usable(item.finding(), 600) || !List.of("FOUND", "NOT_FOUND", "UNCLEAR").contains(item.status()))) {
-            throw new IllegalArgumentException("Invalid resume analysis result");
+        if (value == null)
+            throw new IllegalArgumentException("value is null");
+        if (!RECOMMENDATIONS.contains(value.recommendation()))
+            throw new IllegalArgumentException("recommendation 无效: '" + value.recommendation() + "'");
+        if (!usable(value.summary(), 1200))
+            throw new IllegalArgumentException("summary 无效: " + (value.summary() == null ? "null" : "长度=" + value.summary().length()));
+        if (!validTextList(value.gaps(), 8, 400))
+            throw new IllegalArgumentException("gaps 无效: 数量=" + (value.gaps() == null ? "null" : value.gaps().size()));
+        if (!validTextList(value.risks(), 8, 400))
+            throw new IllegalArgumentException("risks 无效: 数量=" + (value.risks() == null ? "null" : value.risks().size()));
+        if (!validTextList(value.followUpQuestions(), 5, 400))
+            throw new IllegalArgumentException("followUpQuestions 无效: 数量=" + (value.followUpQuestions() == null ? "null" : value.followUpQuestions().size()));
+        if (value.followUpQuestions().size() < 3)
+            throw new IllegalArgumentException("followUpQuestions 不足3个: 实际=" + value.followUpQuestions().size());
+        if (value.evidence() == null)
+            throw new IllegalArgumentException("evidence is null");
+        if (value.evidence().isEmpty())
+            throw new IllegalArgumentException("evidence 为空(可能全部被 normalize 过滤)");
+        if (value.evidence().size() > 8)
+            throw new IllegalArgumentException("evidence 超过8条: " + value.evidence().size());
+        for (int i = 0; i < value.evidence().size(); i++) {
+            ResumeAnalysisEvidence item = value.evidence().get(i);
+            if (item == null)
+                throw new IllegalArgumentException("evidence[" + i + "] is null");
+            if (!usable(item.criterion(), 160))
+                throw new IllegalArgumentException("evidence[" + i + "].criterion 无效: " + (item.criterion() == null ? "null" : "长度=" + item.criterion().length()));
+            if (!usable(item.finding(), 600))
+                throw new IllegalArgumentException("evidence[" + i + "].finding 无效: " + (item.finding() == null ? "null" : "长度=" + item.finding().length()));
+            if (!List.of("FOUND", "NOT_FOUND", "UNCLEAR").contains(item.status()))
+                throw new IllegalArgumentException("evidence[" + i + "].status 无效: '" + item.status() + "'");
         }
         return value;
     }

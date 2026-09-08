@@ -59,6 +59,20 @@ public class ResumeAnalysisService {
     }
 
     @Transactional(noRollbackFor = ApiException.class)
+    public ResumeAnalysisResponse reanalyzeStoredPdf(UUID intakeId) {
+        SystemUser user = users.requireCurrentUser();
+        ResumeIntake intake = requireApprovedIntake(intakeId, user);
+        byte[] content = intake.getSourcePdf();
+        if (content == null || content.length < 5) throw new ApiException(HttpStatus.CONFLICT, "RESUME_SOURCE_PDF_NOT_AVAILABLE", "该简历未保存可重新分析的 PDF 文件");
+        try {
+            malwareScanner.scan(content);
+            String text = imageOcr.supports(content) ? imageOcr.extract(content).text() : documents.extract(content).text();
+            return analyzeText(intake, user, cleanResumeText(text), "后端已保存的 PDF 文件");
+        } catch (ApiException exception) { throw exception; }
+        catch (RuntimeException exception) { throw new ApiException(HttpStatus.BAD_REQUEST, "RESUME_PDF_REEXTRACT_FAILED", "已保存 PDF 无法重新提取文本"); }
+    }
+
+    @Transactional(noRollbackFor = ApiException.class)
     public ResumeDocumentPreviewResponse previewFile(UUID intakeId, MultipartFile file) {
         SystemUser user = users.requireCurrentUser();
         ResumeIntake intake = requireApprovedIntake(intakeId, user);
@@ -81,6 +95,7 @@ public class ResumeAnalysisService {
                 type = document.type();
             }
             documentHashPrefix = hashBytes(content).substring(0, 12);
+            intake.storeSourcePdf(content);
         } catch (ApiException exception) {
             audit.failure("REJECT_RESUME_DOCUMENT", "RESUME_INTAKE", intake.getId(), intake.getDisplayLabel(),
                     "本机临时简历文件处理被拒绝，原因代码：" + exception.getCode() + "；原文件未写入业务数据库或持久卷");
