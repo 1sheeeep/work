@@ -28,6 +28,7 @@ record InboundReplySendReceiptRequest(@NotBlank@Size(max=200)String leaseToken,@
 record InboundReplySendReceiptResponse(@NotNull UUID taskId,@NotBlank String status,Instant completedAt){}
 record AiDutyReplyResponse(@NotNull UUID id,@NotNull UUID observationId,@NotBlank String anonymousKey,@NotBlank String accountName,@NotBlank String jobTitle,@NotBlank String category,@NotBlank String replyContent,@NotNull Instant sentAt,boolean needsFollowUp,String followUpReason){}
 record AiDutyReviewRequiredResponse(@NotNull UUID id,@NotNull UUID observationId,@NotBlank String anonymousKey,@NotBlank String accountName,@NotBlank String jobTitle,@NotBlank String category,@NotBlank String reason,@NotNull Instant decidedAt){}
+record InboundReplyQualitySummaryResponse(int evaluated,int replyApproved,int sent,int expectedSilence,int reviewRequired,int shadowEvaluated,int failed,double averageConfidence,Map<String,Long> categories,Map<String,Long> outcomes,@NotNull Instant generatedAt){}
 record VisibleResumeTextRequest(@NotNull UUID observationId,@NotBlank@Pattern(regexp="[a-f0-9]{64}")String sourceEventDigest,@NotBlank@Size(min=100,max=30000)String resumeText){}
 record ObservationReviewRequest(@NotBlank@Pattern(regexp="APPROVED|REJECTED|HUMAN_TAKEOVER")String decision,@Size(max=2000)String content,@Size(max=300)String note){}
 record CycleTestStartRequest(@NotBlank@Size(max=2000)String content,@AssertTrue(message="必须明确确认只对当前已读会话启动完整周期测试")boolean confirmed){}

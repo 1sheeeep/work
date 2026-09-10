@@ -24,6 +24,7 @@ interface InboundAiReplyTaskRepository extends JpaRepository<InboundAiReplyTask,
     long countByAccountIdAndSendStatusAndSendCompletedAtAfter(UUID accountId,String sendStatus,Instant cutoff);
     List<InboundAiReplyTask> findTop100BySendStatusOrderBySendCompletedAtDesc(String sendStatus);
     List<InboundAiReplyTask> findTop100BySendStatusOrderByCompletedAtDesc(String sendStatus);
+    List<InboundAiReplyTask> findTop500ByCompletedAtAfterOrderByCompletedAtDesc(Instant cutoff);
     @Lock(LockModeType.PESSIMISTIC_WRITE) Optional<InboundAiReplyTask> findForUpdateById(UUID id);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     Optional<InboundAiReplyTask> findForUpdateBySendLeaseTokenHash(String tokenHash);

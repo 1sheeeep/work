@@ -149,6 +149,90 @@ class InboundJobReplyHttpIntegrationTest {
     }
 
     @Test
+    void allowsLowRiskSocialThanksWithoutJobFacts() throws Exception {
+        start(exchange -> respond(exchange, 200, completion("""
+                {"primaryIntent":"SOCIAL_THANKS","secondaryIntents":[],"relevant":true,"confidence":0.74,"action":"REPLY","riskLevel":"LOW",
+                 "reply":"不客气，有其他想了解的可以随时告诉我。","evidenceKeys":[]}
+                """)));
+
+        InboundJobReplyService.Decision result = service(Duration.ofSeconds(2)).decide(job(), "谢谢");
+
+        assertTrue(result.replyAllowed());
+        assertEquals("SOCIAL_THANKS", result.category());
+        assertTrue(result.reason().contains("低风险社交回复校验"));
+    }
+
+    @Test
+    void blocksFactsInventedInsideASocialReply() throws Exception {
+        start(exchange -> respond(exchange, 200, completion("""
+                {"primaryIntent":"CANDIDATE_CONSIDERING","secondaryIntents":[],"relevant":true,"confidence":0.91,"action":"REPLY","riskLevel":"LOW",
+                 "reply":"好的，您先考虑，这个岗位目前还在招聘中。","evidenceKeys":[]}
+                """)));
+
+        InboundJobReplyService.Decision result = service(Duration.ofSeconds(2)).decide(job(), "我考虑一下");
+
+        assertFalse(result.replyAllowed());
+        assertTrue(result.reason().startsWith("AI 社交回复未通过安全校验"));
+    }
+
+    @Test
+    void keepsTrueOffTopicMessagesSilent() throws Exception {
+        start(exchange -> respond(exchange, 200, completion("""
+                {"primaryIntent":"TRUE_OFF_TOPIC","secondaryIntents":[],"relevant":false,"confidence":0.98,"action":"NO_REPLY","riskLevel":"LOW",
+                 "reply":"","evidenceKeys":[]}
+                """)));
+
+        InboundJobReplyService.Decision result = service(Duration.ofSeconds(2)).decide(job(), "帮我推荐一部电影");
+
+        assertFalse(result.replyAllowed());
+        assertEquals("TRUE_OFF_TOPIC", result.category());
+        assertTrue(result.reason().contains("招聘会话无关"));
+    }
+
+    @Test
+    void treatsPureAcknowledgementAsExpectedSilence() throws Exception {
+        start(exchange -> respond(exchange, 200, completion("""
+                {"primaryIntent":"SOCIAL_ACKNOWLEDGEMENT","secondaryIntents":[],"relevant":true,"confidence":0.96,"action":"REPLY","riskLevel":"LOW",
+                 "reply":"好的，有问题随时告诉我。","evidenceKeys":[]}
+                """)));
+
+        InboundJobReplyService.Decision result = service(Duration.ofSeconds(2)).decide(job(), "好的，收到");
+
+        assertFalse(result.replyAllowed());
+        assertTrue(result.reason().startsWith("正常静默："));
+    }
+
+    @Test
+    void acknowledgesAnAlreadySentResumeWithoutJobFacts() throws Exception {
+        start(exchange -> respond(exchange, 200, completion("""
+                {"primaryIntent":"RESUME_SENT","secondaryIntents":[],"relevant":true,"confidence":0.96,"action":"REPLY","riskLevel":"LOW",
+                 "reply":"收到您的简历，我会先查看。","evidenceKeys":[]}
+                """)));
+
+        InboundJobReplyService.Decision result = service(Duration.ofSeconds(2)).decide(
+                job(), "简历已经发了", "HR：方便的话可以发一份简历。",
+                new InboundJobReplyService.ConversationRuntime("RESUME_RECEIVED", true, false, false, false));
+
+        assertTrue(result.replyAllowed());
+        assertEquals("RESUME_SENT", result.category());
+    }
+
+    @Test
+    void blocksModelFromRequestingResumeAfterTrustedReceipt() throws Exception {
+        start(exchange -> respond(exchange, 200, completion("""
+                {"primaryIntent":"JOB_INTEREST","secondaryIntents":[],"relevant":true,"confidence":0.97,"action":"REQUEST_RESUME","riskLevel":"LOW",
+                 "reply":"可以聊聊，您可以先发一份简历。","evidenceKeys":["NEXT_STEP"]}
+                """)));
+
+        InboundJobReplyService.Decision result = service(Duration.ofSeconds(2)).decide(
+                job(), "我对这个岗位感兴趣", "",
+                new InboundJobReplyService.ConversationRuntime("RESUME_RECEIVED", true, false, false, false));
+
+        assertFalse(result.replyAllowed());
+        assertTrue(result.reason().contains("简历已经收到"));
+    }
+
+    @Test
     void turnsRateLimitIntoRetryableQueueFailureWithoutGeneratingAReply() throws Exception {
         start(exchange -> respond(exchange, 429, "{\"error\":{\"message\":\"rate limited\"}}"));
 

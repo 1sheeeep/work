@@ -22,6 +22,7 @@ import jakarta.validation.Valid;import org.springframework.http.HttpHeaders;impo
  @GetMapping("/api/local-connector/observations")public List<UnreadObservationResponse> observations(){return service.listUnreadObservations();}
  @GetMapping("/api/local-connector/ai-duty-replies")public List<AiDutyReplyResponse> aiDutyReplies(){return service.listRecentAiDutyReplies();}
  @GetMapping("/api/local-connector/ai-duty-review-required")public List<AiDutyReviewRequiredResponse> aiDutyReviewRequired(){return service.listRecentAiDutyReviewRequired();}
+ @GetMapping("/api/local-connector/ai-reply-quality-summary")public InboundReplyQualitySummaryResponse aiReplyQualitySummary(){return service.inboundReplyQualitySummary();}
  @GetMapping("/api/local-connector/observations/unmatched-job-groups")public List<UnmatchedJobGroupResponse> unmatchedJobGroups(){return service.listUnmatchedJobGroups();}
  @PutMapping("/api/local-connector/observations/manual-job-match")public ManualJobMatchResponse manualJobMatch(@Valid@RequestBody ManualJobMatchRequest r){return service.manualJobMatch(r);}
  @PostMapping("/api/local-connector/observations/recalculate-drafts")public DraftRecalculationResponse recalculateDrafts(){return service.recalculateDrafts();}

@@ -90,6 +90,23 @@ class InboundJobReplyServiceTest {
     }
 
     @Test
+    void derivesConversationSignalsWithoutRetainingMessageBodies() {
+        InboundJobReplyService.ConversationMemory memory = InboundJobReplyService.summarizeConversation("""
+                HR：您好，方便的话可以发一份简历。
+                候选人：好的，简历已经发了。
+                HR：收到，有问题可以随时联系。
+                候选人：谢谢。
+                """);
+
+        assertEquals("CANDIDATE", memory.lastSpeaker());
+        assertEquals(true, memory.hrAlreadyGreeted());
+        assertEquals(true, memory.lastHrWasClosing());
+        assertEquals(true, memory.resumeRequestedByHr());
+        assertEquals(true, memory.resumeSentByCandidate());
+        assertEquals(2, memory.trailingSocialTurns());
+    }
+
+    @Test
     void allowsOnlyFactFreeLowRiskClarificationQuestions() {
         assertNull(InboundJobReplyService.validateAgentPermission(
                 new InboundJobReplyService.Topic("OTHER_RECRUITMENT", List.of(), true, .91, "ASK_CLARIFICATION", "LOW")));
@@ -98,5 +115,79 @@ class InboundJobReplyServiceTest {
         assertNull(InboundJobReplyService.validateClarification("请问您具体想了解这个岗位的哪一方面？", List.of()));
         assertEquals("澄清问题不得包含数字事实", InboundJobReplyService.validateClarification("请问您是想确认每天工作 8 小时吗？", List.of()));
         assertEquals("澄清问题不得引用岗位事实", InboundJobReplyService.validateClarification("请问您想了解哪方面？", List.of("DESCRIPTION")));
+    }
+
+    @Test
+    void socialRepliesAreFactFreeButStillStrictlyValidated() {
+        assertNull(InboundJobReplyService.validateSocialReply("不客气，有其他想了解的可以随时告诉我。", List.of()));
+        assertEquals("社交回复不得引用岗位事实",
+                InboundJobReplyService.validateSocialReply("不客气。", List.of("HIRING_STATUS")));
+        assertEquals("社交回复包含需要岗位资料支持的事实",
+                InboundJobReplyService.validateSocialReply("不客气，这个岗位目前还在招聘中。", List.of()));
+        assertEquals("社交回复不得包含未经核验的数字",
+                InboundJobReplyService.validateSocialReply("好的，2 天内联系您。", List.of()));
+    }
+
+    @Test
+    void permissionMatrixSeparatesSocialAndGroundedReplyModes() {
+        assertNull(InboundJobReplyService.validateAgentPermission(
+                new InboundJobReplyService.Topic("SOCIAL_THANKS", List.of(), true, .75, "REPLY", "LOW")));
+        assertEquals("社交回复模式与当前意图或动作不匹配，已阻止执行",
+                InboundJobReplyService.validateAgentPermission(
+                        new InboundJobReplyService.Topic("SOCIAL_THANKS", List.of(), true, .75, "REQUEST_RESUME", "LOW")));
+    }
+
+    @Test
+    void courtesyAcknowledgementsEndNaturallyInsteadOfLooping() {
+        InboundJobReplyService.ConversationMemory memory = InboundJobReplyService.summarizeConversation(
+                "HR：不客气，有问题随时联系。");
+        String reason = InboundJobReplyService.expectedSilenceReason(
+                new InboundJobReplyService.Topic("SOCIAL_ACKNOWLEDGEMENT", List.of(), true, .92, "REPLY", "LOW"),
+                memory);
+
+        assertEquals("候选人仅确认收到或自然结束，本轮不追加机械客套", reason);
+    }
+
+    @Test
+    void preventsRequestingAResumeThatWasRequestedOrReceivedAlready() {
+        InboundJobReplyService.Topic request = new InboundJobReplyService.Topic(
+                "JOB_INTEREST", List.of(), true, .96, "REQUEST_RESUME", "LOW");
+        InboundJobReplyService.ConversationMemory requested = InboundJobReplyService.summarizeConversation(
+                "HR：方便的话可以发一份简历。");
+        assertEquals("最近对话中 HR 已经索要简历，已阻止重复索要",
+                InboundJobReplyService.validateConversationAction(
+                        request, "您可以发一份简历。", requested, InboundJobReplyService.ConversationRuntime.empty()));
+
+        InboundJobReplyService.ConversationRuntime received = new InboundJobReplyService.ConversationRuntime(
+                "RESUME_RECEIVED", true, false, false, false);
+        assertEquals("可信会话状态显示简历已经收到，已阻止重复索要",
+                InboundJobReplyService.validateConversationAction(
+                        request, "您可以发一份简历。", InboundJobReplyService.ConversationMemory.empty(), received));
+    }
+
+    @Test
+    void independentGateRejectsAJobQuestionMisclassifiedAsPureCourtesy() {
+        InboundJobReplyService.Topic wrong = new InboundJobReplyService.Topic(
+                "SOCIAL_THANKS", List.of(), true, .93, "NO_REPLY", "LOW");
+
+        assertEquals("最后一条消息包含明确岗位问题，但 AI 未覆盖意图：SALARY",
+                InboundReplyQualityGate.validateClassification("谢谢，请问工资多少？", wrong));
+    }
+
+    @Test
+    void independentGateAcceptsMixedCourtesyWhenTheJobIntentIsCovered() {
+        InboundJobReplyService.Topic mixed = new InboundJobReplyService.Topic(
+                "SALARY", List.of("SOCIAL_THANKS"), true, .95, "REPLY", "LOW");
+
+        assertNull(InboundReplyQualityGate.validateClassification("谢谢，请问工资多少？", mixed));
+    }
+
+    @Test
+    void independentGateRejectsModelMetaLanguageAndExcessivePunctuation() {
+        assertEquals("回复包含模型元信息或明显模板化话术",
+                InboundReplyQualityGate.validateReply("根据提供的信息，这个岗位目前在招聘。"));
+        assertEquals("回复包含连续重复标点",
+                InboundReplyQualityGate.validateReply("好的！！！"));
+        assertNull(InboundReplyQualityGate.validateReply("好的，简历收到后我们会继续查看。"));
     }
 }

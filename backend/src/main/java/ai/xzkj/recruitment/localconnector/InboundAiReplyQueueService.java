@@ -40,6 +40,7 @@ import java.util.concurrent.TimeUnit;
 class InboundAiReplyQueueService {
     private static final long CLIENT_WAIT_NANOS = 125_000_000_000L;
     private final InboundAiReplyTaskRepository tasks;
+    private final BrowserUnreadObservationRepository observations;
     private final BossAccountRepository accounts;
     private final JobPositionRepository jobs;
     private final InboundJobReplyService replies;
@@ -56,12 +57,14 @@ class InboundAiReplyQueueService {
     @Value("${app.inbound-reply.send-limit-per-hour:20}") private long sendLimitPerHour = 20;
     @Value("${app.inbound-reply.send-limit-per-day:100}") private long sendLimitPerDay = 100;
     @Value("${app.inbound-reply.auto-send-enabled:false}") private boolean autoSendEnabled;
+    @Value("${app.inbound-reply.shadow-evaluation-enabled:false}") private boolean shadowEvaluationEnabled;
 
-    InboundAiReplyQueueService(InboundAiReplyTaskRepository tasks, BossAccountRepository accounts, JobPositionRepository jobs,
+    InboundAiReplyQueueService(InboundAiReplyTaskRepository tasks, BrowserUnreadObservationRepository observations,
+                               BossAccountRepository accounts, JobPositionRepository jobs,
                                InboundJobReplyService replies, PlatformTransactionManager manager,
                                MeterRegistry meters, JdbcTemplate jdbc,
                                @Value("${app.inbound-reply.model-concurrency:8}") int configuredModelConcurrency) {
-        this.tasks = tasks; this.accounts = accounts; this.jobs = jobs; this.replies = replies;
+        this.tasks = tasks; this.observations = observations; this.accounts = accounts; this.jobs = jobs; this.replies = replies;
         this.meters = meters;
         this.jdbc = jdbc;
         this.execution = new InboundReplyExecutionCoordinator(configuredModelConcurrency);
@@ -146,6 +149,9 @@ class InboundAiReplyQueueService {
     List<InboundAiReplyTask> recentSkippedReplies() {
         return tasks.findTop100BySendStatusOrderByCompletedAtDesc("SKIPPED");
     }
+    List<InboundAiReplyTask> recentDecisions(Instant since) {
+        return tasks.findTop500ByCompletedAtAfterOrderByCompletedAtDesc(since);
+    }
 
     InboundReplyTaskDiscardResponse discardStale(UUID accountId, UUID taskId, InboundReplyTaskDiscardRequest request) {
         return transactions.execute(status -> {
@@ -157,7 +163,7 @@ class InboundAiReplyQueueService {
             if (request.currentMessageDigest().equals(request.messageDigest()))
                 throw new ApiException(HttpStatus.CONFLICT,"AI_REPLY_DISCARD_MESSAGE_UNCHANGED","候选人最新消息尚未变化，禁止作废待发送回复");
             Instant now=Instant.now();
-            task.skipSend(request.reason(),now);
+            task.supersede(request.reason(),now);
             meters.counter("recruitment.inbound.reply.send.discarded","reason","message_changed").increment();
             return new InboundReplyTaskDiscardResponse(task.getId(),task.getSendStatus(),now);
         });
@@ -268,15 +274,25 @@ class InboundAiReplyQueueService {
                 try {
                     JobPosition job = jobs.findWithDetailsById(task.getJobPositionId()).orElse(null);
                     if (job == null) { fail(task.getId(), "队列任务对应岗位已不存在"); continue; }
-                    InboundJobReplyService.Decision decision;
+                    InboundJobReplyService.Decision evaluated;
                     Timer.Sample modelTimer = Timer.start(meters);
                     execution.acquireModelSlot();
-                    try { decision = replies.decide(job, task.getMessageText(), task.getConversationContext()); }
+                    try {
+                        InboundJobReplyService.ConversationRuntime runtime = observations.findById(task.getObservationId())
+                                .map(value -> InboundJobReplyService.ConversationRuntime.from(
+                                        value.getConversationStage(), value.getConversationSignals()))
+                                .orElseGet(InboundJobReplyService.ConversationRuntime::empty);
+                        evaluated = replies.decide(job, task.getMessageText(), task.getConversationContext(), runtime);
+                    }
                     finally {
                         execution.releaseModelSlot();
                         modelTimer.stop(Timer.builder("recruitment.inbound.reply.model.duration")
                                 .description("AI 理解与受控生成耗时").register(meters));
                     }
+                    recordDecisionMetrics(evaluated);
+                    InboundJobReplyService.Decision decision = shadowEvaluationEnabled
+                            ? evaluated.asShadowEvaluation()
+                            : evaluated;
                     transactions.executeWithoutResult(status -> tasks.findById(task.getId())
                             .ifPresent(value -> value.complete(decision, Instant.now())));
                     meters.counter("recruitment.inbound.reply.completed", "allowed", Boolean.toString(decision.replyAllowed())).increment();
@@ -354,6 +370,19 @@ class InboundAiReplyQueueService {
                         ? repository.countByStatus(status)
                         : repository.countBySendStatus(sendStatus))
                 .description(description).register(meters);
+    }
+    private void recordDecisionMetrics(InboundJobReplyService.Decision decision) {
+        String outcome = decision.replyAllowed() ? "ALLOWED"
+                : decision.reason() != null && decision.reason().startsWith("正常静默：") ? "EXPECTED_SILENCE"
+                : "BLOCKED";
+        meters.counter("recruitment.inbound.reply.decision",
+                "category", safeCategory(decision.category()),
+                "outcome", outcome,
+                "reason", InboundReplyQualityGate.reasonCode(decision)).increment();
+    }
+    private String safeCategory(String value) {
+        if (value == null || !value.matches("[A-Z_]{2,40}")) return "UNKNOWN";
+        return value;
     }
     private double oldestPendingSeconds() {
         Long seconds = jdbc.queryForObject("""

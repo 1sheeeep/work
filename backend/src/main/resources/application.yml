@@ -93,6 +93,7 @@ app:
     timeout: ${OPENAI_TIMEOUT:60s}
   inbound-reply:
     auto-send-enabled: ${APP_INBOUND_REPLY_AUTO_SEND_ENABLED:false}
+    shadow-evaluation-enabled: ${APP_INBOUND_REPLY_SHADOW_EVALUATION_ENABLED:false}
     model-concurrency: ${APP_INBOUND_REPLY_MODEL_CONCURRENCY:8}
     max-pending-per-account: ${APP_INBOUND_REPLY_MAX_PENDING_PER_ACCOUNT:100}
     max-pending-global: ${APP_INBOUND_REPLY_MAX_PENDING_GLOBAL:1000}
