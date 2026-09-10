@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import PageHeader from '../components/PageHeader.vue'
 import AsyncState from '../components/AsyncState.vue'
-import MetricCard from '../components/MetricCard.vue'
-import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from "vue";
 import type { FormInstance, FormRules } from "element-plus";
 import { ElMessage, ElMessageBox, ElNotification } from "element-plus";
-import { Briefcase, Connection, DocumentChecked, InfoFilled, Refresh, Search, Warning } from "@element-plus/icons-vue";
+import { Briefcase, DataAnalysis, InfoFilled, Refresh, Search } from "@element-plus/icons-vue";
 import { api, apiErrorMessage, ensureCsrf } from "../services/api";
 import { authStore } from "../stores/auth";
 import type { Company, JobPosition, JobPositionStatus } from "../types";
@@ -37,6 +36,8 @@ const jobs = ref<JobPosition[]>([]);
 const companies = ref<Company[]>([]);
 const keyword = ref("");
 const statusFilter = ref<JobPositionStatus | "">("");
+const expandedJobIds = ref<string[]>([]);
+const restoringExpandedRows = ref(false);
 const changingStatusId = ref("");
 const reviewDialogOpen = ref(false);
 const reviewJob = ref<JobPosition | null>(null);
@@ -135,15 +136,31 @@ async function loadData(silent = false) {
       }),
       api.get<Company[]>("/organization/companies"),
     ]);
-    jobs.value = jobResponse.data.filter(
+    const nextJobs = jobResponse.data.filter(
       (job) => job.captureSource === "VISIBLE_PAGE",
     );
+    if (silent && expandedJobIds.value.length) restoringExpandedRows.value = true;
+    jobs.value = nextJobs;
+    const availableIds = new Set(nextJobs.map((job) => job.id));
+    expandedJobIds.value = expandedJobIds.value.filter((id) => availableIds.has(id));
+    if (restoringExpandedRows.value) {
+      await nextTick();
+      restoringExpandedRows.value = false;
+    }
     companies.value = companyResponse.data;
   } catch (error) {
     if (!silent) loadError.value = apiErrorMessage(error, "职位资料加载失败，请重试");
   } finally {
+    restoringExpandedRows.value = false;
     if (!silent) loading.value = false;
   }
+}
+
+function handleJobExpandChange(row: JobPosition, expandedRows: JobPosition[] | boolean) {
+  if (restoringExpandedRows.value) return;
+  const isExpanded = typeof expandedRows === "boolean" ? expandedRows : expandedRows.some((item) => item.id === row.id);
+  if (isExpanded) expandedJobIds.value = [...new Set([...expandedJobIds.value, row.id])];
+  else expandedJobIds.value = expandedJobIds.value.filter((id) => id !== row.id);
 }
 
 function refreshVisibleJobs() {
@@ -402,11 +419,20 @@ function showJobsHelp() {
       <template #icon><el-icon><Refresh /></el-icon></template>
     </AsyncState>
     <template v-else>
-      <div class="metrics-strip">
-        <MetricCard label="职位总数" :value="stats.total" description="当前维护的岗位总数" tone="teal"><template #icon><el-icon><Briefcase /></el-icon></template></MetricCard>
-        <MetricCard label="页面同步" :value="stats.pageCaptured" description="已同步的页面数量" tone="blue"><template #icon><el-icon><Connection /></el-icon></template></MetricCard>
-        <MetricCard label="安全草稿就绪" :value="stats.safeReady" description="已就绪可发布的草稿" tone="violet"><template #icon><el-icon><DocumentChecked /></el-icon></template></MetricCard>
-        <MetricCard label="待完善草稿" :value="stats.draft" description="需要完善后发布" tone="amber"><template #icon><el-icon><Warning /></el-icon></template></MetricCard>
+      <div class="metrics-panel">
+        <div class="metrics-panel__left">
+          <el-icon><DataAnalysis /></el-icon>
+          <span class="metrics-panel__title">运营概览</span>
+        </div>
+        <div class="metrics-panel__items">
+          <div class="metric-tile metric-tile--teal"><b>{{ stats.total }}</b><span>职位总数</span></div>
+          <div class="metric-tile metric-tile--blue"><b>{{ stats.pageCaptured }}</b><span>页面同步</span></div>
+          <div class="metric-tile metric-tile--violet"><b>{{ stats.safeReady }}</b><span>草稿就绪</span></div>
+          <div class="metric-tile metric-tile--amber"><b>{{ stats.draft }}</b><span>待完善</span></div>
+        </div>
+        <div class="metrics-panel__right">
+          <small class="metrics-panel__hint"><el-icon><InfoFilled /></el-icon> 实时统计</small>
+        </div>
       </div>
       <div class="positions-workspace card-panel">
       <section v-if="visibleCompanies.length" class="company-knowledge-panel">
@@ -449,13 +475,10 @@ function showJobsHelp() {
               <el-tag type="warning">待审核</el-tag>
             </header>
             <div class="review-steps">
-              <span :class="{ done: job.reviewReadiness.profileComplete }"
-                >1 岗位资料</span
-              ><span :class="{ done: job.reviewReadiness.captureReady }"
-                >2 页面核对</span
-              ><span :class="{ done: job.reviewReadiness.jobKnowledgeReady }"
-                >3 回复内容</span
-              ><span :class="{ done: job.status === 'ACTIVE' }">4 已启用</span>
+              <span :class="{ done: job.reviewReadiness.profileComplete }"><i></i>1 岗位资料</span
+              ><span :class="{ done: job.reviewReadiness.captureReady }"><i></i>2 页面核对</span
+              ><span :class="{ done: job.reviewReadiness.jobKnowledgeReady }"><i></i>3 回复内容</span
+              ><span :class="{ done: job.status === 'ACTIVE' }"><i></i>4 已启用</span>
             </div>
             <p>
               {{
@@ -503,12 +526,12 @@ function showJobsHelp() {
           <template #icon><el-icon><Briefcase /></el-icon></template>
         </AsyncState>
         <template v-else>
-          <el-table :data="jobs" class="jobs-table" table-layout="fixed"
+          <el-table :data="jobs" row-key="id" :expand-row-keys="expandedJobIds" @expand-change="handleJobExpandChange" class="jobs-table" table-layout="fixed"
             ><el-table-column type="expand" width="44"
               ><template #default="{ row }"
                 ><div class="captured-job-detail">
-                  <h3>职位基本信息与要求</h3>
-                  <dl>
+                  <div class="detail-heading"><div><span class="detail-eyebrow">岗位档案</span><h3>职位基本信息与要求</h3></div><span class="detail-hint">展开查看完整资料</span></div>
+                  <div class="detail-section detail-overview"><div class="detail-section-title"><span class="detail-section-icon">01</span><strong>核心信息</strong></div><dl class="detail-grid">
                     <div>
                       <dt>公司</dt>
                       <dd>{{ row.company.name }}</dd>
@@ -520,10 +543,6 @@ function showJobsHelp() {
                     <div>
                       <dt>职位名称</dt>
                       <dd>{{ row.title }}</dd>
-                    </div>
-                    <div class="job-description-field">
-                      <dt>职位描述</dt>
-                      <dd>{{ row.description }}</dd>
                     </div>
                     <div>
                       <dt>职位类型</dt>
@@ -557,7 +576,8 @@ function showJobsHelp() {
                       <dt>工作地址</dt>
                       <dd>{{ row.workAddress || row.location }}</dd>
                     </div>
-                  </dl>
+                  </dl></div>
+                  <div class="detail-section detail-description"><div class="detail-section-title"><span class="detail-section-icon">02</span><strong>职位描述</strong><span class="detail-section-line"></span></div><div class="detail-description-content">{{ row.description }}</div></div>
                 </div></template
               ></el-table-column
             ><el-table-column label="职位名称" min-width="210"
@@ -828,27 +848,63 @@ function showJobsHelp() {
 </template>
 
 <style scoped>
-.positions-workspace { overflow:hidden; container-type:inline-size; }
+.positions-workspace { overflow:hidden; container-type:inline-size; box-shadow:var(--shadow-raised); }
 .jobs-title { display:grid; grid-template-columns:minmax(200px,1fr) minmax(0,1.15fr); align-items:center; }
 .filters { display:grid; grid-template-columns:minmax(0,1fr) 140px auto; gap:10px; min-width:0; }
 .filters :deep(.el-input),.filters :deep(.el-select) { width:100%; min-width:0; }
-.company-knowledge-panel { border-bottom:1px solid var(--border-teal); background:var(--surface-teal); }
+.company-knowledge-panel { background:linear-gradient(135deg, rgba(238,249,246,.88), rgba(255,255,255,.72)); }
 .company-knowledge-list { position:relative; z-index:1; padding:16px 22px 22px; }
-.company-knowledge-list article { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+.company-knowledge-list article { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:14px 16px; border-radius:var(--radius-panel); background:linear-gradient(135deg, rgba(255,255,255,.78), rgba(238,249,246,.52)); box-shadow:0 1px 2px rgba(17,28,45,.03), 0 2px 8px rgba(17,28,45,.04), inset 0 1px 0 rgba(255,255,255,.7); transition:box-shadow var(--transition-fast), transform var(--transition-fast); }
+.company-knowledge-list article:hover { box-shadow:0 2px 4px rgba(17,28,45,.05), 0 8px 20px rgba(17,28,45,.08), inset 0 1px 0 rgba(255,255,255,.82); transform:translateY(-1px); }
+.company-knowledge-list article:active { animation:card-press 180ms ease-out both; }
 .company-knowledge-list strong { display:block; font-size:15px; }
 .company-knowledge-state { display:flex; align-items:center; gap:7px; color:var(--text-secondary); font-size:12px; margin-top:8px; }
 .company-knowledge-state i { width:7px; height:7px; border-radius:50%; background:var(--warning); flex:0 0 auto; }.company-knowledge-state.ready i { background:var(--success); }
-.review-queue { border-bottom:1px solid var(--border); }
+.review-queue { background:linear-gradient(180deg, rgba(255,255,255,.72), rgba(247,249,250,.82)); }
 .review-cards { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; padding:20px 22px; }
-.review-cards article { padding:18px; border:1px solid var(--border-amber); border-radius:var(--radius-panel); background:var(--surface-amber); }
+.review-cards article { padding:20px; border:0; border-radius:var(--radius-panel); background:linear-gradient(145deg, rgba(255,247,233,.94) 0%, rgba(255,255,255,.84) 100%); box-shadow:0 1px 2px rgba(17,28,45,.035), 0 4px 16px rgba(17,28,45,.05), inset 0 1px 0 rgba(255,255,255,.72), 2px 0 0 0 rgba(183,110,0,.12); transition:box-shadow var(--transition-fast), transform 280ms cubic-bezier(.2,0,0,1); }
+.review-cards article:hover { box-shadow:0 2px 4px rgba(17,28,45,.06), 0 12px 32px rgba(17,28,45,.12), inset 0 1px 0 rgba(255,255,255,.88), 2px 0 0 0 rgba(183,110,0,.18); transform:translateY(-3px); }
+.review-cards article:active { animation:card-press 180ms ease-out both; }
 .review-cards header,.review-cards footer { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .review-cards header > .job-identity { flex:1; min-width:0; }
-.review-steps { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; margin:16px 0; }
-.review-steps span { padding:6px 2px; border-bottom:2px solid var(--border-strong); color:var(--text-secondary); font-size:11px; text-align:center; }
-.review-steps span.done { border-color:var(--success); color:var(--success); }
+.review-steps { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:0; margin:16px 0; position:relative; }
+.review-steps::before { content:''; position:absolute; top:9px; left:calc(12.5%); right:calc(12.5%); height:2px; background:var(--border-strong); z-index:0; border-radius:1px; }
+.review-steps span { position:relative; display:flex; flex-direction:column; align-items:center; gap:8px; padding-top:0; border-bottom:0; color:var(--text-secondary); font-size:11px; z-index:1; }
+.review-steps span i { display:block; width:16px; height:16px; border-radius:50%; border:2px solid var(--border-strong); background:var(--surface); flex:0 0 auto; transition:border-color var(--transition-fast), background var(--transition-fast), box-shadow var(--transition-fast); }
+.review-steps span.done i { border-color:var(--success); background:var(--success); box-shadow:0 0 0 3px rgba(22,128,91,.12); }
+.review-steps span.done { color:var(--success); }
 .review-cards article > p,.internal-blocker { color:var(--warning); font-size:12px; line-height:1.6; }.review-cards article > p { margin:0 0 14px; }
+.metrics-panel { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:18px; padding:12px 18px; margin-bottom:18px; border-radius:var(--radius-panel); border:1px solid var(--border-teal); background:linear-gradient(135deg, rgba(238,249,246/.92), rgba(255,255,255/.72)), var(--surface-teal); box-shadow:0 1px 2px rgba(17,28,45/.03), 0 4px 16px rgba(17,28,45/.06), inset 0 1px 0 rgba(255,255,255/.62); transition:background 300ms ease, border-color 300ms ease, box-shadow 280ms cubic-bezier(.2,0,0,1); position:relative; overflow:hidden; }
+.metrics-panel::before { content:''; position:absolute; inset:-80% auto auto 48%; width:420px; height:220px; border-radius:50%; background:radial-gradient(circle, rgba(20,184,166/.12), transparent 68%); pointer-events:none; }
+.metrics-panel > * { position:relative; z-index:1; }
+.metrics-panel:hover { box-shadow:0 2px 4px rgba(17,28,45/.05), 0 10px 28px rgba(17,28,45/.10), inset 0 1px 0 rgba(255,255,255/.78); }
+.metrics-panel__left { display:flex; align-items:center; gap:8px; flex-shrink:0; }
+.metrics-panel__left .el-icon { font-size:18px; color:var(--primary); }
+.metrics-panel__title { font-size:14px; font-weight:600; color:var(--text-primary); white-space:nowrap; }
+.metrics-panel__items { display:flex; align-items:center; justify-content:center; gap:10px; min-width:0; }
+.metric-tile { display:inline-flex; align-items:center; gap:6px; min-width:0; padding:7px 12px; border:1px solid var(--tile-border); border-radius:var(--radius-pill); background:var(--tile-bg); color:var(--text-secondary); box-shadow:0 1px 2px rgba(17,28,45,.035), inset 0 1px 0 rgba(255,255,255,.72); transition:transform 220ms cubic-bezier(.2,.8,.2,1), box-shadow 220ms ease, border-color 220ms ease; }
+.metric-tile:hover { transform:translateY(-2px); border-color:var(--tile-accent); box-shadow:0 6px 16px color-mix(in srgb,var(--tile-accent) 14%,transparent), inset 0 1px 0 rgba(255,255,255,.85); }
+.metric-tile b { color:var(--tile-accent); font-size:15px; line-height:1; font-variant-numeric:tabular-nums; }
+.metric-tile span { font-size:11px; white-space:nowrap; }
+.metric-tile--teal { --tile-accent:var(--primary); --tile-bg:rgba(13,148,136,.07); --tile-border:rgba(13,148,136,.18); }
+.metric-tile--blue { --tile-accent:var(--color-info); --tile-bg:rgba(37,99,235,.07); --tile-border:rgba(37,99,235,.18); }
+.metric-tile--violet { --tile-accent:var(--color-violet); --tile-bg:rgba(124,58,237,.07); --tile-border:rgba(124,58,237,.18); }
+.metric-tile--amber { --tile-accent:var(--warning); --tile-bg:rgba(217,119,6,.07); --tile-border:rgba(217,119,6,.18); }
+.metric-pill { display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border:1px solid var(--border-subtle); border-radius:var(--radius-pill); background:rgba(255,255,255,.55); color:var(--text-secondary); font-size:12px; cursor:pointer; transition:background 180ms ease, border-color 180ms ease, box-shadow 200ms ease, transform 200ms cubic-bezier(.2,0,0,1); white-space:nowrap; }
+.metric-pill b { color:var(--text-primary); font-weight:700; font-variant-numeric:tabular-nums; }
+.metric-pill:hover { background:rgba(255,255,255/.82); border-color:var(--border-teal); box-shadow:0 2px 8px rgba(13,148,136/.08); transform:translateY(-1px); }
+.metric-pill:active { animation:card-press 160ms ease-out both; }
+.metric-pill--teal { --pill-accent:var(--primary); --pill-bg:rgba(13,148,136/.07); --pill-border:var(--border-teal); }
+.metric-pill--blue { --pill-accent:var(--color-info); --pill-bg:rgba(37,99,235/.07); --pill-border:var(--border-blue); }
+.metric-pill--violet { --pill-accent:var(--color-violet); --pill-bg:rgba(124,58,237/.07); --pill-border:var(--border-violet); }
+.metric-pill--amber { --pill-accent:var(--warning); --pill-bg:rgba(217,119,6/.07); --pill-border:var(--border-amber); }
+.metric-pill:not(:hover) { background:var(--pill-bg); border-color:var(--pill-border); }
+.metric-pill:hover { border-color:var(--pill-accent); box-shadow:0 2px 8px color-mix(in srgb, var(--pill-accent) 22%, transparent); }
+.metric-pill b { color:var(--pill-accent); }
+.metrics-panel__right { flex-shrink:0; }
+.metrics-panel__hint { display:flex; align-items:center; gap:4px; color:var(--text-tertiary); font-size:11px; white-space:nowrap; }
 .jobs-table { width:100%; }.jobs-table :deep(td.el-table__cell) { height:90px; vertical-align:top; padding:16px 0; background:var(--surface); }
-.jobs-table :deep(.el-table__header th) { background:var(--surface-muted); }
+.jobs-table :deep(.el-table__header th) { background:linear-gradient(180deg, var(--surface-muted), var(--surface-soft)); }
 .jobs-table :deep(.el-table__row:nth-child(even) td.el-table__cell) { background:var(--surface-soft); }
 .jobs-table :deep(.el-table__row:hover td.el-table__cell) { background:var(--surface-row); }
 .jobs-table :deep(.cell) { padding-inline:12px; }.jobs-table :deep(.el-tag) { height:24px; max-width:100%; vertical-align:top; }
@@ -858,15 +914,20 @@ function showJobsHelp() {
 .jobs-table :deep(td .cell > strong) { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; }
 .readiness-issues { margin-top:5px; color:var(--warning); font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .job-actions { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; }.job-actions .el-button { margin:0; min-height:24px; }
-.job-cards { display:none; }.job-cards article { padding:20px; border-bottom:1px solid var(--border-subtle); background:var(--surface); transition:background var(--transition-fast); position:relative; }
-.job-cards article:nth-child(even) { background:var(--surface-soft); }
-.job-cards article:hover { background:var(--surface-row); }
-.job-cards article:last-child { border:0; }.job-cards header { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; }.job-cards .job-identity { min-width:0; flex:1; }
-.job-cards dl { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin:16px 0; }.job-cards dt { color:var(--text-secondary); font-size:11px; }.job-cards dd { margin:5px 0 0; font-size:12px; overflow-wrap:anywhere; }
+.job-cards { display:none; }
+.job-cards article { padding:20px; border:0; border-radius:var(--radius-panel); margin-bottom:10px; background:linear-gradient(135deg, rgba(255,255,255,.88) 0%, rgba(255,255,255,.72) 100%); box-shadow:0 1px 2px rgba(17,28,45,.035), 0 4px 16px rgba(17,28,45,.05), inset 0 1px 0 rgba(255,255,255,.72); transition:background var(--transition-fast), box-shadow 280ms cubic-bezier(.2,0,0,1), transform 280ms cubic-bezier(.2,0,0,1); position:relative; }
+.job-cards article:nth-child(even) { background:linear-gradient(135deg, rgba(247,249,250,.88) 0%, rgba(247,249,250,.72) 100%); }
+.job-cards article:hover { background:linear-gradient(135deg, rgba(255,255,255,.96) 0%, rgba(255,255,255,.84) 100%); box-shadow:0 2px 4px rgba(17,28,45,.05), 0 12px 32px rgba(17,28,45,.10), inset 0 1px 0 rgba(255,255,255,.88), 2px 0 0 0 rgba(13,148,136,.12); transform:translateY(-3px); }
+.job-cards article:active { animation:card-press 180ms ease-out both; }
+.job-cards article:last-child { margin-bottom:0; }.job-cards header { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; }.job-cards .job-identity { min-width:0; flex:1; }
+.job-cards dl { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin:16px 0; }.job-cards dl > div { padding:12px 14px; border-radius:var(--radius-panel); background:linear-gradient(145deg, rgba(255,255,255,.82) 0%, rgba(255,255,255,.66) 100%); box-shadow:0 1px 2px rgba(17,28,45,.03), 0 2px 8px rgba(17,28,45,.04), inset 0 1px 0 rgba(255,255,255,.72); transition:background 180ms ease, box-shadow 280ms cubic-bezier(.2,0,0,1), transform 280ms cubic-bezier(.2,0,0,1); position:relative; overflow:hidden; }.job-cards dl > div::before { content:''; position:absolute; top:0; left:0; right:0; height:1px; background:linear-gradient(90deg, transparent 0%, rgba(255,255,255,.5) 25%, color-mix(in srgb, var(--primary) 14%, rgba(255,255,255,.88)) 50%, rgba(255,255,255,.5) 75%, transparent 100%); opacity:.82; pointer-events:none; }.job-cards dl > div:hover { background:linear-gradient(145deg, rgba(255,255,255,.94) 0%, rgba(255,255,255,.82) 100%); box-shadow:0 2px 4px rgba(17,28,45,.05), 0 8px 24px rgba(17,28,45,.10), inset 0 1px 0 rgba(255,255,255,.88), 2px 0 0 0 rgba(13,148,136,.10); transform:translateY(-2px); }.job-cards dl > div:active { animation:card-press 180ms ease-out both; }.job-cards dt { color:var(--text-secondary); font-size:11px; letter-spacing:.02em; }.job-cards dd { margin:5px 0 0; font-size:12px; overflow-wrap:anywhere; }
 .job-description { display:-webkit-box; -webkit-line-clamp:3; line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; font-size:12px; color:var(--text-secondary); line-height:1.6; }
 .job-cards footer { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-top:16px; }
-.captured-job-detail { padding:20px; background:var(--surface-soft); }.captured-job-detail h3 { margin:0 0 16px; font-size:15px; }
-.captured-job-detail dl { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; margin:0; }.captured-job-detail dt { font-size:11px; color:var(--text-secondary); }.captured-job-detail dd { margin:5px 0 0; line-height:1.6; overflow-wrap:anywhere; }.job-description-field { grid-column:1/-1; }.job-description-field dd { white-space:pre-wrap; }
+.captured-job-detail { padding:22px 24px 24px; background:linear-gradient(180deg, rgba(244,248,250,.9), rgba(255,255,255,.68)); border-top:1px solid rgba(65,85,105,.08); animation:detail-reveal 320ms cubic-bezier(.2,.8,.2,1) both; }
+.detail-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:20px; margin-bottom:18px; }.detail-heading h3 { margin:3px 0 0; font-size:16px; letter-spacing:.01em; }.detail-eyebrow { color:var(--accent); font-size:10px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; }.detail-hint { color:var(--text-tertiary); font-size:11px; padding-top:5px; }
+.detail-section { border:0; border-radius:var(--radius-panel); background:linear-gradient(145deg, rgba(255,255,255,.72) 0%, rgba(255,255,255,.58) 100%); box-shadow:0 1px 2px rgba(17,28,45,.03), 0 4px 14px rgba(17,28,45,.05), inset 0 1px 0 rgba(255,255,255,.82); }.detail-section + .detail-section { margin-top:14px; }.detail-section-title { display:flex; align-items:center; gap:9px; padding:14px 16px 11px; color:var(--text-primary); font-size:13px; }.detail-section-icon { display:grid; place-items:center; width:22px; height:22px; border-radius:7px; background:linear-gradient(145deg, rgba(13,148,136,.12) 0%, rgba(13,148,136,.06) 100%); color:var(--primary); font-size:10px; font-weight:700; box-shadow:0 1px 3px rgba(13,148,136,.10); }.detail-section-line { height:1px; flex:1; margin-left:3px; background:linear-gradient(90deg, rgba(80,102,120,.15), transparent); }
+.detail-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin:0 12px 12px; }.detail-grid > div { min-width:0; padding:14px 16px; border-radius:var(--radius-panel); background:linear-gradient(145deg, rgba(255,255,255,.82) 0%, rgba(255,255,255,.66) 100%); box-shadow:0 1px 2px rgba(17,28,45,.03), 0 2px 8px rgba(17,28,45,.04), inset 0 1px 0 rgba(255,255,255,.72); transition:background 180ms ease, box-shadow 280ms cubic-bezier(.2,0,0,1), transform 280ms cubic-bezier(.2,0,0,1); position:relative; overflow:hidden; }.detail-grid > div::before { content:''; position:absolute; top:0; left:0; right:0; height:1px; background:linear-gradient(90deg, transparent 0%, rgba(255,255,255,.5) 25%, color-mix(in srgb, var(--primary) 14%, rgba(255,255,255,.88)) 50%, rgba(255,255,255,.5) 75%, transparent 100%); opacity:.82; pointer-events:none; }.detail-grid > div:hover { background:linear-gradient(145deg, rgba(255,255,255,.94) 0%, rgba(255,255,255,.82) 100%); box-shadow:0 2px 4px rgba(17,28,45,.05), 0 8px 24px rgba(17,28,45,.10), inset 0 1px 0 rgba(255,255,255,.88), 2px 0 0 0 rgba(13,148,136,.10); transform:translateY(-2px); }.detail-grid > div:active { animation:card-press 180ms ease-out both; }.detail-item-primary dd { font-weight:650; }.detail-item-accent { background:linear-gradient(145deg, rgba(236,249,246,.82) 0%, rgba(255,255,255,.66) 100%)!important; }.detail-item-wide { grid-column:1/-1; }.detail-grid dt { color:var(--text-secondary); font-size:11px; line-height:1.3; letter-spacing:.02em; }.detail-grid dd { margin:6px 0 0; line-height:1.55; font-size:13px; overflow-wrap:anywhere; }.detail-description-content { margin:0 16px 17px; padding:16px 18px; border-radius:var(--radius-panel); background:linear-gradient(145deg, rgba(246,249,250,.82) 0%, rgba(255,255,255,.66) 100%); box-shadow:0 1px 2px rgba(17,28,45,.03), 0 2px 8px rgba(17,28,45,.04), inset 0 1px 0 rgba(255,255,255,.72), 3px 0 0 0 var(--primary); color:var(--text-secondary); white-space:pre-wrap; line-height:1.75; font-size:13px; position:relative; overflow:hidden; }.detail-description-content::before { content:''; position:absolute; top:0; left:0; right:0; height:1px; background:linear-gradient(90deg, transparent 0%, rgba(255,255,255,.5) 25%, color-mix(in srgb, var(--primary) 14%, rgba(255,255,255,.88)) 50%, rgba(255,255,255,.5) 75%, transparent 100%); opacity:.82; pointer-events:none; }
+@keyframes detail-reveal { from { opacity:0; transform:translateY(-5px); } to { opacity:1; transform:translateY(0); } }
 .form-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:0 18px; }.form-grid :deep(.el-select),.form-grid :deep(.el-input-number) { width:100%; }
 .company-form-grid,.boss-field-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
 .review-dialog-header,.review-confirmations,.reply-preview { padding:16px; margin-bottom:18px; background:var(--surface-soft); border-radius:var(--radius-control); }
@@ -874,6 +935,39 @@ function showJobsHelp() {
 .review-confirmations :deep(.el-checkbox) { height:auto; white-space:normal; margin:0; }.form-tip { margin-top:6px; font-size:12px; line-height:1.6; }.form-tip.warning,.reply-preview small { color:var(--warning); }.reply-preview p { line-height:1.7; }.dialog-alert { margin-bottom:18px; }
 .boss-section-title { font-size:16px; padding-bottom:12px; border-bottom:1px solid var(--border); margin:20px 0 16px; }
 @container (max-width:1100px) { .jobs-table { display:none; }.job-cards { display:block; }.jobs-title { grid-template-columns:1fr; } }
-@media(max-width:760px) { .review-cards { grid-template-columns:1fr; padding:16px; }.company-knowledge-list { padding:16px; }.company-knowledge-list article { align-items:flex-start; flex-direction:column; }.form-grid,.company-form-grid,.boss-field-grid { grid-template-columns:1fr; }.filters { grid-template-columns:minmax(0,1fr) auto; }.filters > :first-child { grid-column:1/-1; }.review-cards footer { flex-wrap:wrap; }.captured-job-detail dl { grid-template-columns:1fr; } }
+@media(max-width:760px) { .review-cards { grid-template-columns:1fr; padding:16px; }.company-knowledge-list { padding:16px; }.company-knowledge-list article { align-items:flex-start; flex-direction:column; }.form-grid,.company-form-grid,.boss-field-grid { grid-template-columns:1fr; }.filters { grid-template-columns:minmax(0,1fr) auto; }.filters > :first-child { grid-column:1/-1; }.review-cards footer { flex-wrap:wrap; }.captured-job-detail { padding:18px 16px; }.detail-heading { gap:10px; }.detail-hint { display:none; }.detail-grid { grid-template-columns:repeat(2,minmax(0,1fr)); margin-inline:8px; }.detail-item-wide { grid-column:1/-1; }.metrics-panel { display:flex; flex-wrap:wrap; gap:10px; padding:12px 14px; }.metrics-panel__left { flex-basis:100%; margin-bottom:2px; }.metrics-panel__items { order:3; flex-basis:100%; justify-content:flex-start; overflow-x:auto; scrollbar-width:thin; padding-bottom:2px; }.metrics-panel__right { order:2; margin-top:-30px; } }
 @media(max-width:480px) { .job-cards article { padding:14px; }.job-cards dl { gap:8px; }.review-cards article { padding:14px; }.review-steps { gap:4px; }.review-steps span { font-size:10px; } }
+
+:global(:root[data-theme="dark"]) .company-knowledge-panel { background:linear-gradient(135deg, rgba(15,31,29,.88), rgba(30,36,51,.72)); }
+:global(:root[data-theme="dark"]) .company-knowledge-list article { background:linear-gradient(135deg, rgba(30,36,51,.78), rgba(15,31,29,.52)); box-shadow:0 1px 2px rgba(0,0,0,.22), 0 2px 8px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.04); }
+:global(:root[data-theme="dark"]) .company-knowledge-list article:hover { box-shadow:0 2px 4px rgba(0,0,0,.30), 0 8px 20px rgba(0,0,0,.24), inset 0 1px 0 rgba(255,255,255,.06); }
+:global(:root[data-theme="dark"]) .review-queue { background:linear-gradient(180deg, rgba(30,36,51,.72), rgba(26,31,44,.82)); }
+:global(:root[data-theme="dark"]) .review-cards article { background:linear-gradient(145deg, rgba(42,34,22,.88) 0%, rgba(30,36,51,.78) 100%); box-shadow:0 1px 2px rgba(0,0,0,.22), 0 4px 16px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.04), 2px 0 0 0 rgba(183,110,0,.16); }
+:global(:root[data-theme="dark"]) .review-cards article:hover { box-shadow:0 2px 4px rgba(0,0,0,.30), 0 12px 32px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.06), 2px 0 0 0 rgba(183,110,0,.22); }
+:global(:root[data-theme="dark"]) .review-steps span i { border-color:var(--border-strong); background:var(--surface); }
+:global(:root[data-theme="dark"]) .job-cards article { background:linear-gradient(135deg, rgba(30,36,51,.88) 0%, rgba(26,31,44,.78) 100%); box-shadow:0 1px 2px rgba(0,0,0,.22), 0 4px 16px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.04); }
+:global(:root[data-theme="dark"]) .job-cards article:nth-child(even) { background:linear-gradient(135deg, rgba(34,40,55,.88) 0%, rgba(30,36,51,.78) 100%); }
+:global(:root[data-theme="dark"]) .job-cards article:hover { background:linear-gradient(135deg, rgba(36,42,58,.96) 0%, rgba(30,36,51,.84) 100%); box-shadow:0 2px 4px rgba(0,0,0,.30), 0 12px 32px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.06), 2px 0 0 0 rgba(13,148,136,.16); }
+:global(:root[data-theme="dark"]) .captured-job-detail { background:linear-gradient(180deg, rgba(26,31,44,.9), rgba(30,36,51,.68)); border-top-color:rgba(255,255,255,.06); }
+:global(:root[data-theme="dark"]) .detail-section { background:linear-gradient(145deg, rgba(30,36,51,.72) 0%, rgba(26,31,44,.58) 100%); box-shadow:0 1px 2px rgba(0,0,0,.22), 0 4px 14px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.04); }
+:global(:root[data-theme="dark"]) .detail-grid > div { background:linear-gradient(145deg, rgba(30,36,51,.82) 0%, rgba(26,31,44,.66) 100%); box-shadow:0 1px 2px rgba(0,0,0,.22), 0 2px 8px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.04); }
+:global(:root[data-theme="dark"]) .detail-grid > div:hover { background:linear-gradient(145deg, rgba(36,42,58,.94) 0%, rgba(30,36,51,.82) 100%); box-shadow:0 2px 4px rgba(0,0,0,.30), 0 8px 24px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.06), 2px 0 0 0 rgba(20,184,166,.12); }
+:global(:root[data-theme="dark"]) .detail-grid > div::before { background:linear-gradient(90deg, transparent 0%, rgba(255,255,255,.08) 25%, rgba(255,255,255,.22) 50%, rgba(255,255,255,.08) 75%, transparent 100%); }
+:global(:root[data-theme="dark"]) .detail-item-accent { background:linear-gradient(145deg, rgba(15,31,29,.82) 0%, rgba(30,36,51,.66) 100%)!important; }
+:global(:root[data-theme="dark"]) .detail-description-content { background:linear-gradient(145deg, rgba(15,31,29,.82) 0%, rgba(30,36,51,.66) 100%); box-shadow:0 1px 2px rgba(0,0,0,.22), 0 2px 8px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.04), 3px 0 0 0 var(--primary); }
+:global(:root[data-theme="dark"]) .detail-description-content::before { background:linear-gradient(90deg, transparent 0%, rgba(255,255,255,.08) 25%, rgba(255,255,255,.22) 50%, rgba(255,255,255,.08) 75%, transparent 100%); }
+:global(:root[data-theme="dark"]) .jobs-table :deep(td.el-table__cell) { background:linear-gradient(135deg, rgba(30,36,51,.88) 0%, rgba(26,31,44,.72) 100%); }
+:global(:root[data-theme="dark"]) .jobs-table :deep(.el-table__row:nth-child(even) td.el-table__cell) { background:linear-gradient(135deg, rgba(34,40,55,.88) 0%, rgba(30,36,51,.72) 100%); }
+:global(:root[data-theme="dark"]) .jobs-table :deep(.el-table__row:hover td.el-table__cell) { background:linear-gradient(135deg, rgba(36,42,58,.96) 0%, rgba(30,36,51,.84) 100%); box-shadow:inset 2px 0 0 rgba(20,184,166,.14); }
+:global(:root[data-theme="dark"]) .job-cards dl > div { background:linear-gradient(145deg, rgba(30,36,51,.82) 0%, rgba(26,31,44,.66) 100%); box-shadow:0 1px 2px rgba(0,0,0,.22), 0 2px 8px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.04); }
+:global(:root[data-theme="dark"]) .job-cards dl > div:hover { background:linear-gradient(145deg, rgba(36,42,58,.94) 0%, rgba(30,36,51,.82) 100%); box-shadow:0 2px 4px rgba(0,0,0,.30), 0 8px 24px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.06), 2px 0 0 0 rgba(20,184,166,.12); }
+:global(:root[data-theme="dark"]) .job-cards dl > div::before { background:linear-gradient(90deg, transparent 0%, rgba(255,255,255,.08) 25%, rgba(255,255,255,.22) 50%, rgba(255,255,255,.08) 75%, transparent 100%); }
+:global(:root[data-theme="dark"]) .metrics-panel { background:linear-gradient(135deg, rgba(15,23,32/.92), rgba(26,31,44/.72)), var(--surface-teal); border-color:var(--brand-600); box-shadow:0 1px 2px rgba(0,0,0/.22), 0 4px 16px rgba(0,0,0/.18), inset 0 1px 0 rgba(255,255,255/.04); }
+:global(:root[data-theme="dark"]) .metrics-panel:hover { box-shadow:0 2px 4px rgba(0,0,0/.30), 0 10px 28px rgba(0,0,0/.26), inset 0 1px 0 rgba(255,255,255/.06); }
+:global(:root[data-theme="dark"]) .metric-pill { background:rgba(255,255,255/.04); border-color:rgba(255,255,255/.06); color:rgba(255,255,255/.55); }
+:global(:root[data-theme="dark"]) .metric-pill--teal { --pill-bg:rgba(13,148,136/.10); --pill-border:rgba(20,184,166/.18); }
+:global(:root[data-theme="dark"]) .metric-pill--blue { --pill-bg:rgba(37,99,235/.10); --pill-border:rgba(37,99,235/.18); }
+:global(:root[data-theme="dark"]) .metric-pill--violet { --pill-bg:rgba(124,58,237/.10); --pill-border:rgba(124,58,237/.18); }
+:global(:root[data-theme="dark"]) .metric-pill--amber { --pill-bg:rgba(217,119,6/.10); --pill-border:rgba(217,119,6/.18); }
+:global(:root[data-theme="dark"]) .metric-pill:hover { background:rgba(255,255,255/.08); }
 </style>

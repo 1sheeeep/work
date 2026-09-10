@@ -47,11 +47,14 @@ function navigate(path: string) {
     align-items: center;
     position: sticky;
     bottom: 0;
-    height: 56px;
-    padding: 0 4px;
+    min-height: 62px;
+    padding: 6px 8px;
     padding-bottom: env(safe-area-inset-bottom, 0);
-    background: var(--surface);
-    border-top: 1px solid var(--border);
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
+    backdrop-filter: blur(18px) saturate(1.08);
+    -webkit-backdrop-filter: blur(18px) saturate(1.08);
+    border-top: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
+    box-shadow: 0 -14px 30px rgba(17,28,45,.08);
     z-index: 15;
   }
   .mobile-bottom-nav button {
@@ -61,17 +64,23 @@ function navigate(path: string) {
     justify-content: center;
     gap: 3px;
     flex: 1;
-    height: 100%;
-    padding: 0;
+    min-height: 48px;
+    padding: 4px 0;
     border: 0;
+    border-radius: var(--radius-control);
     background: transparent;
     color: var(--text-secondary);
     font-size: 10px;
     cursor: pointer;
-    transition: color var(--transition-fast);
+    transition: color var(--transition-fast), background var(--transition-fast), transform var(--transition-fast);
   }
   .mobile-bottom-nav button.active {
+    background: var(--surface-teal);
     color: var(--primary);
+    font-weight: 700;
+  }
+  .mobile-bottom-nav button:active {
+    transform: scale(.97);
   }
 }
 </style>

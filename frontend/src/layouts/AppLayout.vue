@@ -176,17 +176,21 @@ async function handleLogout() {
 </template>
 
 <style scoped>
-.app-layout { min-height:100dvh; }.skip-link { position:fixed; top:-80px; left:16px; z-index:3000; padding:12px 16px; background:white; color:var(--primary); border-radius:8px; }.skip-link:focus { top:12px; }
+.app-layout { position:relative; min-height:100dvh; }.skip-link { position:fixed; top:-80px; left:16px; z-index:3000; padding:12px 16px; background:white; color:var(--primary); border-radius:8px; }.skip-link:focus { top:12px; }
 /* ── 侧边栏 ── */
-.sidebar { position:fixed; inset:0 auto 0 0; width:232px; display:flex; flex-direction:column; padding:20px 12px; background:linear-gradient(180deg,#0c1522 0%,#101d2e 60%,#0f1a28 100%); color:white; z-index:20; overflow-y:auto; overflow-x:hidden; transition:width 280ms cubic-bezier(.4,0,.2,1),padding 280ms cubic-bezier(.4,0,.2,1); }
+.sidebar { position:fixed; inset:0 auto 0 0; width:232px; display:flex; flex-direction:column; padding:20px 12px; background:linear-gradient(180deg,#08111e 0%,#0f1b2b 54%,#0c1724 100%); color:white; z-index:20; overflow-y:auto; overflow-x:hidden; box-shadow:inset -1px 0 0 rgba(255,255,255,.055), 14px 0 34px rgba(17,28,45,.08); transition:width 280ms cubic-bezier(.4,0,.2,1),padding 280ms cubic-bezier(.4,0,.2,1); }
+.sidebar::before { content:''; position:absolute; inset:0; pointer-events:none; background:radial-gradient(circle at 50% 4%, rgba(45,212,191,.16), transparent 26%), linear-gradient(180deg, rgba(255,255,255,.04), transparent 30%); }
 .sidebar > * { position:relative; z-index:1; }
 .sidebar::-webkit-scrollbar { width:4px; }
 .sidebar::-webkit-scrollbar-thumb { background:rgba(255,255,255,.12); border-radius:2px; }
 
 /* ── 品牌区 ── */
 .sidebar-brand { display:flex; flex-direction:column; align-items:center; gap:8px; padding:8px 0 20px; margin-bottom:4px; border-bottom:1px solid rgba(255,255,255,.06); }
-.brand-mark { display:grid; place-items:center; width:46px; height:46px; flex:0 0 auto; border-radius:12px; background:linear-gradient(135deg,var(--brand-600),var(--brand-700)); color:white; font-size:22px; font-weight:700; box-shadow:0 4px 16px rgba(13,148,136,.25); transition:transform 300ms cubic-bezier(.34,1.56,.64,1),width 280ms cubic-bezier(.4,0,.2,1),height 280ms cubic-bezier(.4,0,.2,1),font-size 280ms cubic-bezier(.4,0,.2,1),border-radius 280ms cubic-bezier(.4,0,.2,1); }
-.brand-mark:hover { transform:scale(1.05); }
+.brand-mark { position:relative; display:grid; place-items:center; width:48px; height:48px; flex:0 0 auto; border-radius:14px; background:linear-gradient(145deg,#14b8a6 0%,#0d9488 40%,#0f766e 100%); color:white; font-size:23px; font-weight:800; letter-spacing:.02em; text-shadow:0 1px 2px rgba(0,0,0,.18); box-shadow:0 4px 20px rgba(13,148,136,.3),0 1px 3px rgba(0,0,0,.12),inset 0 0.5px 0 rgba(255,255,255,.18); transition:transform 300ms cubic-bezier(.34,1.56,.64,1),box-shadow 300ms ease,width 280ms cubic-bezier(.4,0,.2,1),height 280ms cubic-bezier(.4,0,.2,1),font-size 280ms cubic-bezier(.4,0,.2,1),border-radius 280ms cubic-bezier(.4,0,.2,1); }
+.brand-mark::before { content:''; position:absolute; inset:-3px; border-radius:17px; background:linear-gradient(135deg,#2dd4bf,#14b8a6,#0d9488,#2dd4bf); opacity:0; z-index:-1; transition:opacity 300ms ease; filter:blur(5px); }
+.brand-mark::after { content:''; position:absolute; inset:3px; border-radius:11px; border:1.5px solid rgba(255,255,255,.15); pointer-events:none; }
+.brand-mark:hover { transform:scale(1.08); box-shadow:0 6px 28px rgba(13,148,136,.4),0 2px 6px rgba(0,0,0,.15),inset 0 0.5px 0 rgba(255,255,255,.22); }
+.brand-mark:hover::before { opacity:.5; }
 .brand-info { text-align:center; }
 .brand-info strong { display:block; font-size:15px; letter-spacing:.01em; }
 .brand-info > span { display:block; margin-top:3px; color:rgba(255,255,255,.45); font-size:11px; }
@@ -222,7 +226,7 @@ async function handleLogout() {
 .sidebar-collapsed .workspace { margin-left:72px; }
 .sidebar-collapsed .sidebar-brand { padding:8px 0 16px; border-bottom-color:transparent; }
 .sidebar-collapsed .brand-info { display:none; }
-.sidebar-collapsed .brand-mark { width:40px; height:40px; font-size:18px; border-radius:10px; }
+.sidebar-collapsed .brand-mark { width:42px; height:42px; font-size:19px; border-radius:12px; }
 .sidebar-collapsed .sidebar-nav { gap:2px; }
 .sidebar-collapsed .nav-item { justify-content:center; padding:11px 0; animation:none; }
 .sidebar-collapsed .nav-label { display:none; }
@@ -244,11 +248,13 @@ async function handleLogout() {
 .monitor-chip i { width:7px; height:7px; border-radius:50%; background:#e8ad4b; flex:0 0 auto; }
 
 /* ── 工作区 ── */
-.workspace { margin-left:232px; min-height:100dvh; transition:margin-left 280ms cubic-bezier(.4,0,.2,1); }
-.workspace-content { padding:28px 28px 48px; min-width:0; }
+.workspace { position:relative; margin-left:232px; min-height:100dvh; transition:margin-left 280ms cubic-bezier(.4,0,.2,1); }
+.workspace::before { content:''; position:fixed; inset:0 0 auto 232px; height:180px; pointer-events:none; background:linear-gradient(180deg, rgba(255,255,255,.34), transparent); transition:inset 280ms cubic-bezier(.4,0,.2,1); }
+.sidebar-collapsed .workspace::before { left:72px; }
+.workspace-content { position:relative; z-index:1; padding:30px 30px 50px; min-width:0; }
 
 /* ── 顶栏 ── */
-.topbar { position:sticky; top:0; z-index:15; display:flex; align-items:center; justify-content:space-between; gap:16px; min-height:52px; padding:8px 28px; border-bottom:1px solid var(--border); background:var(--surface); }
+.topbar { position:sticky; top:0; z-index:15; display:flex; align-items:center; justify-content:space-between; gap:16px; min-height:56px; padding:9px 30px; border-bottom:1px solid color-mix(in srgb, var(--border) 78%, transparent); background:color-mix(in srgb, var(--surface) 84%, transparent); backdrop-filter:blur(18px) saturate(1.08); -webkit-backdrop-filter:blur(18px) saturate(1.08); box-shadow:0 1px 0 rgba(255,255,255,.5); }
 .topbar-context { display:flex; align-items:center; gap:10px; min-width:0; }
 .topbar-context span { color:var(--text-secondary); font-size:12px; }
 .breadcrumb-sep { color:var(--border); font-size:14px; }

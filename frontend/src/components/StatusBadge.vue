@@ -31,8 +31,9 @@ withDefaults(defineProps<{
   font-size: 12px;
   font-weight: 650;
   line-height: 1.3;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.48);
 }
-.status-badge > i { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: currentColor; }
+.status-badge > i { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 12%, transparent); }
 .status-badge > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status-badge--compact { min-height: 22px; padding: 2px 7px; font-size: 11px; }
 .status-badge--success { --status-surface: var(--color-success-bg); --status-border: #cfe8dc; --status-text: var(--success); }

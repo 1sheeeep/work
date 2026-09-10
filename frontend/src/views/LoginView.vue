@@ -59,10 +59,10 @@ async function submit() {
         <el-alert v-if="submitError" :title="submitError" type="error" :closable="false" show-icon class="login-alert" />
         <el-form ref="formRef" :model="form" :rules="rules" label-position="top" @submit.prevent="submit">
           <el-form-item label="用户名" prop="username">
-            <el-input v-model="form.username" :prefix-icon="User" autocomplete="username" placeholder="请输入系统用户名" autofocus />
+            <el-input v-model="form.username" :prefix-icon="User" autocomplete="username" placeholder="请输入系统用户名" autofocus :validate-event="false" />
           </el-form-item>
           <el-form-item label="密码" prop="password">
-            <el-input v-model="form.password" :prefix-icon="Lock" type="password" autocomplete="current-password" placeholder="请输入密码" show-password @keyup.enter="submit" />
+            <el-input v-model="form.password" :prefix-icon="Lock" type="password" autocomplete="current-password" placeholder="请输入密码" show-password :validate-event="false" @keyup.enter="submit" />
           </el-form-item>
           <div class="login-options">
             <el-checkbox v-model="form.rememberMe">保持登录 7 天</el-checkbox>
@@ -77,20 +77,22 @@ async function submit() {
 </template>
 
 <style scoped>
-.login-page { display: grid; min-height: 100dvh; grid-template-columns: minmax(0,1fr) minmax(0,1fr); background: #fff; }
-.login-context { position: relative; display: grid; place-items: center; overflow: hidden; padding: 64px; background: var(--bg-sidebar); color: #fff; }
+.login-page { display: grid; min-height: 100dvh; grid-template-columns: minmax(0,1fr) minmax(0,1fr); background: var(--surface-page); }
+.login-context { position: relative; display: grid; place-items: center; overflow: hidden; padding: 64px; background: linear-gradient(145deg, #07111e 0%, #0f1c2d 54%, #102a2a 100%); color: #fff; }
+.login-context::before { content:''; position:absolute; inset:0; background:radial-gradient(circle at 18% 14%, rgba(45,212,191,.22), transparent 28%), radial-gradient(circle at 78% 72%, rgba(37,99,235,.14), transparent 30%), linear-gradient(180deg, rgba(255,255,255,.06), transparent 36%); pointer-events:none; }
 
 .context-inner { position: relative; z-index: 1; width: min(100%,620px); }
 .product-lockup { display: flex; align-items: center; gap: 12px; color: rgba(255,255,255,.7); font-size: 14px; font-weight: 600; }
-.product-mark { display: grid; width: 44px; height: 44px; place-items: center; border-radius: var(--radius-control); background: var(--brand-600); color: #fff; font-size: 20px; font-weight: 800; }
-h1 { max-width: 620px; margin: 64px 0 20px; font-size: clamp(30px,3vw,44px); line-height: 1.12; letter-spacing: -.04em; }
+.product-mark { display: grid; width: 44px; height: 44px; place-items: center; border-radius: var(--radius-control); background: linear-gradient(135deg, var(--brand-600), var(--brand-700)); color: #fff; font-size: 20px; font-weight: 800; box-shadow:0 10px 28px rgba(13,148,136,.28), inset 0 1px 0 rgba(255,255,255,.24); }
+h1 { max-width: 720px; margin: 64px 0 20px; font-size: clamp(30px,2.65vw,42px); line-height: 1.14; letter-spacing: -.032em; text-wrap: balance; }
 .context-inner > p { max-width: 560px; margin: 0; color: rgba(255,255,255,.6); font-size: 17px; line-height: 1.8; }
 .context-points { display: grid; grid-template-columns: repeat(3,1fr); gap: 1px; margin: 64px 0 0; border: 1px solid rgba(255,255,255,.13); border-radius: var(--radius-panel); background: rgba(255,255,255,.13); overflow: hidden; }
-.context-points div { padding: 20px; background: var(--brand-950); }
+.context-points div { padding: 20px; background: rgba(17,28,45,.72); backdrop-filter: blur(14px) saturate(1.08); -webkit-backdrop-filter: blur(14px) saturate(1.08); }
 .context-points dt { color: #5eead4; font-weight: 700; }
 .context-points dd { margin: 7px 0 0; color: rgba(255,255,255,.55); font-size: 13px; line-height: 1.45; }
-.login-panel { display:grid; place-items:center; padding:48px; background:var(--surface-page); }
-.login-card { width:min(100%,430px); padding:40px; border:1px solid var(--border-subtle); border-radius:var(--radius-panel); background:var(--surface); box-shadow:var(--shadow-rest); }
+.login-panel { display:grid; place-items:center; padding:48px; background:linear-gradient(135deg, rgba(240,253,250,.58), rgba(241,246,253,.5), var(--surface-page)); }
+.login-card { position:relative; overflow:hidden; width:min(100%,430px); padding:40px; border:1px solid color-mix(in srgb, var(--border-subtle) 78%, transparent); border-radius:var(--radius-panel); background:var(--glass-bg); backdrop-filter:var(--glass-blur); -webkit-backdrop-filter:var(--glass-blur); box-shadow:var(--shadow-floating), inset 0 1px 0 rgba(255,255,255,.62); }
+.login-card::before { content:''; position:absolute; inset:0 0 auto; height:118px; background:linear-gradient(180deg, rgba(255,255,255,.7), transparent); pointer-events:none; }
 .login-card > * { position:relative; z-index:1; }
 .login-heading > span { color: var(--brand-700); font-size: 13px; font-weight: 700; }
 .login-heading h2 { margin: 10px 0; font-size: 28px; letter-spacing: -.02em; }
@@ -99,7 +101,7 @@ h1 { max-width: 620px; margin: 64px 0 20px; font-size: clamp(30px,3vw,44px); lin
 .login-options { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: -2px 0 16px; font-size: 13px; }
 .login-options a { color: var(--brand-700); font-weight: 700; text-decoration: none; }
 .login-options a:hover { text-decoration: underline; }
-.login-submit { width: 100%; min-height: 44px; margin-top: 4px; }
+.login-submit { width: 100%; min-height: 44px; margin-top: 4px; box-shadow:0 10px 20px rgba(13,148,136,.16); }
 .security-note { margin: 18px 0 0; color: var(--text-tertiary); font-size: 12px; line-height: 1.6; text-align: center; }
 @media (max-width: 900px) {
   .login-page { grid-template-columns: 1fr; }

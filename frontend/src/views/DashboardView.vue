@@ -7,15 +7,19 @@ import { ArrowLeft, ArrowRight, ChatDotRound, CircleCheck, Clock, Close, InfoFil
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import { api, apiErrorMessage, ensureCsrf } from '../services/api'
 import { useNotificationCenter } from '../composables/useNotificationCenter'
-import type { AiDutyReply, AiDutyReviewRequired, AutoReplyPolicy, BrowserDevice, BrowserUnreadObservation, UnmatchedJobGroup } from '../types'
+import type { AiDutyReply, AiDutyReviewRequired, AiReplyQualitySummary, AutoReplyPolicy, BrowserDevice, BrowserUnreadObservation, UnmatchedJobGroup } from '../types'
 
 const router = useRouter(); const notify = useNotificationCenter(); const loading = ref(true); const switching = ref(false); const cycleCancelling = ref(false); const loadError = ref('')
 const policies = ref<AutoReplyPolicy[]>([]); const devices = ref<BrowserDevice[]>([]); const observations = ref<BrowserUnreadObservation[]>([]); const groups = ref<UnmatchedJobGroup[]>([])
 const dutyReplies = ref<AiDutyReply[]>([])
 const dutyReviewRequired = ref<AiDutyReviewRequired[]>([])
+const qualitySummary = ref<AiReplyQualitySummary | null>(null)
 const manualReviewObservationIds = computed(() => new Set(dutyReviewRequired.value.map(item => item.observationId)))
 const startOpen = ref(false); const hours = ref(2); const tab = ref<'UNREAD'|'DONE'>('UNREAD'); const page = ref(1); const pageInput = ref(1); const selected = ref<BrowserUnreadObservation | null>(null); const jobId = ref('')
 const locatingId = ref<string | null>(null)
+const priorityFilter = ref<'ALL'|'URGENT'|'HIGH'|'REVIEW'>('ALL')
+const filteredVisible = computed(() => { if (priorityFilter.value === 'ALL') return visible.value; if (priorityFilter.value === 'REVIEW') return visible.value.filter(x => x.eligibilityStatus === 'READY_FOR_REVIEW'); if (priorityFilter.value === 'URGENT') return visible.value.filter(x => priorityOf(x) === 'urgent'); if (priorityFilter.value === 'HIGH') return visible.value.filter(x => priorityOf(x) === 'high'); return visible.value })
+const reviewExpanded = ref(true); const reviewRequiredExpanded = ref(true)
 const dutyRepliesListRef = ref<HTMLElement | null>(null)
 const dutyReviewRequiredListRef = ref<HTMLElement | null>(null)
 const dutyRepliesScroll = ref({ left: true, right: false })
@@ -32,9 +36,7 @@ const cycleActive = (x:BrowserUnreadObservation) => ['ACTIVE','WAITING_RESUME_RE
 const unread = computed(() => ordered(observations.value.filter(x => x.unread && x.resolutionStatus === 'UNRESOLVED'))); const workQueue = computed(() => ordered(observations.value.filter(x => manualReviewObservationIds.value.has(x.id) || (x.unread && x.resolutionStatus === 'UNRESOLVED') || cycleActive(x)))); const done = computed(() => ordered(observations.value.filter(x => !manualReviewObservationIds.value.has(x.id) && !cycleActive(x) && (!x.unread || x.resolutionStatus !== 'UNRESOLVED')))); const items = computed(() => tab.value === 'UNREAD' ? workQueue.value : done.value)
 const pages = computed(() => Math.max(1, Math.ceil(items.value.length / 6))); const visible = computed(() => items.value.slice((page.value - 1) * 6, page.value * 6)); const online = computed(() => devices.value.filter(x => x.status === 'ACTIVE' && x.runtimeState === 'RUNNING').length); const drafts = computed(() => unread.value.filter(x => x.draftQualification === 'KNOWLEDGE_READY').length); const issues = computed(() => new Set(devices.value.filter(x => x.status === 'ACTIVE' && x.runtimeState !== 'RUNNING').map(x => x.accountId)).size)
 const selectedGroup = computed(() => selected.value ? groups.value.find(x => x.observationIds.includes(selected.value!.id)) : undefined); const candidates = computed(() => selectedGroup.value?.candidates.filter(x => x.knowledgeReady) ?? [])
-const labels: Record<BrowserUnreadObservation['eligibilityStatus'],string> = { OBSERVING:'观察中',AWAY_INACTIVE:'未挂机',SNAPSHOT_CONFIRMATION_REQUIRED:'等待确认',DETAIL_REQUIRED:'等待详情',READY_FOR_REVIEW:'待处理',HR_REPLIED:'HR 已回复',HR_HANDLED:'已处理',APPROVED_DRAFT:'草稿已审核',REJECTED:'已忽略',HUMAN_TAKEOVER:'人工接管',AWAITING_REPLY:'等待求职者回复',CYCLE_ACTIVE:'周期测试进行中' }
 const fill: Record<BrowserUnreadObservation['fillStatus'],string> = { NONE:'尚未批准填入',READY:'待填入 BOSS',CLAIMED:'填入中',FILLED:'已填入未发送',UNKNOWN:'结果待人工确认' }
-const stageLabels = { UNKNOWN:'阶段待识别',INITIAL_CONTACT:'首次接触',AWAITING_REPLY:'等待求职者回复',CAN_REQUEST_RESUME:'可索要简历',RESUME_REQUESTED:'已索要简历',RESUME_RECEIVED:'简历已到达',RESUME_APPROVED:'简历已通过复核',CAN_EXCHANGE_CONTACT:'可交换联系方式',CONTACT_EXCHANGED:'联系方式已交换',CAN_SCHEDULE_INTERVIEW:'待人工约面试',INTERVIEW_SCHEDULED:'面试已确认' } as const
 const cycleLabels:Record<BrowserUnreadObservation['cycleTestStatus'],string>={NOT_STARTED:'未启动',ACTIVE:'自动阶段进行中',WAITING_RESUME_REVIEW:'等待 HR 审核简历',WAITING_HUMAN_INTERVIEW:'等待 HR 安排面试',COMPLETED:'周期已完成',FAILED:'周期已停止',CANCELLED:'周期已取消'}
 const resumePipelineLabels={NOT_DETECTED:'等待识别',DETECTED:'已识别，等待导入',IMPORTING:'正在导入',ANALYZING:'AI 分析中',SUCCEEDED:'分析完成',FAILED:'处理失败'} as const
 function effectiveResumePipelineStatus(item:BrowserUnreadObservation){return item.resumePipelineStatus&&item.resumePipelineStatus!=='NOT_DETECTED'?item.resumePipelineStatus:item.cycleTestStatus==='WAITING_RESUME_REVIEW'?'DETECTED':'NOT_DETECTED'}
@@ -69,15 +71,16 @@ async function load(silent = false){
   if (!silent) { loading.value = true; loadError.value = '' }
   const previousReviewIds = new Set(dutyReviewRequired.value.map(x => x.id))
   try {
-    const [p, d, o, g, r, reviewRequired] = await Promise.all([
+    const [p, d, o, g, r, reviewRequired, quality] = await Promise.all([
       api.get<AutoReplyPolicy[]>('/auto-replies/policies'),
       api.get<BrowserDevice[]>('/local-connector/devices'),
       api.get<BrowserUnreadObservation[]>('/local-connector/observations'),
       api.get<UnmatchedJobGroup[]>('/local-connector/observations/unmatched-job-groups'),
       api.get<AiDutyReply[]>('/local-connector/ai-duty-replies'),
-      api.get<AiDutyReviewRequired[]>('/local-connector/ai-duty-review-required')
+      api.get<AiDutyReviewRequired[]>('/local-connector/ai-duty-review-required'),
+      api.get<AiReplyQualitySummary>('/local-connector/ai-reply-quality-summary')
     ])
-    policies.value = p.data; devices.value = d.data; observations.value = o.data; groups.value = g.data; dutyReplies.value = r.data; dutyReviewRequired.value = reviewRequired.data
+    policies.value = p.data; devices.value = d.data; observations.value = o.data; groups.value = g.data; dutyReplies.value = r.data; dutyReviewRequired.value = reviewRequired.data; qualitySummary.value = quality.data
     lastRefreshed.value = new Date()
     const newManualReviews = reviewRequired.data.filter(x => !previousReviewIds.has(x.id))
     for (const item of newManualReviews) {
@@ -112,7 +115,7 @@ function cycleStep(item:BrowserUnreadObservation){const steps:Record<string,numb
 const priorityColor:Record<string,string>={urgent:'var(--warning)',high:'var(--color-info)',normal:'transparent'}
 function avatarHue(name:string){let h=0;for(let i=0;i<name.length;i++)h=name.charCodeAt(i)+((h<<5)-h);return Math.abs(h)%360}
 function dismissNotice(){noticeDismissed.value=true;if(noticeTimer){clearTimeout(noticeTimer);noticeTimer=null}}
-function onListKeydown(e:KeyboardEvent){if(e.key==='Escape'&&selected.value){e.preventDefault();closeDetail();return}if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();const rows=messageListRef.value?.querySelectorAll('.message-row');if(!rows?.length)return;const focused=document.activeElement;let idx=Array.from(rows).indexOf(focused as Element);if(idx===-1)idx=0;else idx+=e.key==='ArrowDown'?1:-1;idx=Math.max(0,Math.min(rows.length-1,idx));(rows[idx] as HTMLElement)?.focus()}}
+function onListKeydown(e:KeyboardEvent){if(e.key==='Escape'&&selected.value){e.preventDefault();closeDetail();return}if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();const rows=messageListRef.value?.querySelectorAll('.message-row');if(!rows?.length)return;const focused=document.activeElement;let idx=Array.from(rows).indexOf(focused as Element);if(idx===-1)idx=0;else idx+=e.key==='ArrowDown'?1:-1;idx=Math.max(0,Math.min(rows.length-1,idx));(rows[idx] as HTMLElement)?.focus();(rows[idx] as HTMLElement)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })}}
 function toggle(value:boolean|string|number){if(Boolean(value)){if(!watchable.value.length)return ElMessage.warning('请先连接至少一个招聘账号');startOpen.value=true}else void stop()}
 async function start(){switching.value=true;try{await ensureCsrf();const endsAt=new Date(Date.now()+hours.value*3600000).toISOString();await Promise.all(watchable.value.map(x=>api.put(`/auto-replies/policies/${x.accountId}/away-mode`,{mode:hours.value>=24?'AFTER_HOURS':'TEMPORARY',endsAt,autoReplyEnabled:true})));startOpen.value=false;ElMessage.success('自动值守已开启，当前未读将立即进入处理');await load()}catch(e){ElMessage.error(apiErrorMessage(e,'挂机值守开启失败'))}finally{switching.value=false}}
 async function stop(){try{await ElMessageBox.confirm('确认结束全部招聘账号的自动值守?','结束挂机');switching.value=true;await ensureCsrf();await Promise.all(active.value.map(x=>api.put(`/auto-replies/policies/${x.accountId}/away-mode`,{mode:'IN_OFFICE',endsAt:null,autoReplyEnabled:false})));await load()}catch(e){if(e!=='cancel'&&e!=='close')ElMessage.error(apiErrorMessage(e,'挂机值守结束失败'))}finally{switching.value=false}}
@@ -173,6 +176,22 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
         </div>
       </section>
 
+      <section v-if="qualitySummary" class="quality-strip" aria-labelledby="quality-strip-title">
+        <div class="quality-strip__intro">
+          <span>过去 24 小时</span>
+          <h2 id="quality-strip-title">AI 回复质量</h2>
+        </div>
+        <dl class="quality-strip__metrics">
+          <div><dt>已评估</dt><dd>{{ qualitySummary.evaluated }}</dd></div>
+          <div><dt>建议回复</dt><dd>{{ qualitySummary.replyApproved }}</dd></div>
+          <div><dt>发送成功</dt><dd class="quality-strip__success">{{ qualitySummary.sent }}</dd></div>
+          <div><dt>正常静默</dt><dd>{{ qualitySummary.expectedSilence }}</dd></div>
+          <div><dt>待人工</dt><dd :class="{ 'quality-strip__warning': qualitySummary.reviewRequired > 0 }">{{ qualitySummary.reviewRequired }}</dd></div>
+          <div><dt>平均置信度</dt><dd>{{ Math.round(qualitySummary.averageConfidence * 100) }}%</dd></div>
+        </dl>
+        <span v-if="qualitySummary.shadowEvaluated" class="quality-strip__shadow">影子评测 {{ qualitySummary.shadowEvaluated }}</span>
+      </section>
+
       <!-- ── 通知条（可关闭 + 15s 自动消失） ── -->
       <div v-if="issues && !noticeDismissed" class="notice-bar">
         <el-icon><InfoFilled /></el-icon>
@@ -186,7 +205,12 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
       <section class="card-panel duty-review" aria-labelledby="duty-review-title">
         <header class="duty-review__header">
           <div>
-            <span class="duty-review__eyebrow">过去 24 小时</span>
+            <button
+              class="duty-review__toggle"
+              :class="{ 'duty-review__toggle--open': reviewExpanded }"
+              @click="reviewExpanded = !reviewExpanded"
+              aria-label="展开/折叠 AI 值守回顾"
+            ><span class="duty-review__eyebrow">过去 24 小时</span></button>
             <h2 id="duty-review-title">AI 值守回顾</h2>
             <p>仅展示已收到浏览器成功回执的回复，不包含候选人原始消息。</p>
           </div>
@@ -202,11 +226,12 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
             </div>
           </div>
         </header>
+        <div v-show="reviewExpanded" class="duty-review__body">
         <AsyncState v-if="!dutyReplies.length" state="empty" embedded title="暂无 AI 自动回复记录" message="挂机期间确认发送成功的回复会出现在这里。">
           <template #icon><el-icon><ChatDotRound /></el-icon></template>
         </AsyncState>
         <div v-else ref="dutyRepliesListRef" class="duty-review__list" @scroll="updateDutyScrollState('dutyReplies')">
-          <button v-for="reply in dutyReplies" :key="reply.id" class="duty-reply" type="button" @click="openDutyReply(reply)">
+          <button v-for="(reply, idx) in dutyReplies" :key="reply.id" class="duty-reply" :class="`duty-reply--hue-${idx % 6}`" type="button" @click="openDutyReply(reply)">
             <span class="duty-reply__status" :class="{ followup: reply.needsFollowUp }"></span>
             <span class="duty-reply__main">
               <strong>{{ reply.jobTitle }}</strong>
@@ -219,12 +244,18 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
             </span>
           </button>
         </div>
+        </div>
       </section>
 
       <section class="card-panel duty-review duty-review--required" aria-labelledby="duty-review-required-title">
         <header class="duty-review__header">
           <div>
-            <span class="duty-review__eyebrow">过去 24 小时</span>
+            <button
+              class="duty-review__toggle"
+              :class="{ 'duty-review__toggle--open': reviewRequiredExpanded }"
+              @click="reviewRequiredExpanded = !reviewRequiredExpanded"
+              aria-label="展开/折叠已读未回复"
+            ><span class="duty-review__eyebrow">过去 24 小时</span></button>
             <h2 id="duty-review-required-title">已读未回复 · 待 HR 复核</h2>
             <p>收录面试时间协商、无关或敏感内容、含义不清及事实校验未通过，且仍待 HR 处理的会话。</p>
           </div>
@@ -240,6 +271,7 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
             </div>
           </div>
         </header>
+        <div v-show="reviewRequiredExpanded" class="duty-review__body">
         <AsyncState v-if="!dutyReviewRequired.length" state="empty" embedded title="暂无已读未回复会话" message="AI 安全跳过的无关消息会出现在这里，便于 HR 返回后复核。">
           <template #icon><el-icon><CircleCheck /></el-icon></template>
         </AsyncState>
@@ -253,6 +285,7 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
             </span>
             <span class="duty-reply__meta"><em>AI 未回复，需人工判断</em><time :datetime="item.decidedAt">{{ new Date(item.decidedAt).toLocaleTimeString('zh-CN', { hour:'2-digit', minute:'2-digit' }) }}</time></span>
           </button>
+        </div>
         </div>
       </section>
 
@@ -275,13 +308,23 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
               </div>
             </header>
 
-            <AsyncState v-if="!visible.length" state="empty" embedded :title="'当前没有' + (tab === 'UNREAD' ? '未读' : '已处理') + '消息'" message="新的会话状态产生后会在这里显示。">
+            <div v-if="visible.length" class="priority-filters">
+              <button :class="{ active: priorityFilter === 'ALL' }" @click="priorityFilter = 'ALL'">全部</button>
+              <button :class="{ active: priorityFilter === 'URGENT' }" @click="priorityFilter = 'URGENT'">
+                <span class="priority-filters__dot priority-filters__dot--urgent"></span>需处理
+              </button>
+              <button :class="{ active: priorityFilter === 'REVIEW' }" @click="priorityFilter = 'REVIEW'">
+                <span class="priority-filters__dot priority-filters__dot--review"></span>待复核
+              </button>
+            </div>
+
+            <AsyncState v-if="!filteredVisible.length" state="empty" embedded :title="'当前没有' + (tab === 'UNREAD' ? '未读' : '已处理') + '消息'" message="新的会话状态产生后会在这里显示。">
               <template #icon><el-icon><Clock /></el-icon></template>
             </AsyncState>
 
-            <div v-else class="message-list" ref="messageListRef" @keydown="onListKeydown">
-              <article
-                v-for="item in visible" :key="item.id" class="message-row"
+            <div v-else class="message-grid" ref="messageListRef" @keydown="onListKeydown">
+              <button
+                v-for="item in filteredVisible" :key="item.id" type="button" class="message-card"
                 :class="{
                   selected: item.id === selected?.id,
                   current: item.id === currentId,
@@ -290,25 +333,26 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
                   'message--high': priorityOf(item) === 'high'
                 }"
                 :data-id="item.id"
-                tabindex="0" role="button"
+                tabindex="0"
                 :aria-label="`查看 ${item.observedJobTitle || '待识别岗位'} 的消息`"
                 @click="select(item)" @keydown.enter="select(item)" @keydown.space.prevent="select(item)"
               >
-                <span class="message-row__priority" :style="{ background: priorityColor[priorityOf(item)] }"></span>
-                <div class="message-row__avatar" :style="{ background: `hsl(${avatarHue(item.anonymousKey)}, 65%, 93%)`, color: `hsl(${avatarHue(item.anonymousKey)}, 55%, 35%)` }">求</div>
-                <div class="message-row__info">
-                  <strong class="message-row__title">匿名求职者</strong>
-                  <span class="message-row__meta">
-                    {{ item.observedJobTitle || '岗位待识别' }} · {{ item.accountName }}
-                    <em v-if="item.id === currentId">当前浏览器会话</em>
-                  </span>
+                <span class="message-card__priority" :style="{ background: priorityColor[priorityOf(item)] }"></span>
+                <div class="message-card__top">
+                  <div class="message-card__avatar" :style="{ background: `hsl(${avatarHue(item.anonymousKey)}, 65%, 93%)`, color: `hsl(${avatarHue(item.anonymousKey)}, 55%, 35%)` }">求</div>
+                  <div class="message-card__header">
+                    <strong class="message-card__title">{{ item.observedJobTitle || '岗位待识别' }}</strong>
+                    <small class="message-card__account">{{ item.accountName }}</small>
+                  </div>
                 </div>
-                <div class="message-row__stats">
-                  <span v-if="manualReviewObservationIds.has(item.id)" class="message-row__manual">需 HR 手动处理</span>
-                  <span class="message-row__badge">{{ item.unreadCount }} 条未读</span>
-                  <span class="message-row__age">{{ age(item.firstSeenAt) }}</span>
+                <div class="message-card__body">
+                  <span v-if="manualReviewObservationIds.has(item.id)" class="message-card__tag message-card__tag--manual">需 HR 手动处理</span>
+                  <span v-if="priorityOf(item) === 'urgent'" class="message-card__tag message-card__tag--urgent">紧急</span>
+                  <span v-else-if="priorityOf(item) === 'high'" class="message-card__tag message-card__tag--high">高优</span>
+                  <span class="message-card__meta">{{ item.unreadCount }} 条未读 · {{ age(item.firstSeenAt) }}</span>
+                  <em v-if="item.id === currentId" class="message-card__current">当前浏览器会话</em>
                 </div>
-              </article>
+              </button>
             </div>
 
             <footer>
@@ -340,25 +384,6 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
               </header>
 
             <div class="detail-body">
-              <div class="detail-status">
-                <span class="detail-status__item">
-                  <b>状态</b>
-                  <span :class="{ 'detail-status--review': selected.eligibilityStatus === 'READY_FOR_REVIEW' }">{{ labels[selected.eligibilityStatus] }}</span>
-                </span>
-                <span class="detail-status__item">
-                  <b>未读</b>
-                  <span>{{ selected.unreadCount }} 条</span>
-                </span>
-                <span class="detail-status__item">
-                  <b>时长</b>
-                  <span>{{ age(selected.firstSeenAt) }}</span>
-                </span>
-                <span class="detail-status__item">
-                  <b>招聘阶段</b>
-                  <span>{{ stageLabels[selected.conversationStage || 'UNKNOWN'] }}</span>
-                </span>
-              </div>
-
               <section v-if="selected.cycleTestStatus !== 'NOT_STARTED'" class="cycle-progress" aria-label="完整招聘周期测试进度">
                 <header>
                   <strong>单会话完整周期测试</strong>
@@ -372,7 +397,6 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
                   <el-step title="交换联系" />
                   <el-step title="人工约面" />
                 </el-steps>
-                <p>当前：{{ stageLabels[selected.conversationStage || 'UNKNOWN'] }}。测试周期免能力与生产批准；动作仍严格锁定当前会话，并使用单次租约防止重复执行。</p>
               </section>
 
               <section v-if="selected.conversationSignals?.resumeReceived || effectiveResumePipelineStatus(selected) !== 'NOT_DETECTED'" class="resume-pipeline" aria-live="polite" aria-label="简历导入与 AI 分析状态">
@@ -383,7 +407,6 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
                   </div>
                   <el-tag size="small" :type="resumePipelineTag(selected)">{{ resumePipelineLabels[effectiveResumePipelineStatus(selected)] }}</el-tag>
                 </header>
-                <el-progress :percentage="resumePipelineStep(selected) * 25" :status="selected.resumePipelineStatus === 'FAILED' ? 'exception' : selected.resumePipelineStatus === 'SUCCEEDED' ? 'success' : undefined" :stroke-width="8" />
                 <div class="resume-pipeline__steps" aria-hidden="true">
                   <span :class="{ active: resumePipelineStep(selected) >= 1 }">已识别</span>
                   <span :class="{ active: resumePipelineStep(selected) >= 2 }">已导入</span>
@@ -471,13 +494,27 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 12px 20px;
-  margin-bottom: 16px;
+  padding: 14px 20px;
+  margin-bottom: 18px;
   border-radius: var(--radius-panel);
   border: 1px solid var(--border-teal);
-  background: var(--surface-teal);
-  box-shadow: var(--shadow-rest);
+  background:
+    linear-gradient(135deg, rgba(238,249,246,.92), rgba(255,255,255,.72)),
+    var(--surface-teal);
+  box-shadow: var(--shadow-raised), inset 0 1px 0 rgba(255,255,255,.62);
   transition: background 300ms ease, border-color 300ms ease;
+  position: relative;
+  overflow: hidden;
+}
+.dashboard-bar::before {
+  content: '';
+  position: absolute;
+  inset: -80% auto auto 48%;
+  width: 420px;
+  height: 220px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(20,184,166,.16), transparent 68%);
+  pointer-events: none;
 }
 .dashboard-bar--active {
   background: linear-gradient(135deg, #0d9488 0%, #0f766e 50%, #0c1f2d 100%);
@@ -486,6 +523,7 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
   border-color: var(--brand-600);
   color: white;
 }
+.dashboard-bar > * { position: relative; z-index: 1; }
 @keyframes barShimmer {
   0%, 100% { background-position: 0% 50%; }
   50% { background-position: 100% 50%; }
@@ -535,14 +573,17 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 5px 12px;
+  min-height: 32px;
+  padding: 5px 13px;
   border-radius: var(--radius-pill);
-  background: var(--surface);
+  background: rgba(255,255,255,.78);
   border: 1px solid var(--border-subtle);
   font-size: 12px;
   color: var(--text-secondary);
-  transition: background 200ms ease, border-color 200ms ease, color 200ms ease;
+  box-shadow: 0 1px 2px rgba(17,28,45,.04), inset 0 1px 0 rgba(255,255,255,.5);
+  transition: background 200ms ease, border-color 200ms ease, color 200ms ease, transform 200ms ease;
 }
+.metric-pill:hover { transform: translateY(-1px); }
 .metric-pill b {
   font-variant-numeric: tabular-nums;
   font-weight: 700;
@@ -587,6 +628,37 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
 .refresh-indicator--stale { color: var(--warning); }
 .dashboard-bar--active .refresh-indicator { color: rgba(255,255,255,.5); }
 
+.quality-strip {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  margin-bottom: 16px;
+  padding: 14px 18px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  background: linear-gradient(110deg, color-mix(in srgb, var(--surface-teal) 60%, white), rgba(255,255,255,.78));
+  box-shadow: var(--shadow-sm);
+}
+.quality-strip__intro { flex: 0 0 auto; min-width: 112px; }
+.quality-strip__intro span { color: var(--primary); font-size: 10px; font-weight: 700; letter-spacing: .08em; }
+.quality-strip__intro h2 { margin: 2px 0 0; font-size: 15px; }
+.quality-strip__metrics { display: grid; grid-template-columns: repeat(6, minmax(72px, 1fr)); flex: 1; margin: 0; }
+.quality-strip__metrics div { padding: 0 14px; border-left: 1px solid var(--border-subtle); }
+.quality-strip__metrics dt { color: var(--text-tertiary); font-size: 10px; }
+.quality-strip__metrics dd { margin: 3px 0 0; color: var(--text-primary); font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.quality-strip__metrics .quality-strip__success { color: var(--success); }
+.quality-strip__metrics .quality-strip__warning { color: var(--warning); }
+.quality-strip__shadow { flex: 0 0 auto; padding: 5px 9px; border-radius: var(--radius-pill); background: var(--surface-amber); color: var(--warning); font-size: 11px; font-weight: 600; }
+@media (max-width: 980px) {
+  .quality-strip { align-items: flex-start; flex-wrap: wrap; }
+  .quality-strip__metrics { grid-template-columns: repeat(3, minmax(72px, 1fr)); flex-basis: 100%; }
+  .quality-strip__metrics div:nth-child(4) { border-left: 0; }
+}
+@media (max-width: 560px) {
+  .quality-strip__metrics { grid-template-columns: repeat(2, 1fr); }
+  .quality-strip__metrics div:nth-child(odd) { border-left: 0; }
+}
+
 /* ── 通知条 ── */
 .notice-bar {
   display: flex;
@@ -629,22 +701,67 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
 }
 .notice-bar__close:hover { background: var(--surface-muted); color: var(--text-primary); }
 
-.duty-review { margin-bottom:16px; padding:0; overflow:hidden; }
-.duty-review__header { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:16px 20px; border-bottom:1px solid var(--border); }
+.duty-review { margin-bottom:18px; padding:0; overflow:hidden; }
+.duty-review__header { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:18px 20px; border-bottom:2px solid transparent; border-image:linear-gradient(90deg, transparent, var(--border-subtle) 15%, var(--border-subtle) 85%, transparent) 1; background:linear-gradient(180deg, rgba(255,255,255,.64), transparent); }
 .duty-review__header h2 { margin:2px 0 0; }
 .duty-review__header p { margin:4px 0 0; color:var(--text-secondary); font-size:12px; }
 .duty-review__eyebrow { color:var(--primary); font-size:11px; font-weight:700; }
 .duty-review__header-right { display:flex; align-items:center; gap:10px; flex-shrink:0; }
 .duty-review__count { flex:0 0 auto; padding:6px 10px; border-radius:var(--radius-pill); background:var(--surface-teal); color:var(--text-secondary); font-size:12px; }
 .duty-review__count b { color:var(--primary); font-size:16px; }
+
+/* ── 折叠/展开 ── */
+.duty-review__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+.duty-review__toggle::after {
+  content: '';
+  display: inline-block;
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid var(--text-tertiary);
+  transition: transform 200ms ease;
+}
+.duty-review__toggle--open::after { transform: rotate(180deg); }
+.duty-review__body { overflow: hidden; }
+
 .duty-review__arrows { display:flex; gap:4px; }
 .duty-review__list { display:flex; overflow-x:auto; scroll-behavior:smooth; scrollbar-width:thin; scrollbar-color:var(--border-subtle) transparent; }
 .scroll-arrow { display:grid; place-items:center; width:28px; height:28px; padding:0; border:1px solid var(--border-subtle); border-radius:6px; background:var(--surface); color:var(--text-secondary); cursor:pointer; transition:background var(--transition-fast),color var(--transition-fast),border-color var(--transition-fast); }
 .scroll-arrow:hover:not(:disabled) { background:var(--surface-soft); color:var(--primary); border-color:var(--border-teal); }
 .scroll-arrow:disabled { opacity:0.3; cursor:not-allowed; }
-.duty-reply { display:grid; grid-template-columns:8px minmax(0,1fr); gap:8px; flex-shrink:0; width:200px; padding:14px 16px; border:0; border-right:1px solid var(--border-subtle); background:var(--surface); color:var(--text-primary); text-align:left; cursor:pointer; }
+.duty-reply { display:grid; grid-template-columns:8px minmax(0,1fr); gap:8px; flex-shrink:0; width:208px; padding:15px 16px; border:0; border-right:1px solid var(--border-subtle); background:linear-gradient(145deg, rgba(13,148,136,.06) 0%, rgba(255,255,255,.66) 100%); color:var(--text-primary); text-align:left; cursor:pointer; transition:background var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast); }
 .duty-reply:last-child { border-right:0; }
-.duty-reply:hover { background:var(--surface-row); }
+.duty-reply:hover { background:linear-gradient(145deg, rgba(13,148,136,.10) 0%, rgba(255,255,255,.82) 100%); box-shadow:inset 3px 0 0 rgba(13,148,136,.25), 0 2px 8px rgba(13,148,136,.08); transform:translateY(-1px); }
+.duty-reply--hue-0 { background:linear-gradient(145deg, rgba(13,148,136,.02) 0%, rgba(236,249,246,.18) 100%); }
+.duty-reply--hue-0:hover { background:linear-gradient(145deg, rgba(13,148,136,.06) 0%, rgba(236,249,246,.38) 100%); box-shadow:inset 3px 0 0 rgba(13,148,136,.18), 0 2px 8px rgba(13,148,136,.06); }
+.duty-reply--hue-0 .duty-reply__status { background:#0d9488; }
+.duty-reply--hue-1 { background:linear-gradient(145deg, rgba(37,99,235,.06) 0%, rgba(239,246,255,.35) 100%); }
+.duty-reply--hue-1:hover { background:linear-gradient(145deg, rgba(37,99,235,.11) 0%, rgba(239,246,255,.55) 100%); box-shadow:inset 3px 0 0 rgba(37,99,235,.22), 0 2px 8px rgba(37,99,235,.08); }
+.duty-reply--hue-1 .duty-reply__status { background:#2563eb; }
+.duty-reply--hue-2 { background:linear-gradient(145deg, rgba(124,58,237,.11) 0%, rgba(245,243,255,.52) 100%); }
+.duty-reply--hue-2:hover { background:linear-gradient(145deg, rgba(124,58,237,.18) 0%, rgba(245,243,255,.72) 100%); box-shadow:inset 3px 0 0 rgba(124,58,237,.28), 0 2px 8px rgba(124,58,237,.10); }
+.duty-reply--hue-2 .duty-reply__status { background:#7c3aed; }
+.duty-reply--hue-3 { background:linear-gradient(145deg, rgba(217,119,6,.16) 0%, rgba(255,251,240,.68) 100%); }
+.duty-reply--hue-3:hover { background:linear-gradient(145deg, rgba(217,119,6,.25) 0%, rgba(255,251,240,.88) 100%); box-shadow:inset 3px 0 0 rgba(217,119,6,.34), 0 2px 8px rgba(217,119,6,.12); }
+.duty-reply--hue-3 .duty-reply__status { background:#d97706; }
+.duty-reply--hue-4 { background:linear-gradient(145deg, rgba(225,29,72,.22) 0%, rgba(255,241,242,.82) 100%); }
+.duty-reply--hue-4:hover { background:linear-gradient(145deg, rgba(225,29,72,.32) 0%, rgba(255,241,242,.96) 100%); box-shadow:inset 3px 0 0 rgba(225,29,72,.40), 0 2px 8px rgba(225,29,72,.14); }
+.duty-reply--hue-4 .duty-reply__status { background:#e11d48; }
+.duty-reply--hue-5 { background:linear-gradient(145deg, rgba(5,150,105,.28) 0%, rgba(236,253,245,.95) 100%); }
+.duty-reply--hue-5:hover { background:linear-gradient(145deg, rgba(5,150,105,.40) 0%, rgba(236,253,245,1) 100%); box-shadow:inset 3px 0 0 rgba(5,150,105,.48), 0 2px 8px rgba(5,150,105,.16); }
+.duty-reply--hue-5 .duty-reply__status { background:#059669; }
+.duty-reply:active { animation:card-press 180ms ease-out both; }
 .duty-reply:focus-visible { outline:2px solid var(--border-focus); outline-offset:-2px; }
 .duty-reply__status { width:7px; height:7px; margin-top:5px; border-radius:50%; background:var(--success); }
 .duty-reply__status.followup { background:var(--warning); }
@@ -667,7 +784,7 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
    ═══════════════════════════════════════ */
 .workspace-split {
   display: flex;
-  gap: 20px;
+  gap: 22px;
   align-items: flex-start;
 }
 
@@ -681,15 +798,18 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  min-height: 400px;
   padding: 0;
   border-radius: var(--radius-panel);
-  border: 1px solid var(--border-subtle);
-  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 82%, transparent);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
   position: relative;
-  box-shadow: var(--shadow-rest);
+  box-shadow: var(--shadow-raised), inset 0 1px 0 var(--glass-highlight), inset 0 -1px 0 var(--glass-shadow-inner);
   transition: box-shadow var(--transition-normal);
 }
-.queue:hover { box-shadow: var(--shadow-hover); }
+.queue:hover { box-shadow: var(--shadow-floating), inset 0 1px 0 var(--glass-highlight), inset 0 -1px 0 var(--glass-shadow-inner); }
 .queue > header {
   display: flex;
   align-items: center;
@@ -697,7 +817,7 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
   gap: 16px;
   padding: 16px 20px;
   border-bottom: 1px solid var(--border);
-  background: linear-gradient(180deg, var(--surface), var(--surface-soft));
+  background: linear-gradient(180deg, rgba(255,255,255,.72), rgba(247,249,250,.82));
   border-radius: var(--radius-panel) var(--radius-panel) 0 0;
 }
 h2 { margin: 0; font-size: 16px; }
@@ -740,72 +860,77 @@ h2 { margin: 0; font-size: 16px; }
   border-bottom: 1px solid var(--border-subtle);
   background: var(--surface);
   cursor: pointer;
-  transition: background var(--transition-fast);
+  transition: background var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
 }
-.message-row__priority {
-  grid-row: 1;
-  grid-column: 1;
-  width: 3px;
-  height: 100%;
-  min-height: 36px;
-  border-radius: 0 2px 2px 0;
-  align-self: stretch;
-  transition: background 200ms ease;
+/* ── 消息卡片网格 ── */
+.message-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 14px 16px 16px;
+  flex: 1;
+  overflow-y: auto;
 }
-.message-row__avatar { grid-column: 2; }
-.message-row:last-child { border-bottom: 0; }
-.message-row:hover { background: var(--surface-row); }
-.message-row:focus-visible {
-  outline: 2px solid var(--border-focus);
-  outline-offset: -2px;
-  border-radius: 4px;
+.message-card {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  border: 0;
+  border-radius: var(--radius-panel);
+  background: linear-gradient(145deg, rgba(255,255,255,.82) 0%, rgba(255,255,255,.58) 100%);
+  box-shadow: 0 1px 2px rgba(17,28,45,.03), 0 4px 14px rgba(17,28,45,.05), inset 0 1px 0 rgba(255,255,255,.72);
+  padding: 16px 18px;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  transition: background 180ms ease, box-shadow 280ms cubic-bezier(.2,0,0,1), transform 280ms cubic-bezier(.2,0,0,1);
+}
+.message-card:hover {
+  background: linear-gradient(145deg, rgba(255,255,255,.94) 0%, rgba(255,255,255,.78) 100%);
+  box-shadow: 0 2px 4px rgba(17,28,45,.05), 0 12px 32px rgba(17,28,45,.10), inset 0 1px 0 rgba(255,255,255,.88), 2px 0 0 0 color-mix(in srgb, var(--primary) 14%, transparent);
+  transform: translateY(-2px);
+}
+.message-card:active { animation: card-press 180ms ease-out both; }
+.message-card:focus-visible { outline: 3px solid rgba(20,184,166,.35); outline-offset: 2px; }
+.message-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,.5) 25%, color-mix(in srgb, var(--primary) 14%, rgba(255,255,255,.88)) 50%, rgba(255,255,255,.5) 75%, transparent 100%);
+  opacity: .82;
+  pointer-events: none;
   z-index: 1;
 }
-.message-row.selected {
-  background: var(--brand-50);
+.message-card__priority {
+  position: absolute;
+  top: 0; left: 0; bottom: 0;
+  width: 3px;
+  border-radius: var(--radius-panel) 0 0 var(--radius-panel);
+  transition: background 200ms ease;
 }
-.message-row.current {
-  background: var(--brand-50);
+.message-card__top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  position: relative;
+  z-index: 1;
 }
-.message-row.selected.current {
-  background: var(--brand-50);
-}
-.message-row.message--review {
-  background: linear-gradient(135deg, rgba(255,247,233,.9), rgba(255,243,225,.7));
-  border: 1px solid var(--border-amber);
-  border-radius: var(--radius-control);
-  margin: 0 6px;
-}
-.message-row.message--high {
-  background: linear-gradient(135deg, rgba(241,246,253,.9), rgba(241,246,253,.6));
-}
-.message-row.message--manual {
-  margin: 4px 6px;
-  border: 1px solid var(--border-amber);
-  border-radius: var(--radius-control);
-  background: var(--surface-amber);
-  box-shadow: 0 4px 14px rgba(183,110,0,.09);
-}
-.message-row.message--manual .message-row__priority { background: var(--warning) !important; }
-.message-row.message--manual .message-row__avatar { background: rgba(183,110,0,.12) !important; color: var(--warning) !important; }
-
-.message-row__avatar {
+.message-card__avatar {
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   flex: 0 0 auto;
-  border-radius: 9px;
-  font-size: 14px;
+  border-radius: 10px;
+  font-size: 15px;
   font-weight: 700;
   transition: background 200ms ease, color 200ms ease;
 }
-.message-row.selected .message-row__avatar { background: rgba(13,148,136,.15); }
-.message-row.current .message-row__avatar { background: rgba(13,148,136,.12); }
-.message-row.message--review .message-row__avatar { background: rgba(183,110,0,.1); color: var(--warning); }
-
-.message-row__info { min-width: 0; }
-.message-row__title {
+.message-card__header { min-width: 0; }
+.message-card__title {
   display: block;
   font-size: 13px;
   font-weight: 600;
@@ -813,46 +938,131 @@ h2 { margin: 0; font-size: 16px; }
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  color: var(--text);
 }
-.message-row__meta {
+.message-card__account {
   display: block;
   margin-top: 2px;
   font-size: 11px;
   color: var(--text-secondary);
-  overflow-wrap: anywhere;
 }
-.message-row__meta em {
-  display: inline;
-  font-style: normal;
-  color: var(--primary);
-  font-weight: 500;
+.message-card__body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+  z-index: 1;
 }
-
-.message-row__stats { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
-.message-row__badge {
+.message-card__tag {
   display: inline-flex;
   align-items: center;
   padding: 2px 8px;
   border-radius: var(--radius-pill);
-  background: var(--surface-soft);
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-secondary);
-}
-.message-row.selected .message-row__badge { background: rgba(13,148,136,.1); color: var(--primary); }
-.message-row__manual {
-  display: inline-flex;
-  align-items: center;
-  padding: 3px 8px;
-  border: 1px solid var(--border-amber);
-  border-radius: var(--radius-pill);
-  background: var(--surface);
-  color: var(--warning);
   font-size: 10px;
-  font-weight: 700;
+  font-weight: 600;
   white-space: nowrap;
 }
-.message-row__age { font-size: 10px; color: var(--text-tertiary); }
+.message-card__tag--manual { background: rgba(183,110,0,.12); color: var(--warning); border: 1px solid var(--border-amber); }
+.message-card__tag--urgent { background: rgba(251,191,36,.15); color: var(--warning); }
+.message-card__tag--high { background: rgba(37,99,235,.1); color: var(--color-info); }
+.message-card__meta { font-size: 11px; color: var(--text-secondary); }
+.message-card__current { font-size: 10px; color: var(--primary); font-style: normal; font-weight: 500; }
+
+/* 选中态 */
+.message-card.selected {
+  background: linear-gradient(145deg, rgba(240,253,250,.96) 0%, rgba(255,255,255,.72) 100%);
+  box-shadow: 0 2px 4px rgba(17,28,45,.04), 0 8px 24px rgba(13,148,136,.10), inset 0 1px 0 rgba(255,255,255,.82), 2px 0 0 0 var(--primary);
+  animation: card-select-breathe 420ms cubic-bezier(.2,0,0,1) both;
+}
+.message-card.selected .message-card__avatar { background: rgba(13,148,136,.15); }
+.message-card.current { background: linear-gradient(145deg, rgba(240,253,250,.92) 0%, rgba(255,255,255,.68) 100%); }
+.message-card.selected.current { background: linear-gradient(145deg, rgba(204,251,241,.82) 0%, rgba(255,255,255,.72) 100%); }
+
+/* 特殊状态卡片 */
+.message-card.message--review {
+  background: linear-gradient(145deg, rgba(255,247,233,.92) 0%, rgba(255,243,225,.72) 100%);
+  border: 1px solid var(--border-amber);
+}
+.message-card.message--high {
+  background: linear-gradient(145deg, rgba(241,246,253,.92) 0%, rgba(241,246,253,.62) 100%);
+}
+.message-card.message--manual {
+  background: linear-gradient(145deg, rgba(255,249,232,.92) 0%, rgba(255,243,225,.72) 100%);
+  border: 1px solid var(--border-amber);
+  box-shadow: 0 4px 14px rgba(183,110,0,.09), inset 0 1px 0 rgba(255,255,255,.72);
+}
+.message-card.message--manual .message-card__priority { background: var(--warning) !important; }
+.message-card.message--manual .message-card__avatar { background: rgba(183,110,0,.12) !important; color: var(--warning) !important; }
+
+/* 暗色主题 */
+:global(:root[data-theme="dark"]) .message-card {
+  background: linear-gradient(145deg, rgba(30,36,51,.82) 0%, rgba(26,31,44,.58) 100%);
+  box-shadow: 0 1px 2px rgba(0,0,0,.22), 0 4px 14px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.04);
+}
+:global(:root[data-theme="dark"]) .message-card:hover {
+  background: linear-gradient(145deg, rgba(36,42,58,.94) 0%, rgba(30,36,51,.78) 100%);
+  box-shadow: 0 2px 4px rgba(0,0,0,.30), 0 12px 32px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.06), 2px 0 0 0 color-mix(in srgb, var(--primary) 18%, transparent);
+}
+:global(:root[data-theme="dark"]) .message-card::before {
+  background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,.08) 25%, rgba(255,255,255,.22) 50%, rgba(255,255,255,.08) 75%, transparent 100%);
+}
+:global(:root[data-theme="dark"]) .message-card.selected {
+  background: linear-gradient(145deg, rgba(20,83,76,.42) 0%, rgba(30,36,51,.72) 100%);
+  box-shadow: 0 2px 4px rgba(0,0,0,.30), 0 8px 24px rgba(13,148,136,.18), inset 0 1px 0 rgba(255,255,255,.06), 2px 0 0 0 var(--primary);
+}
+:global(:root[data-theme="dark"]) .message-card.message--review {
+  background: linear-gradient(145deg, rgba(60,40,20,.52) 0%, rgba(30,36,51,.72) 100%);
+}
+:global(:root[data-theme="dark"]) .message-card.message--manual {
+  background: linear-gradient(145deg, rgba(60,45,15,.52) 0%, rgba(30,36,51,.72) 100%);
+}
+
+/* ── 优先级筛选 ── */
+.priority-filters {
+  display: flex;
+  gap: 4px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.priority-filters button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+.priority-filters button.active {
+  background: var(--surface-teal);
+  border-color: var(--border-teal);
+  color: var(--primary);
+}
+.priority-filters__dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+.priority-filters__dot--urgent { background: var(--warning); }
+.priority-filters__dot--review { background: var(--border-amber); }
+
+.message-row__urgent,
+.message-row__high-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: var(--radius-pill);
+  font-size: 10px;
+  font-weight: 600;
+}
+.message-row__urgent { background: rgba(251,191,36,.15); color: var(--warning); }
+.message-row__high-pill { background: rgba(37,99,235,.1); color: var(--color-info); }
 
 /* ── 分页 ── */
 .queue > footer {
@@ -862,7 +1072,7 @@ h2 { margin: 0; font-size: 16px; }
   flex-wrap: wrap;
   gap: 8px;
   padding: 12px 20px;
-  border-top: 1px solid var(--border);
+  border-top: 2px solid var(--border);
   font-size: 12px;
   background: var(--surface-soft);
   border-radius: 0 0 var(--radius-panel) var(--radius-panel);
@@ -882,15 +1092,17 @@ h2 { margin: 0; font-size: 16px; }
   position: sticky;
   top: 20px;
   border-radius: var(--radius-panel);
-  border: 1px solid var(--border-subtle);
-  background: var(--surface);
-  box-shadow: var(--shadow-rest);
+  border: 1px solid color-mix(in srgb, var(--border-subtle) 82%, transparent);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  box-shadow: var(--shadow-raised), inset 0 1px 0 var(--glass-highlight), inset 0 -1px 0 var(--glass-shadow-inner);
   display: flex;
   flex-direction: column;
   overflow: hidden;
   transition: box-shadow var(--transition-normal), opacity 300ms ease;
 }
-.detail-panel--open { box-shadow: var(--shadow-hover); }
+.detail-panel--open { box-shadow: var(--shadow-floating), inset 0 1px 0 var(--glass-highlight), inset 0 -1px 0 var(--glass-shadow-inner); }
 
 .detail-header {
   display: flex;
@@ -899,7 +1111,7 @@ h2 { margin: 0; font-size: 16px; }
   gap: 12px;
   padding: 18px 20px;
   border-bottom: 1px solid var(--border);
-  background: linear-gradient(180deg, var(--surface), var(--surface-soft));
+  background: linear-gradient(180deg, rgba(255,255,255,.72), rgba(247,249,250,.82));
 }
 .detail-header__title {
   display: flex;
@@ -972,6 +1184,12 @@ h2 { margin: 0; font-size: 16px; }
   padding: 16px 20px;
 }
 
+/* ── 块间分隔 ── */
+.detail-body > * + * {
+  border-top: 1px solid color-mix(in srgb, var(--border-subtle) 50%, transparent);
+  padding-top: 12px;
+}
+
 .detail-status {
   display: flex;
   gap: 12px;
@@ -979,6 +1197,16 @@ h2 { margin: 0; font-size: 16px; }
   padding: 12px;
   border-radius: var(--radius-control);
   background: var(--surface-soft);
+  position: relative;
+}
+.detail-status::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 6px; bottom: 6px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--primary);
+  opacity: .55;
 }
 .detail-status__item {
   display: flex;
@@ -1079,6 +1307,13 @@ h2 { margin: 0; font-size: 16px; }
   text-align: center;
 }
 .detail-empty__icon {
+  display: grid;
+  place-items: center;
+  width: 74px;
+  height: 74px;
+  border-radius: 22px;
+  background: linear-gradient(145deg, rgba(238,249,246,.92), rgba(255,255,255,.68));
+  box-shadow: var(--shadow-raised), inset 0 1px 0 rgba(255,255,255,.62);
   animation: emptyFloat 3s ease-in-out infinite;
 }
 @keyframes emptyFloat {
@@ -1118,6 +1353,17 @@ h2 { margin: 0; font-size: 16px; }
   pointer-events: none;
   z-index: 0;
   opacity: .035;
+}
+.queue::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 12px; right: 12px;
+  height: 3px;
+  border-radius: 0 0 2px 2px;
+  background: linear-gradient(90deg, var(--primary), color-mix(in srgb, var(--primary) 45%, transparent), transparent);
+  opacity: .72;
+  z-index: 2;
+  pointer-events: none;
 }
 
 /* ═══════════════════════════════════════
@@ -1226,6 +1472,23 @@ h2 { margin: 0; font-size: 16px; }
 }
 :root[data-theme="dark"] .detail-close {
   background: rgba(255,255,255,.06);
+}
+
+/* ── 回顾区暗色玻璃 ── */
+:root[data-theme="dark"] .duty-review__header {
+  background: linear-gradient(180deg, rgba(255,255,255,.04), transparent);
+}
+:root[data-theme="dark"] .duty-reply {
+  background: rgba(255,255,255,.035);
+}
+:root[data-theme="dark"] .duty-reply:hover {
+  background: rgba(255,255,255,.06);
+}
+
+/* ── 空态图标暗色 ── */
+:root[data-theme="dark"] .detail-empty__icon {
+  background: linear-gradient(145deg, rgba(13,148,136,.12), rgba(13,148,136,.04));
+  box-shadow: var(--shadow-raised), inset 0 1px 0 rgba(255,255,255,.06);
 }
 
 /* ═══════════════════════════════════════

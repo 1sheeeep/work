@@ -113,16 +113,19 @@ function handleClick(item: { id: string; link?: string; read: boolean }) {
   height: 40px;
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
-  background: var(--surface);
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
   color: var(--text-secondary);
   cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+  box-shadow: var(--shadow-ground), inset 0 1px 0 rgba(255,255,255,.48);
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .notification-bell:hover {
   background: var(--surface-row);
   color: var(--text);
   border-color: var(--border-strong);
+  box-shadow: var(--shadow-raised);
+  transform: translateY(-1px);
 }
 
 .notification-bell:focus-visible {
@@ -145,6 +148,7 @@ function handleClick(item: { id: string; link?: string; read: boolean }) {
   line-height: 18px;
   text-align: center;
   pointer-events: none;
+  box-shadow:0 0 0 2px var(--surface), 0 4px 10px rgba(180,35,24,.22);
 }
 </style>
 
@@ -153,7 +157,9 @@ function handleClick(item: { id: string; link?: string; read: boolean }) {
   padding: 0 !important;
   border-radius: var(--radius-panel) !important;
   border: 1px solid var(--border) !important;
-  background: var(--surface) !important;
+  background: var(--glass-bg) !important;
+  backdrop-filter: var(--glass-blur) !important;
+  -webkit-backdrop-filter: var(--glass-blur) !important;
   box-shadow: var(--shadow-floating) !important;
 }
 
@@ -169,6 +175,7 @@ function handleClick(item: { id: string; link?: string; read: boolean }) {
   justify-content: space-between;
   padding: 16px 18px 12px;
   border-bottom: 1px solid var(--border-subtle);
+  background: linear-gradient(180deg, rgba(255,255,255,.7), transparent);
 }
 
 .notif-header strong {
@@ -225,11 +232,12 @@ function handleClick(item: { id: string; link?: string; read: boolean }) {
   padding: 14px 18px;
   cursor: pointer;
   border-bottom: 1px solid var(--border-subtle);
-  transition: background var(--transition-fast);
+  transition: background var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .notif-item:hover {
   background: var(--surface-row);
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--primary) 30%, transparent);
 }
 
 .notif-item:focus-visible {
@@ -238,7 +246,7 @@ function handleClick(item: { id: string; link?: string; read: boolean }) {
 }
 
 .notif-item--unread {
-  background: var(--surface-teal);
+  background: linear-gradient(90deg, rgba(240,253,250,.94), rgba(255,255,255,.7));
 }
 
 .notif-dot {
@@ -249,6 +257,7 @@ function handleClick(item: { id: string; link?: string; read: boolean }) {
   height: 32px;
   border-radius: 10px;
   margin-top: 2px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.5);
 }
 
 .notif-type--teal { background: var(--surface-teal); color: var(--brand-700); }

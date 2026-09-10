@@ -45,16 +45,20 @@ defineEmits<{ retry: [] }>()
   padding: 56px 24px;
   border: 1px solid var(--border);
   border-radius: var(--radius-panel);
-  background: var(--surface);
-  box-shadow: var(--shadow-rest);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.72), rgba(255,255,255,.42)),
+    var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  box-shadow: var(--shadow-raised), inset 0 1px 0 rgba(255,255,255,.6);
   color: var(--text-secondary);
   text-align: center;
 }
 .async-state--loading { display: block; padding: 28px; }
-.async-state--error { border-color: var(--border-rose); background: linear-gradient(145deg, var(--surface-rose), var(--surface)); }
-.async-state--empty { background: linear-gradient(145deg, var(--surface-slate), var(--surface)); }
+.async-state--error { border-color: var(--border-rose); background: linear-gradient(145deg, var(--surface-rose), rgba(255,255,255,.72)); }
+.async-state--empty { background: linear-gradient(145deg, var(--surface-slate), rgba(255,255,255,.72)); }
 .async-state--embedded { border: 0; border-radius: 0; background: transparent; box-shadow: none; padding: 48px 24px; }
-.async-state__icon { display: grid; width: 56px; height: 56px; place-items: center; border-radius: 16px; background: var(--surface-soft); color: var(--primary); font-size: 26px; }
+.async-state__icon { display: grid; width: 60px; height: 60px; place-items: center; border-radius: 18px; background: linear-gradient(145deg, var(--surface-teal), rgba(255,255,255,.74)); color: var(--primary); font-size: 26px; box-shadow: var(--shadow-raised), inset 0 1px 0 rgba(255,255,255,.62); }
 .async-state--error .async-state__icon { background: color-mix(in srgb, var(--surface-rose) 70%, var(--danger) 10%); color: var(--danger); }
 .async-state--empty .async-state__icon { background: var(--surface-muted); color: var(--text-tertiary); }
 .async-state strong { color: var(--text); font-size: 15px; font-weight: 600; }
