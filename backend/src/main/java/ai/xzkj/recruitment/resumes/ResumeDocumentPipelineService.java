@@ -13,6 +13,8 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.HexFormat;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Service
 public class ResumeDocumentPipelineService {
@@ -60,25 +62,22 @@ public class ResumeDocumentPipelineService {
         CandidateJobContact contact = contacts.findByCandidateIdAndJobPositionId(candidate.getId(), job.getId())
                 .orElseGet(() -> contacts.save(new CandidateJobContact(candidate, job, job.getBossAccount())));
         ResumeIntake sameEvent = intakes.findByContactIdAndSourceEventDigest(contact.getId(), sourceEventDigest).orElse(null);
-        if (sameEvent != null && !"FAILED".equals(sameEvent.getProcessingStatus())) {
-            // 重复捕获同一事件时也要补齐 PDF，兼容 V80 上线前创建的旧记录。
-            if (sameEvent.getSourcePdf() == null) sameEvent.storeSourcePdf(content);
-            return ResumeDocumentProcessingResponse.from(sameEvent, true);
-        }
-        if (sameEvent != null) {
-            intakes.delete(sameEvent);
-            intakes.flush();
-        }
         ResumeIntake existing = intakes.findByContactIdAndResumeDigest(contact.getId(), documentDigest).orElse(null);
         if (existing != null) {
             if (existing.getSourcePdf() == null) existing.storeSourcePdf(content);
+            refreshRecognizedNameFromPdf(candidate, existing.getSourcePdf());
             audit.systemSuccess("DEDUPLICATE_VISIBLE_RESUME", "RESUME_INTAKE", existing.getId(),
                     "简历摘要 " + documentDigest.substring(0, 12), "同一候选人和岗位已处理相同文件，未重复扫描、提取或调用 AI");
             return ResumeDocumentProcessingResponse.from(existing, true);
         }
+        // 同一聊天事件可能包含不同的附件。只有文件摘要相同才算重复，
+        // 不同文件必须创建新的简历记录，并使用派生事件摘要避开唯一约束。
+        String intakeSourceEventDigest = sameEvent == null
+                ? sourceEventDigest
+                : hash(sourceEventDigest + "|" + documentDigest);
         ResumeIntake intake = intakes.save(new ResumeIntake(contact, ResumeIntakeSource.BOSS_VISIBLE,
                 documentDigest, "BOSS 简历 " + documentDigest.substring(0, 8), Instant.now()));
-        intake.attachSourceEvent(sourceEventDigest);
+        intake.attachSourceEvent(intakeSourceEventDigest);
         if (sourceActionTaskId != null) intake.attachSourceActionTask(sourceActionTaskId);
         intake.processing();
         try {
@@ -95,6 +94,8 @@ public class ResumeDocumentPipelineService {
                 text = extracted.text();
             }
             intake.readyForAi(type, hash(text), malwareScanned, Instant.now());
+            intake.autoApproveForAi(Instant.now());
+            updateRecognizedName(candidate, text);
             intake.storeSourcePdf(content);
             audit.systemSuccess("PROCESS_VISIBLE_RESUME", "RESUME_INTAKE", intake.getId(),
                     "简历摘要 " + documentDigest.substring(0, 12),
@@ -127,15 +128,19 @@ public class ResumeDocumentPipelineService {
         CandidateJobContact contact = contacts.findByCandidateIdAndJobPositionId(candidate.getId(), job.getId())
                 .orElseGet(() -> contacts.save(new CandidateJobContact(candidate, job, job.getBossAccount())));
         ResumeIntake sameEvent = intakes.findByContactIdAndSourceEventDigest(contact.getId(), sourceEventDigest).orElse(null);
-        if (sameEvent != null) return ResumeDocumentProcessingResponse.from(sameEvent, true);
         ResumeIntake existing = intakes.findByContactIdAndResumeDigest(contact.getId(), documentDigest).orElse(null);
         if (existing != null) return ResumeDocumentProcessingResponse.from(existing, true);
+        String intakeSourceEventDigest = sameEvent == null
+                ? sourceEventDigest
+                : hash(sourceEventDigest + "|" + documentDigest);
 
         ResumeIntake intake = intakes.save(new ResumeIntake(contact, ResumeIntakeSource.BOSS_VISIBLE,
                 documentDigest, "BOSS 在线简历 " + documentDigest.substring(0, 8), Instant.now()));
-        intake.attachSourceEvent(sourceEventDigest);
+        intake.attachSourceEvent(intakeSourceEventDigest);
         intake.processing();
         intake.readyForAi("BOSS_VISIBLE_TEXT", hash(text), false, Instant.now());
+        intake.autoApproveForAi(Instant.now());
+        updateRecognizedName(candidate, text);
         audit.systemSuccess("PROCESS_VISIBLE_RESUME_TEXT", "RESUME_INTAKE", intake.getId(),
                 "简历摘要 " + documentDigest.substring(0, 12),
                 "已从当前真实 BOSS 在线简历提取必要文本并绑定当前会话与岗位；仅保存摘要，不保存正文");
@@ -149,6 +154,41 @@ public class ResumeDocumentPipelineService {
     }
 
     private String hash(String value) { return hash(value.getBytes(StandardCharsets.UTF_8)); }
+
+    private void updateRecognizedName(CandidateProfile candidate, String text) {
+        String name = recognizeName(text);
+        if (name != null) candidate.updateRecognizedName(name);
+    }
+
+    private void refreshRecognizedNameFromPdf(CandidateProfile candidate, byte[] pdf) {
+        if (pdf == null || pdf.length == 0) return;
+        try {
+            ResumeDocumentTextExtractor.ExtractedResumeDocument extracted = documents.extract(pdf);
+            updateRecognizedName(candidate, extracted.text());
+        } catch (RuntimeException ignored) {
+            // 重复记录的姓名补识别不能阻断正常的去重返回。
+        }
+    }
+
+    private String recognizeName(String text) {
+        if (text == null || text.isBlank()) return null;
+        String normalized = text.replace('\u0000', ' ').replace('\r', '\n');
+        Matcher labeled = Pattern.compile("(?:姓名|候选人姓名|真实姓名)\\s*[:：]?\\s*([\\p{IsHan}·]{2,20})").matcher(normalized);
+        if (labeled.find()) return labeled.group(1).trim();
+        Matcher english = Pattern.compile("(?im)^\\s*name\\s*[:：]\\s*([A-Za-z][A-Za-z .'-]{1,80})\\s*$").matcher(text);
+        if (english.find()) return english.group(1).trim();
+        // 很多中文 PDF 会把姓名单独放在简历顶部，不带“姓名”标签；
+        // 只检查前 20 行并排除常见标题，避免把学校、岗位等误识别为姓名。
+        String[] lines = normalized.split("\\n");
+        for (int i = 0; i < Math.min(lines.length, 20); i++) {
+            String line = lines[i].replaceAll("[\\t ]+", " ").trim();
+            if (line.matches("[\\p{IsHan}·]{2,4}")
+                    && !line.matches("简历|个人简历|求职简历|基本信息|个人信息|工作经历|教育经历|项目经历|自我评价|联系方式")) {
+                return line;
+            }
+        }
+        return null;
+    }
     private String cleanCode(String value) { return value == null || value.isBlank() ? "RESUME_PROCESSING_FAILED" : value.substring(0, Math.min(80, value.length())); }
     private String cleanReason(String value) { String clean=value==null?"简历处理未完成":value.replace('\n',' ').replace('\r',' ').trim();return clean.substring(0,Math.min(300,clean.length())); }
 }

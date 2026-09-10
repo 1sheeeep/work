@@ -109,6 +109,7 @@ public class OpenAiResumeClient {
                 + "不得根据年龄、性别、民族、婚育、健康等受保护或敏感属性打分、推断或提出追问。"
                 + "不得给出录用或淘汰结论；只能在 PRIORITY_VIEW、NORMAL_VIEW、INFORMATION_NEEDED 中选择建议。"
                 + "没有简历证据时必须标记 NOT_FOUND 或 UNCLEAR，不能把未发现等同于不具备。"
+                + "candidateName 只填写简历正文中明确出现的姓名；无法确定时返回空字符串，禁止猜测。"
                 + "输出 1 至 8 条匹配证据、0 至 8 条待确认缺口、0 至 8 条风险提示，以及 3 至 5 个建议追问。"
                 + "evidence.finding 仅引用必要的简短事实，不要包含联系方式、证件号或完整段落。");
         messages.addObject().put("role", "user").put("content", userInput(job, resumeText));
@@ -172,8 +173,9 @@ public class OpenAiResumeClient {
         ObjectNode schema = mapper.createObjectNode();
         schema.put("type", "object");
         schema.put("additionalProperties", false);
-        required(schema, "recommendation", "summary", "evidence", "gaps", "risks", "followUpQuestions");
+        required(schema, "candidateName", "recommendation", "summary", "evidence", "gaps", "risks", "followUpQuestions");
         ObjectNode propertiesNode = schema.putObject("properties");
+        stringSchema(propertiesNode.putObject("candidateName"), 0, 100);
         ObjectNode recommendation = propertiesNode.putObject("recommendation");
         recommendation.put("type", "string");
         ArrayNode choices = recommendation.putArray("enum");

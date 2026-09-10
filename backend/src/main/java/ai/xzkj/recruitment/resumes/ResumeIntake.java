@@ -17,6 +17,7 @@ import java.util.UUID;
  @Column(name="analysis_status",nullable=false,length=32)private String analysisStatus="NOT_REQUESTED";@Column(name="analysis_failure_code",length=80)private String analysisFailureCode;@Column(name="analysis_failure_reason",length=300)private String analysisFailureReason;@Column(name="analysis_completed_at")private Instant analysisCompletedAt;
  protected ResumeIntake(){} ResumeIntake(CandidateJobContact contact,ResumeIntakeSource source,String digest,String label,Instant received){id=UUID.randomUUID();this.contact=contact;this.source=source;resumeDigest=digest;displayLabel=label;status=ResumeIntakeStatus.PENDING_REVIEW;receivedAt=received;createdAt=Instant.now();updatedAt=createdAt;}
  void review(ResumeIntakeStatus decision,String note,SystemUser reviewer,Instant now){status=decision;reviewNote=note;reviewedBy=reviewer;reviewedAt=now;updatedAt=now;} @PreUpdate void preUpdate(){updatedAt=Instant.now();}
+ void autoApproveForAi(Instant now){status=ResumeIntakeStatus.APPROVED_FOR_AI;reviewNote="系统已完成文件安全检查和文本提取，自动进入 AI 分析";reviewedBy=null;reviewedAt=now;updatedAt=now;}
  void processing(){processingStatus="PROCESSING";failureCode=null;failureReason=null;}
  void attachSourceEvent(String digest){sourceEventDigest=digest;}
  public void attachSourceActionTask(UUID id){sourceActionTaskId=id;}

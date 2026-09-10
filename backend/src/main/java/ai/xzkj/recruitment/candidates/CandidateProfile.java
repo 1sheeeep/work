@@ -41,6 +41,12 @@ public class CandidateProfile {
         this.education = education; this.skillsSummary = skillsSummary;
     }
 
+    /** Updates only the display name when a trusted resume extractor identifies it. */
+    public void updateRecognizedName(String recognizedName) {
+        if (privacyStatus == CandidatePrivacyStatus.ANONYMIZED || recognizedName == null || recognizedName.isBlank()) return;
+        this.displayName = recognizedName.trim();
+    }
+
     public void anonymize() {
         this.displayName = "已匿名候选人"; this.currentTitle = null; this.yearsExperience = null;
         this.education = null; this.skillsSummary = null; this.privacyStatus = CandidatePrivacyStatus.ANONYMIZED;

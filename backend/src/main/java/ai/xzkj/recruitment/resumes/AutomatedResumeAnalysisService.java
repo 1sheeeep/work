@@ -49,6 +49,7 @@ public class AutomatedResumeAnalysisService {
         try {
             ResumeAnalysisResult result = client.analyze(intake.getContact().getJobPosition(), extractedText,
                     hash("unattended-company:" + intake.getContact().getCandidate().getCompany().getId()));
+            updateVerifiedCandidateName(intake, result.candidateName(), extractedText);
             runs.save(AiAssistanceRun.unattendedSucceeded(intake, properties.getModel(), inputHash,
                     result.summary(), mapper.writeValueAsString(result), retention.expiresFrom(now)));
             intake.analysisSucceeded(Instant.now());
@@ -73,6 +74,15 @@ public class AutomatedResumeAnalysisService {
     private boolean configurationReady() {
         return properties.isEnabled() && !properties.getApiKey().isBlank()
                 && !properties.getModel().isBlank() && properties.isOfficialEndpoint();
+    }
+
+    private void updateVerifiedCandidateName(ResumeIntake intake, String candidateName, String extractedText) {
+        String name = candidateName == null ? "" : candidateName.replace('\n', ' ').replace('\r', ' ').trim();
+        if (name.isBlank() || name.length() > 100) return;
+        String compactName = name.replaceAll("\\s+", "");
+        String compactText = extractedText == null ? "" : extractedText.replaceAll("\\s+", "");
+        if (!compactText.contains(compactName)) return;
+        intake.getContact().getCandidate().updateRecognizedName(name);
     }
 
     private String cleanCode(String value) {

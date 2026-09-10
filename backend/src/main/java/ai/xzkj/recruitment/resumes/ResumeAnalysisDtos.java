@@ -82,6 +82,7 @@ record ResumeAnalysisFeedbackResponse(
 }
 
 record ResumeAnalysisResult(
+        String candidateName,
         String recommendation,
         String summary,
         List<ResumeAnalysisEvidence> evidence,
@@ -144,7 +145,7 @@ record ResumeAnalysisResult(
             if (followUpQuestions.size() >= 3) break;
             if (!followUpQuestions.contains(question)) followUpQuestions.add(question);
         }
-        return new ResumeAnalysisResult(value.recommendation() == null ? null : value.recommendation().trim().toUpperCase(Locale.ROOT), trim(value.summary()), evidence,
+        return new ResumeAnalysisResult(trim(value.candidateName()), value.recommendation() == null ? null : value.recommendation().trim().toUpperCase(Locale.ROOT), trim(value.summary()), evidence,
                 cleanTextList(value.gaps()), cleanTextList(value.risks()), followUpQuestions);
     }
 
@@ -157,6 +158,8 @@ record ResumeAnalysisResult(
     private static ResumeAnalysisResult validate(ResumeAnalysisResult value) {
         if (value == null)
             throw new IllegalArgumentException("value is null");
+        if (value.candidateName() != null && value.candidateName().length() > 100)
+            throw new IllegalArgumentException("candidateName 过长");
         if (!RECOMMENDATIONS.contains(value.recommendation()))
             throw new IllegalArgumentException("recommendation 无效: '" + value.recommendation() + "'");
         if (!usable(value.summary(), 1200))

@@ -61,6 +61,8 @@ class ResumeDocumentPipelineServiceTest {
         assertThat(result.documentType()).isEqualTo("BOSS_VISIBLE_TEXT");
         assertThat(result.malwareScanned()).isFalse();
         assertThat(result.duplicate()).isFalse();
+        assertThat(result.processingStatus()).isEqualTo("READY_FOR_AI");
+        verify(f.candidate).updateRecognizedName("林嘉明");
         verify(f.automatedAnalysis).analyzeInMemory(any(ResumeIntake.class), eq(visibleText));
     }
 
@@ -83,7 +85,8 @@ class ResumeDocumentPipelineServiceTest {
         final ResumeDocumentPipelineService service=new ResumeDocumentPipelineService(candidates,contacts,intakes,documents,malware,ocr,automatedAnalysis,audit);
         Fixture(){
             when(company.getId()).thenReturn(companyId);when(job.getCompany()).thenReturn(company);when(job.getBossAccount()).thenReturn(account);when(job.getId()).thenReturn(jobId);
-            when(candidate.getId()).thenReturn(candidateId);when(contact.getId()).thenReturn(contactId);
+            when(candidate.getId()).thenReturn(candidateId);when(candidate.getDisplayName()).thenReturn("匿名候选人");
+            when(contact.getId()).thenReturn(contactId);when(contact.getCandidate()).thenReturn(candidate);
             when(candidates.findByCompanyIdAndSourceAndDedupKey(companyId,CandidateSource.BOSS,"b".repeat(64))).thenReturn(Optional.of(candidate));
             when(contacts.findByCandidateIdAndJobPositionId(candidateId,jobId)).thenReturn(Optional.of(contact));
             when(intakes.findByContactIdAndResumeDigest(eq(contactId),any())).thenReturn(Optional.empty());

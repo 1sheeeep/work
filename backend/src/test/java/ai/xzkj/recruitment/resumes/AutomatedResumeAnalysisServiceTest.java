@@ -20,7 +20,7 @@ class AutomatedResumeAnalysisServiceTest {
     void keepsExtractedTextInMemoryAndStoresSuccessfulStructuredResult() {
         Fixture f = new Fixture(true, true);
         when(f.client.analyze(eq(f.job), eq("Java 项目经验"), any())).thenReturn(new ResumeAnalysisResult(
-                "NORMAL_VIEW", "具备相关项目经验", List.of(new ResumeAnalysisEvidence("Java", "简历中已体现", "FOUND")),
+                "", "NORMAL_VIEW", "具备相关项目经验", List.of(new ResumeAnalysisEvidence("Java", "简历中已体现", "FOUND")),
                 List.of(), List.of(), List.of("负责范围？", "项目规模？", "离职原因？")));
 
         f.service.analyzeInMemory(f.intake, "Java 项目经验");
