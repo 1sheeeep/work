@@ -30,9 +30,10 @@ test('opens the page automation circuit only for consecutive unknown outcomes', 
   assert.equal(nextConsecutiveFailureCount(2, 'SENT'), 0);
 });
 
-test('only accepts the local recruitment console URL', () => {
+test('only accepts approved recruitment console URLs', () => {
   assert.equal(validateBackendUrl('http://localhost:8088/'), 'http://localhost:8088');
   assert.equal(validateBackendUrl('http://127.0.0.1:8088'), 'http://127.0.0.1:8088');
+  assert.equal(validateBackendUrl('http://13.215.3.189:8088'), 'http://13.215.3.189:8088');
   assert.throws(() => validateBackendUrl('https://example.com'), /只允许/);
 });
 
