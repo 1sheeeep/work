@@ -1,4 +1,4 @@
-const elements = Object.fromEntries(['stateBadge','summary','pairForm','accountName','totalCount','currentUnreadCount','trackedUnreadCount','reason','continuousReplyState','continuousReplyBadge','lastContinuousReply','detailState','lastSync','jobState','lastJobSync','collectJobs','readinessState','lastReadiness','checkReadiness','controlDiagnosticState','lastControlDiagnostic','inspectControls','controlDiagnosticReport','copyControlDiagnostic','visibleResumeState','lastVisibleResume','recognizeCurrentResume','resumeStageBadge','resumeStepDetected','resumeStepImported','resumeStepAnalyzing','resumeStepCompleted','resumeRecovery','pluginVersion','actionTestState','lastActionTest','testRequestResume','testExchangePhone','testExchangeWechat','testInterview','exchangeConfirmState','lastExchangeConfirm','confirmExchangePhone','confirmExchangeWechat','productionActionState','lastProductionAction','draftTestState','lastDraftTest','fillTestDraft','sendTestState','lastSendTest','prepareCurrentSendTest','sendCurrentTestDraft','autoReplyTestResult','autoReplyTestState','autoReplyTestExpiry','autoReplyDiagnosticState','lastAutoReplyDiagnostic','diagnoseCurrentAutoReply','armCurrentAutoReplyTest','cancelCurrentAutoReplyTest','approvedDraftFillState','lastApprovedDraftFill','fillApprovedDraft','enabled','collect','forget','message','deviceName','pairingToken','pageContext','openConsole'].map((id) => [id, document.getElementById(id)]));
+const elements = Object.fromEntries(['stateBadge','summary','pairForm','accountName','totalCount','currentUnreadCount','trackedUnreadCount','reason','continuousReplyState','continuousReplyBadge','lastContinuousReply','detailState','lastSync','copyCurrentTranscript','jobState','lastJobSync','collectJobs','readinessState','lastReadiness','checkReadiness','controlDiagnosticState','lastControlDiagnostic','inspectControls','controlDiagnosticReport','copyControlDiagnostic','visibleResumeState','lastVisibleResume','recognizeCurrentResume','resumeStageBadge','resumeStepDetected','resumeStepImported','resumeStepAnalyzing','resumeStepCompleted','resumeRecovery','pluginVersion','actionTestState','lastActionTest','testRequestResume','testExchangePhone','testExchangeWechat','testInterview','exchangeConfirmState','lastExchangeConfirm','confirmExchangePhone','confirmExchangeWechat','productionActionState','lastProductionAction','draftTestState','lastDraftTest','fillTestDraft','sendTestState','lastSendTest','prepareCurrentSendTest','sendCurrentTestDraft','autoReplyTestResult','autoReplyTestState','autoReplyTestExpiry','autoReplyDiagnosticState','lastAutoReplyDiagnostic','diagnoseCurrentAutoReply','armCurrentAutoReplyTest','cancelCurrentAutoReplyTest','approvedDraftFillState','lastApprovedDraftFill','fillApprovedDraft','enabled','collect','forget','message','deviceName','pairingToken','pageContext','openConsole'].map((id) => [id, document.getElementById(id)]));
 
 elements.pluginVersion.textContent = chrome.runtime.getManifest().version;
 
@@ -14,6 +14,22 @@ elements.pairForm.addEventListener('submit', async (event) => {
 });
 elements.enabled.addEventListener('change', () => void act({ type: 'BRIDGE_SET_ENABLED', enabled: elements.enabled.checked }));
 elements.collect.addEventListener('click', () => void busy(elements.collect, async () => { const result = await send({ type: 'BRIDGE_COLLECT_NOW' }); if (!result.ok) throw new Error(result.error); render(result.status); }));
+elements.copyCurrentTranscript.addEventListener('click', () => void busy(elements.copyCurrentTranscript, async () => {
+  show('正在加载当前会话、进行本机脱敏并同步至后端示例库，请稍候…');
+  const result = await send({ type: 'BRIDGE_SYNC_CURRENT_TRANSCRIPT' });
+  if (!result.ok) throw new Error(result.error);
+  const synced = result.transcriptSync;
+  await navigator.clipboard.writeText(synced.text);
+  const suffix = synced.possiblyTruncated ? '；页面可能还有未加载的更早记录' : '';
+  const imported = synced.import;
+  if (synced.importError) {
+    show(`已复制 ${synced.messageCount} 条记录；未导入后端：${synced.importError}${suffix}。`, true);
+  } else if (imported) {
+    show(`已复制 ${synced.messageCount} 条记录；后端导入成功（岗位：${imported.jobTitle}）：新增 ${imported.created} 条示例，重复 ${imported.duplicates} 条，跳过 ${imported.skipped} 条${suffix}。`);
+  } else {
+    show(`已复制 ${synced.messageCount} 条记录；后端导入状态未知，请查看后端日志。`, true);
+  }
+}, '同步中…'));
 elements.collectJobs.addEventListener('click', () => void busy(elements.collectJobs, async () => {
   show('正在读取当前职位页并进行稳定性校验，请稍候…');
   const result = await send({ type: 'BRIDGE_COLLECT_JOBS_NOW' });

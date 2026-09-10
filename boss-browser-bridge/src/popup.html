@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="popup.css"><link rel="stylesheet" href="continuous-reply.css"><title>BOSS 招聘桥接</title></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="popup.css"><link rel="stylesheet" href="continuous-reply.css"><link rel="stylesheet" href="transcript-copy.css"><title>BOSS 招聘桥接</title></head>
 <body><main>
   <header><span class="mark">值</span><div><strong>BOSS 招聘桥接</strong><small>当前会话 · 安全自动化</small></div><span id="stateBadge" class="badge">检查中</span></header>
   <section id="summary" hidden>
@@ -13,6 +13,10 @@
       <button id="recognizeCurrentResume" class="primary primary-action" type="button">识别并导入当前简历</button>
     </section>
     <div class="sync-row"><div><strong>会话同步</strong><span id="detailState">尚未复核当前会话</span><small id="lastSync"></small></div><button id="collect" class="secondary" type="button">同步当前会话</button></div>
+    <section class="transcript-copy" aria-labelledby="transcriptCopyTitle">
+      <div><strong id="transcriptCopyTitle">当前会话记录</strong><span>自动加载当前已选会话的历史消息，本机脱敏后同步到后端示例库并复制。</span></div>
+      <button id="copyCurrentTranscript" class="secondary" type="button">一键同步并复制聊天记录</button>
+    </section>
     <div class="metrics"><article><strong id="totalCount">0</strong><span>本次会话</span></article><article><strong id="currentUnreadCount">0</strong><span>当前未读</span></article><article><strong id="trackedUnreadCount">0</strong><span>观察队列</span></article></div>
     <p id="reason" class="system-note"></p>
     <section class="continuous-reply" aria-labelledby="continuousReplyTitle">

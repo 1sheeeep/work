@@ -120,6 +120,10 @@ async function handleMessage(message, sender) {
       return { ok: true, readiness: await checkReplyReadiness(), status: await getPublicStatus() };
     case 'BRIDGE_INSPECT_CURRENT_CONTROLS':
       return { ok: true, diagnostic: await inspectCurrentControls(), status: await getPublicStatus() };
+    case 'BRIDGE_COPY_CURRENT_TRANSCRIPT':
+      return { ok: true, transcript: await copyCurrentTranscript() };
+    case 'BRIDGE_SYNC_CURRENT_TRANSCRIPT':
+      return { ok: true, transcriptSync: await syncCurrentTranscript() };
     case 'BRIDGE_RECOGNIZE_CURRENT_RESUME':
       return { ok: true, resumeRecognition: await recognizeCurrentResume(), status: await getPublicStatus() };
     case 'BRIDGE_TEST_CURRENT_ACTION_ENTRY':
@@ -500,20 +504,26 @@ async function importVisibleResumePdf(payload) {
   }
   const runtime = await getRuntime();
   console.log('[background] runtime', { lastSelectedChatDigest: runtime.lastSelectedChatDigest?.slice(0, 12), lastSelectedObservationId: runtime.lastSelectedObservationId, payloadChatDigest: payload.chatDigest?.slice(0, 12) });
-  if (runtime.lastSelectedChatDigest !== payload.chatDigest || !runtime.lastSelectedObservationId) {
+  // PDF 事件通常早于稳定会话快照到达。等待快照提交完成，避免首次打开预览时误报“尚未完成稳定复核”。
+  let stableRuntime = runtime;
+  for (let attempt = 0; attempt < 25 && (stableRuntime.lastSelectedChatDigest !== payload.chatDigest || !stableRuntime.lastSelectedObservationId); attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    stableRuntime = await getRuntime();
+  }
+  if (stableRuntime.lastSelectedChatDigest !== payload.chatDigest || !stableRuntime.lastSelectedObservationId) {
     console.error('[background] 会话不一致', { runtime: runtime.lastSelectedChatDigest?.slice(0, 12), payload: payload.chatDigest?.slice(0, 12), observationId: runtime.lastSelectedObservationId });
     throw new Error('当前 PDF 与最近稳定会话观测不一致，已停止导入。');
   }
   const binary = atob(payload.fileBase64);
   const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
   if (String.fromCharCode(...bytes.slice(0, 5)) !== '%PDF-') { console.error('[background] PDF 文件头校验失败'); throw new Error('PDF 文件头校验失败。'); }
-  console.log('[background] 准备发送到后端, observationId=' + runtime.lastSelectedObservationId);
+  console.log('[background] 准备发送到后端, observationId=' + stableRuntime.lastSelectedObservationId);
   await setRuntime({ visibleResumeState: 'PDF 已安全读取，正在导入并进行 AI 分析…', lastVisibleResumeAt: new Date().toISOString() });
   const form = new FormData();
   form.append('file', new Blob([bytes], { type: 'application/pdf' }), 'boss-resume.pdf');
   console.log('[background] 开始调用后端 API...');
   const result = await requestMultipart(settings.backendUrl,
-    `/api/local-connector/runtime/resume-documents?observationId=${encodeURIComponent(runtime.lastSelectedObservationId)}&sourceEventDigest=${encodeURIComponent(payload.sourceEventDigest)}`,
+    `/api/local-connector/runtime/resume-documents?observationId=${encodeURIComponent(stableRuntime.lastSelectedObservationId)}&sourceEventDigest=${encodeURIComponent(payload.sourceEventDigest)}`,
     settings.deviceToken, form, 120_000);
   console.log('[background] 后端响应:', result);
   await setRuntime({
@@ -523,7 +533,19 @@ async function importVisibleResumePdf(payload) {
       : `当前 BOSS PDF 简历已导入，处理状态：${result?.analysisStatus || result?.processingStatus || '处理中'}。`,
     lastVisibleResumeAt: new Date().toISOString(),
   });
-  return { ok: true };
+  return {
+    ok: true,
+    intakeId: result?.intakeId || '',
+    candidateName: result?.candidateName || '',
+    receivedAt: result?.receivedAt || '',
+    duplicate: result?.duplicate === true,
+    processingStatus: result?.processingStatus || '',
+    failureCode: result?.failureCode || '',
+    failureReason: result?.failureReason || '',
+    analysisStatus: result?.analysisStatus || '',
+    analysisFailureCode: result?.analysisFailureCode || '',
+    analysisFailureReason: result?.analysisFailureReason || '',
+  };
 }
 
 async function recordVisibleResumeImportStatus(payload) {
@@ -591,9 +613,8 @@ async function fetchVisibleResumeFromMainWorld(tabId, payload) {
   if (!captured) throw new Error(injections.map((entry) => entry.result?.error).find(Boolean) || '页面主环境未返回 PDF 数据。');
   const fileDigest = await digestText(captured.fileBase64);
   const sourceEventDigest = await digestText(`${payload.chatDigest}|${runtime.lastSelectedMessageDigest || ''}|${fileDigest}`);
-  await importVisibleResumePdf({ actionType: 'VISIBLE_RESUME_PDF_CAPTURE', chatDigest: payload.chatDigest,
+  return importVisibleResumePdf({ actionType: 'VISIBLE_RESUME_PDF_CAPTURE', chatDigest: payload.chatDigest,
     sourceEventDigest, fileDigest, fileBase64: captured.fileBase64, fileSize: captured.fileSize });
-  return { ok: true };
 }
 
 async function inspectCurrentControls() {
@@ -607,6 +628,36 @@ async function inspectCurrentControls() {
   const diagnostic = validateControlDomDiagnostic(response.diagnostic);
   await setRuntime({ controlDiagnostic: diagnostic, controlDiagnosticState: `已识别 ${diagnostic.controls.length} 个当前会话可见控件；报告仅保存在本机扩展。`, lastControlDiagnosticAt: diagnostic.observedAt });
   return diagnostic;
+}
+
+async function copyCurrentTranscript() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id || !/(^|\.)zhipin\.com$/i.test(safeHostname(tab.url))
+      || !/\/web\/chat\/(?:index|user-center)(?:[/?#]|$)/i.test(tab.url || '')) {
+    throw new Error('请先在当前标签打开 BOSS 沟通页，并选中需要复制的会话。');
+  }
+  const response = await sendToBossTab(tab.id, { type: 'BRIDGE_COPY_CURRENT_TRANSCRIPT' });
+  if (!response?.ok) throw new Error(response?.reason || response?.error || '当前会话记录读取失败。');
+  if (!response.transcript?.text || !Number.isInteger(response.transcript.messageCount)) {
+    throw new Error('页面返回的聊天记录格式无效，未写入剪贴板。');
+  }
+  return response.transcript;
+}
+
+async function syncCurrentTranscript() {
+  const settings = await getSettings();
+  if (!settings.deviceToken) throw new Error('请先完成本机账号配对，才能同步到示例库。');
+  if (settings.enabled === false) throw new Error('浏览器桥接已暂停，无法同步聊天记录。');
+  const transcript = await copyCurrentTranscript();
+  try {
+    const imported = await request(settings.backendUrl, '/api/local-connector/runtime/hr-reply-examples/import', {
+      method: 'POST', token: settings.deviceToken, body: { transcript: transcript.text }, timeoutMs: 20_000,
+    });
+    return { ...transcript, import: imported, importError: null };
+  } catch (error) {
+    // 复制结果仍然返回，避免后端暂时不可用时丢失本机已脱敏记录。
+    return { ...transcript, import: null, importError: safeError(error) };
+  }
 }
 
 async function recognizeCurrentResume() {

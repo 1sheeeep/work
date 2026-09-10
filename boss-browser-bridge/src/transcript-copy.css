@@ -1,0 +1,30 @@
+.transcript-copy {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #c8ddd8;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #fff, #f2faf7);
+}
+
+.transcript-copy strong,
+.transcript-copy span {
+  display: block;
+}
+
+.transcript-copy strong {
+  font-size: 12px;
+}
+
+.transcript-copy span {
+  margin-top: 4px;
+  color: #52635f;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.transcript-copy button {
+  white-space: nowrap;
+}

@@ -34,9 +34,16 @@
   let lastDeepConversationScanAt = 0;
   let jobConfirmationTimer = null;
   let pendingJobConfirmationSignature = '';
+  let resumeCaptureStatusBar = null;
+  let resumeCaptureCopyBtn = null;
+  let resumeCaptureStatusLog = null;
+  let resumeCardScanTimer = null;
+  let resumeAttachmentProcessing = false;
+  let lastResumePdfImportOutcome = null;
+  const clickedResumeCardControls = new WeakSet();
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (!['BRIDGE_COLLECT', 'BRIDGE_COLLECT_JOBS', 'BRIDGE_LOCATE_CONVERSATION', 'BRIDGE_CHECK_REPLY_READINESS', 'BRIDGE_INSPECT_CURRENT_CONTROLS', 'BRIDGE_TEST_CURRENT_ACTION_ENTRY', 'BRIDGE_CONFIRM_CURRENT_EXCHANGE', 'BRIDGE_PREPARE_ACTION_LEASE', 'BRIDGE_EXECUTE_ACTION_LEASE', 'BRIDGE_FILL_TEST_DRAFT', 'BRIDGE_PREPARE_CURRENT_SEND_TEST', 'BRIDGE_SEND_CURRENT_TEST_DRAFT', 'BRIDGE_DIAGNOSE_CURRENT_AUTO_REPLY', 'BRIDGE_ARM_CURRENT_AUTO_REPLY_TEST', 'BRIDGE_CANCEL_CURRENT_AUTO_REPLY_TEST', 'BRIDGE_SET_SINGLE_ACCOUNT_AUTO_REPLY', 'BRIDGE_PREPARE_APPROVED_DRAFT_FILL', 'BRIDGE_FILL_APPROVED_DRAFT', 'BRIDGE_COLLECT_VISIBLE_RESUME', 'BRIDGE_OPEN_VISIBLE_RESUME'].includes(message?.type)) return false;
+    if (!['BRIDGE_COLLECT', 'BRIDGE_COLLECT_JOBS', 'BRIDGE_LOCATE_CONVERSATION', 'BRIDGE_CHECK_REPLY_READINESS', 'BRIDGE_INSPECT_CURRENT_CONTROLS', 'BRIDGE_COPY_CURRENT_TRANSCRIPT', 'BRIDGE_TEST_CURRENT_ACTION_ENTRY', 'BRIDGE_CONFIRM_CURRENT_EXCHANGE', 'BRIDGE_PREPARE_ACTION_LEASE', 'BRIDGE_EXECUTE_ACTION_LEASE', 'BRIDGE_FILL_TEST_DRAFT', 'BRIDGE_PREPARE_CURRENT_SEND_TEST', 'BRIDGE_SEND_CURRENT_TEST_DRAFT', 'BRIDGE_DIAGNOSE_CURRENT_AUTO_REPLY', 'BRIDGE_ARM_CURRENT_AUTO_REPLY_TEST', 'BRIDGE_CANCEL_CURRENT_AUTO_REPLY_TEST', 'BRIDGE_SET_SINGLE_ACCOUNT_AUTO_REPLY', 'BRIDGE_PREPARE_APPROVED_DRAFT_FILL', 'BRIDGE_FILL_APPROVED_DRAFT', 'BRIDGE_COLLECT_VISIBLE_RESUME', 'BRIDGE_OPEN_VISIBLE_RESUME'].includes(message?.type)) return false;
     const task = message.type === 'BRIDGE_COLLECT_JOBS'
       ? collectJobsAndPublish(Boolean(message.allowEmbeddedJobList))
       : message.type === 'BRIDGE_LOCATE_CONVERSATION'
@@ -45,6 +52,8 @@
         ? collectReplyReadiness()
         : message.type === 'BRIDGE_INSPECT_CURRENT_CONTROLS'
           ? inspectCurrentConversationControls()
+        : message.type === 'BRIDGE_COPY_CURRENT_TRANSCRIPT'
+          ? collectCurrentTranscript()
         : message.type === 'BRIDGE_TEST_CURRENT_ACTION_ENTRY'
           ? testCurrentActionEntry(message.action)
         : message.type === 'BRIDGE_CONFIRM_CURRENT_EXCHANGE'
@@ -78,12 +87,29 @@
     return true;
   });
 
-  const observer = new MutationObserver(() => { scheduleCollect(1_200); scheduleAutoReplyCheck(500); scheduleSingleAccountAutoReply(300); });
+  const observer = new MutationObserver((mutations) => {
+    const pageChanged = mutations.some((mutation) =>
+      !(mutation.target instanceof Element && mutation.target.closest('#__recruitment_capture_status')));
+    if (!pageChanged) return;
+    scheduleCollect(1_200);
+    scheduleAutoReplyCheck(500);
+    scheduleSingleAccountAutoReply(300);
+    scheduleResumeCardScan(1_000);
+  });
   observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'data-id'] });
   document.addEventListener('click', (event) => {
-    const node = [...event.composedPath()].find((candidate) => candidate instanceof HTMLElement
-      && /^(?:查看简历|点击预览附件简历|预览附件简历)$/.test(compact(controlLabel(candidate))));
-    if (node) void recordResumePreviewControl(node);
+    const nodes = [...event.composedPath()].filter((c) => c instanceof HTMLElement);
+    const node = nodes.find((c) => /^(?:查看简历|点击预览附件简历|预览附件简历)$/.test(compact(controlLabel(c))));
+    if (node) {
+      showResumeCaptureStatus('点击匹配: ' + compact(controlLabel(node)));
+      void recordResumePreviewControl(node);
+    } else {
+      const card = nodes.find((c) => /message-card-wrap|hyperlink/i.test((c.className || '').toString()));
+      if (card) {
+        showResumeCaptureStatus('点击在简历卡片内');
+        void recordResumePreviewControl(card);
+      }
+    }
   }, true);
   window.addEventListener('message', (event) => {
     if (!/^https:\/\/(?:[^./]+\.)?zhipin\.com$/i.test(event.origin)) return;
@@ -94,8 +120,16 @@
   window.addEventListener('focus', () => scheduleCollect(500), { passive: true });
   document.addEventListener('visibilitychange', () => { if (!document.hidden) scheduleCollect(500); }, { passive: true });
   scheduleCollect(1_500);
+  bootResumeCaptureStatusPanel();
   void restoreSingleAccountAutoReply();
   scheduleDutyControlSync(1_000);
+
+  function bootResumeCaptureStatusPanel() {
+    showResumeCaptureStatus('简历自动处理状态面板已启动，正在检查当前会话。', 'info');
+    scheduleResumeCardScan(500);
+    setTimeout(() => showResumeCaptureStatus('状态面板仍在运行，等待简历卡片或预览动作。', 'info'), 2_000);
+    setTimeout(() => scheduleResumeCardScan(0), 5_000);
+  }
 
   function scheduleDutyControlSync(delay = 5_000) {
     clearTimeout(dutyControlTimer);
@@ -564,7 +598,28 @@
         : null;
       const containsStructuredAttachment = Boolean(stableLastMessage?.querySelector('.message-card-wrap, .hyperLink, video, audio, [class*="attachment"], [class*="resume"]'));
       if (second.direction !== 'INBOUND' || !second.messageText || containsStructuredAttachment) {
-        await reportSingleAccountResult(second, 'SILENT', '最后一条内容不是可安全处理的候选人纯文本，未回复。');
+        if (second.direction === 'INBOUND' && containsStructuredAttachment) {
+          resumeAttachmentProcessing = true;
+          lastResumePdfImportOutcome = null;
+          showResumeCaptureStatus('挂机：检测到候选人附件，锁定当前会话并开始简历处理。');
+          scheduleResumeCardScan(0);
+          for (let attempt = 0; attempt < 50; attempt++) {
+            await delay(500);
+            const outcome = lastResumePdfImportOutcome;
+            if (outcome?.chatDigest === second.chatDigest) break;
+            if (attempt === 8 || attempt === 20 || attempt === 35) scheduleResumeCardScan(0);
+          }
+          const outcome = lastResumePdfImportOutcome;
+          resumeAttachmentProcessing = false;
+          await reportSingleAccountResult(second, 'SILENT', outcome?.chatDigest === second.chatDigest && outcome.ok
+            ? `候选人附件简历已导入，记录 ${outcome.intakeId || '已建立'}，AI 状态 ${outcome.analysisStatus || '处理中'}。`
+            : `候选人附件不需要文本回复；简历导入${outcome?.error ? `未完成：${outcome.error}` : '等待超时，已保留状态供后续重试'}。`);
+          if (outcome?.chatDigest === second.chatDigest && /预览窗口未确认关闭/.test(outcome.error || '')) {
+            return void await haltSingleAccountAutoReply('挂机已暂停：简历虽然已导入，但预览窗口没有确认关闭，请人工关闭后重新开启挂机。');
+          }
+        } else {
+          await reportSingleAccountResult(second, 'SILENT', '最后一条内容不是可安全处理的候选人纯文本，未回复。');
+        }
         singleAccountPendingChatDigest = null;
         return scheduleSingleAccountAutoReply(1_500);
       }
@@ -1077,9 +1132,23 @@
       editor: editorReport, controls, resumeCandidates, reportDigest } };
   }
 
+  function findResumeCardNode(buttonNode) {
+    let el = buttonNode;
+    for (let i = 0; i < 8 && el && el !== document.body; i++) {
+      const cls = (el.className || '').toString().toLowerCase();
+      if (/(?:message-card|hyperlink|attachment|resume)[\w-]*/i.test(cls) && el.children.length >= 1) return el;
+      el = el.parentElement;
+    }
+    return buttonNode.closest('.message-card-wrap, .hyperLink, [class*="attachment-wrap"]');
+  }
+
   async function recordResumePreviewControl(node) {
     try {
-      // 先记录被点击节点；平台可能在 click 后立即替换附件卡片 DOM。
+      const card = findResumeCardNode(node);
+      if (card) {
+        const cardHTML = card.outerHTML.slice(0, 3000);
+        showResumeCaptureStatus('简历卡片 DOM（可选中复制）：\n' + cardHTML + (card.outerHTML.length > 3000 ? '\n…（已截断至 3000 字符）' : ''));
+      }
       const clickedControl = await describeControl(node);
       const selected = await collectSelectedConversation();
       const { editor } = findReplyControls();
@@ -1101,7 +1170,7 @@
   async function recordResumePreviewSurface(chatDigest, editorReport, clickedControl) {
     let importTriggered = false;
     let attachmentViewRequested = false;
-    for (const wait of [500, 1200, 2500]) {
+    for (const wait of [500, 1200, 2500, 4000, 6000]) {
       await delay(wait);
       const selected = await collectSelectedConversation();
       if (!selected.ok || selected.chatDigest !== chatDigest) return;
@@ -1146,24 +1215,45 @@
       } });
       // 预览正文由 BOSS 异步渲染。正文稳定后主动提交一次当前会话，
       // 避免普通 DOM 快照去重把“附件已展开”误判成无变化而漏掉导入。
-      if (!importTriggered && findVisibleResumeRoot()) {
+      if (!importTriggered && (findVisibleResumeRoot() || findVisibleResumePdfFrame())) {
         const capture = await collectVisibleResumeText();
         if (capture.ok) {
           importTriggered = true;
+          showResumeCaptureStatus('在线简历正文提取成功，正在提交后端处理。', 'success');
           await collectAndPublish(true);
+          void pollResumeBackendStatus();
         } else {
           const pdfCapture = await collectVisibleResumePdf();
           if (pdfCapture.ok) {
             importTriggered = true;
             await collectAndPublish(true);
-            await send({ type: 'BRIDGE_VISIBLE_RESUME_PDF_CAPTURE', payload: pdfCapture.resume });
+            showResumeImportResult(await send({ type: 'BRIDGE_VISIBLE_RESUME_PDF_CAPTURE', payload: pdfCapture.resume }));
           } else {
-            importTriggered = true;
+            if (resumePdfForwardInFlight) {
+              showResumeCaptureStatus('iframe 已取得 PDF，等待主导入链路完成，不启动重复备用抓取。');
+              const forwarded = await Promise.race([
+                resumePdfForwardInFlight,
+                delay(12_000).then(() => null),
+              ]);
+              if (forwarded?.ok) {
+                importTriggered = true;
+                continue;
+              }
+              showResumeCaptureStatus('主导入链路仍在等待会话稳定，保留本轮预览继续复核。');
+              continue;
+            }
             await collectAndPublish(true);
             const fetched = await send({ type: 'BRIDGE_FETCH_VISIBLE_RESUME_MAIN_WORLD', payload: { chatDigest } });
-            if (!fetched?.ok) await send({ type: 'BRIDGE_VISIBLE_RESUME_IMPORT_STATUS', payload: {
-              chatDigest, state: `PDF 尚未导入：${fetched?.error || pdfCapture.error}`, observedAt: new Date().toISOString(),
-            } });
+            if (fetched?.ok) {
+              importTriggered = true;
+              showResumeImportResult(fetched);
+            } else {
+              showResumeCaptureStatus(`简历提取失败：${fetched?.error || pdfCapture.error}`, 'error');
+              await send({ type: 'BRIDGE_VISIBLE_RESUME_IMPORT_STATUS', payload: {
+                chatDigest, state: `PDF 尚未导入：${fetched?.error || pdfCapture.error}`, observedAt: new Date().toISOString(),
+              } });
+              // 预览可能仍在加载，保留 importTriggered=false，继续下一轮等待。
+            }
           }
         }
       }
@@ -1994,6 +2084,95 @@
     return { ok: true, chatDigest, messageDigest, direction, messageAt, selectedUnread, conversationSignals, messageText, conversationContext, signature: `${chatDigest}:${messageDigest}:${direction}:${messageAt}:${selectedUnread}:${signalSignature}` };
   }
 
+  async function collectCurrentTranscript() {
+    const selected = [...document.querySelectorAll(SELECTORS.selectedConversation)].find(visible);
+    if (!selected) return blocked('NO_SELECTED_CONVERSATION', '请先在 BOSS 沟通页打开需要复制的会话。');
+    const active = [...document.querySelectorAll(SELECTORS.activeConversation)].find(visible);
+    if (!active) return blocked('MESSAGE_CONTAINER_NOT_FOUND', '当前会话消息区域尚未加载完成，请稍后重试。');
+    const identity = stableIdentity(selected);
+    if (!identity) return blocked('CHAT_ID_MISSING', '当前会话缺少稳定标识，已停止复制以免读取错误会话。');
+
+    const scroller = findTranscriptScroller(active);
+    const distanceFromBottom = scroller ? scroller.scrollHeight - scroller.scrollTop : 0;
+    let stableRounds = 0;
+    let previousShape = '';
+    let reachedBeginning = !scroller;
+    for (let attempt = 0; scroller && attempt < 18; attempt++) {
+      scroller.scrollTop = 0;
+      scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
+      await delay(350);
+      const count = active.querySelectorAll(SELECTORS.message).length;
+      const shape = `${count}:${scroller.scrollHeight}`;
+      stableRounds = shape === previousShape ? stableRounds + 1 : 0;
+      previousShape = shape;
+      if (scroller.scrollTop <= 2 && stableRounds >= 3) { reachedBeginning = true; break; }
+    }
+
+    const timeline = [...active.querySelectorAll(`${SELECTORS.messageTime}, ${SELECTORS.message}`)];
+    const records = [];
+    let currentTime = '';
+    for (const node of timeline) {
+      if (node.matches(SELECTORS.messageTime)) {
+        currentTime = compact(node.textContent || '').slice(0, 40);
+        continue;
+      }
+      const direction = directionOf(node);
+      if (!direction) continue;
+      const text = transcriptMessageText(node);
+      if (!text) continue;
+      const ownTime = compact(node.querySelector(SELECTORS.messageTime)?.textContent || '').slice(0, 40);
+      records.push({ speaker: direction === 'INBOUND' ? '候选人' : 'HR', time: ownTime || currentTime, text });
+    }
+    if (scroller) scroller.scrollTop = Math.max(0, scroller.scrollHeight - distanceFromBottom);
+    const selectedAfter = [...document.querySelectorAll(SELECTORS.selectedConversation)].find(visible);
+    if (!selectedAfter || stableIdentity(selectedAfter) !== identity) {
+      return blocked('SELECTED_CONVERSATION_CHANGED', '读取期间当前会话发生变化，已停止复制以避免混入其他候选人的消息。');
+    }
+    if (!records.length) return blocked('TRANSCRIPT_EMPTY', '当前会话没有可复制的文字或附件记录。');
+
+    const limited = records.slice(-1000);
+    const jobTitle = compact(selected.querySelector(SELECTORS.job)?.textContent || '').slice(0, 120);
+    const lines = ['BOSS 当前会话记录（已脱敏）', jobTitle ? `岗位：${redactTranscript(jobTitle)}` : null,
+      `导出时间：${new Date().toLocaleString('zh-CN')}`, ''];
+    for (const record of limited) lines.push(`${record.time ? `[${record.time}] ` : ''}${record.speaker}：${record.text}`);
+    const raw = lines.filter((line) => line !== null).join('\n');
+    const text = raw.length > 120_000 ? raw.slice(raw.length - 120_000) : raw;
+    return { ok: true, transcript: {
+      text, messageCount: limited.length,
+      possiblyTruncated: !reachedBeginning || records.length > limited.length || raw.length > text.length,
+      redacted: true,
+    } };
+  }
+
+  function findTranscriptScroller(active) {
+    let node = active;
+    for (let depth = 0; node && depth < 7; depth++, node = node.parentElement) {
+      const style = getComputedStyle(node);
+      if (node.scrollHeight > node.clientHeight + 20 && /(auto|scroll)/.test(style.overflowY)) return node;
+    }
+    return active.scrollHeight > active.clientHeight + 20 ? active : null;
+  }
+
+  function transcriptMessageText(node) {
+    const clone = node.cloneNode(true);
+    clone.querySelectorAll(`${SELECTORS.messageTime}, script, style, input, textarea, button, .message-card-buttons`).forEach((item) => item.remove());
+    const text = compact(clone.textContent || '').slice(0, 4000);
+    if (text) return redactTranscript(text);
+    if (node.querySelector('img')) return '[图片]';
+    if (node.querySelector('video')) return '[视频]';
+    if (node.querySelector('audio')) return '[语音]';
+    if (node.querySelector('.message-card-wrap, .hyperLink, [class*="attachment"], [class*="resume"]')) return '[附件或简历]';
+    return '';
+  }
+
+  function redactTranscript(value) {
+    return compact(value)
+      .replace(/(?<!\d)1[3-9]\d{9}(?!\d)/g, '[手机号已脱敏]')
+      .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[邮箱已脱敏]')
+      .replace(/(?<!\d)\d{17}[\dXx](?!\d)/g, '[身份证号已脱敏]')
+      .replace(/((?:微信|微 信|V信|wx)\s*[:：]?\s*)[A-Za-z][A-Za-z0-9_-]{5,19}/gi, '$1[微信号已脱敏]');
+  }
+
   function collectConversationSignals() {
     const { editor } = findReplyControls();
     const scope = editor?.closest('.conversation-operate');
@@ -2106,6 +2285,7 @@
   let lastResumePdfForwardAt = 0;
 
   async function forwardMainWorldResumePdf(data) {
+    scheduleResumeCardScan(500);
     const captureKey = `${data?.fileSize || 0}:${String(data?.fileBase64 || '').slice(0, 96)}`;
     if (resumePdfForwardInFlight) {
       showResumeCaptureStatus('content：PDF 正在发送中，忽略重复捕获。');
@@ -2134,18 +2314,100 @@
       return;
     }
     showResumeCaptureStatus('content：会话识别成功，chatDigest=' + (selected.chatDigest || '').slice(0, 12));
+    await waitForCollectionIdle(2_500);
     await collectAndPublish(true);
     const fileDigest = await digest(data.fileBase64);
     const sourceEventDigest = await digest(`${selected.chatDigest}|${selected.messageDigest}|${fileDigest}`);
-    showResumeCaptureStatus('content：正在发送 BRIDGE_VISIBLE_RESUME_PDF_CAPTURE...');
-    const response = await send({ type: 'BRIDGE_VISIBLE_RESUME_PDF_CAPTURE', payload: {
+    const payload = {
       actionType: 'VISIBLE_RESUME_PDF_CAPTURE', chatDigest: selected.chatDigest,
       sourceEventDigest, fileDigest, fileBase64: data.fileBase64, fileSize: data.fileSize,
-    } });
-    if (response?.ok) {
-      showResumeCaptureStatus('content：background 返回成功' + (response.duplicate ? ' (重复)' : ''));
+    };
+    let response = null;
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      showResumeCaptureStatus(`content：正在发送 PDF 到后端（第 ${attempt}/4 次）...`);
+      response = await send({ type: 'BRIDGE_VISIBLE_RESUME_PDF_CAPTURE', payload });
+      if (response?.ok) break;
+      const reason = String(response?.error || '');
+      if (!/稳定|会话|观测|通信失败|无响应/.test(reason) || attempt === 4) break;
+      showResumeCaptureStatus(`后端尚未就绪，将自动重试：${reason}`);
+      await delay(attempt * 600);
+      await waitForCollectionIdle(2_500);
+      await collectAndPublish(true);
+    }
+    showResumeImportResult(response);
+    const previewClosed = response?.ok ? await closeVisibleResumePreview(selected.chatDigest) : false;
+    lastResumePdfImportOutcome = response?.ok && previewClosed
+      ? { ok: true, chatDigest: selected.chatDigest, intakeId: response.intakeId || '', analysisStatus: response.analysisStatus || '' }
+      : { ok: false, chatDigest: selected.chatDigest, error: response?.ok ? '简历已导入，但预览窗口未确认关闭' : response?.error || '后端导入失败' };
+    return response;
+  }
+
+  async function closeVisibleResumePreview(expectedChatDigest) {
+    const selected = await collectSelectedConversation();
+    if (!selected.ok || selected.chatDigest !== expectedChatDigest) {
+      showResumeCaptureStatus('预览未关闭：当前会话已变化，禁止操作其他会话的弹窗。', 'error');
+      return false;
+    }
+    const dialog = [...document.querySelectorAll('.resume-common-dialog.search-resume, .resume-common-dialog, .attachment-view')]
+      .find((node) => node instanceof HTMLElement && visible(node));
+    if (!dialog) return true;
+    const dialogRect = dialog.getBoundingClientRect();
+    const candidates = [...dialog.querySelectorAll('.close-btn, .boss-popup__close, .dialog-close, [class*="close"], [aria-label="关闭"], [title="关闭"]')]
+      .filter((node) => {
+        if (!(node instanceof HTMLElement) || !visible(node) || !isAvailableAction(node)) return false;
+        const rect = node.getBoundingClientRect();
+        return rect.width <= 72 && rect.height <= 72
+          && rect.right >= dialogRect.right - 120 && rect.top <= dialogRect.top + 120;
+      });
+    const close = candidates.find((node) => {
+      const label = compact(controlLabel(node));
+      const cls = String(node.className || '');
+      return /^(?:关闭|close)?$/i.test(label) || /(?:^|[-_])close(?:[-_]|$)/i.test(cls);
+    });
+    if (!close) {
+      showResumeCaptureStatus('简历已导入，但未识别到唯一安全关闭按钮；保持当前预览并停止切换会话。', 'error');
+      return false;
+    }
+    close.click();
+    for (let attempt = 0; attempt < 15; attempt++) {
+      await delay(200);
+      if (!visible(dialog) || !document.contains(dialog)) {
+        showResumeCaptureStatus('简历预览已自动关闭，可继续处理其他会话。', 'success');
+        return true;
+      }
+    }
+    showResumeCaptureStatus('简历已导入，但预览关闭结果未确认；暂停切换以避免误操作。', 'error');
+    return false;
+  }
+
+  function showResumeImportResult(response) {
+    if (!response?.ok) {
+      showResumeCaptureStatus('后端导入失败：' + (response?.error || '扩展后台无响应'), 'error');
+      return;
+    }
+    const processingReason = response.failureReason || response.failureCode || '';
+    const analysisReason = response.analysisFailureReason || response.analysisFailureCode || '';
+    if (response.processingStatus === 'FAILED') {
+      showResumeCaptureStatus('后端处理失败：' + (processingReason || '简历文件未能完成提取。'), 'error');
     } else {
-      showResumeCaptureStatus('content：background 返回失败: ' + (response?.error || '无响应'));
+      showResumeCaptureStatus(`简历提取成功：后端已${response.duplicate ? '识别为重复记录' : '接收并建立记录'}，处理状态 ${response.processingStatus || '已接收'}。`, 'success');
+    }
+    if (response.analysisStatus === 'SUCCEEDED') {
+      showResumeCaptureStatus(`AI 分析成功：结果已保存${response.candidateName ? `，候选人 ${response.candidateName}` : ''}，记录 ${response.intakeId || '已建立'}。`, 'success');
+    } else if (['FAILED', 'UNAVAILABLE', 'NOT_AUTHORIZED'].includes(response.analysisStatus)) {
+      showResumeCaptureStatus(`AI 分析未完成：${analysisReason || response.analysisStatus}。`, 'error');
+    } else {
+      showResumeCaptureStatus(`后端已收到简历；AI 状态：${response.analysisStatus || '处理中'}${analysisReason ? `，原因：${analysisReason}` : ''}。`, 'info');
+    }
+  }
+
+  async function pollResumeBackendStatus() {
+    for (const wait of [1_000, 2_500, 5_000]) {
+      await delay(wait);
+      const response = await send({ type: 'BRIDGE_GET_STATUS' });
+      const state = String(response?.status?.visibleResumeState || '');
+      if (state) showResumeCaptureStatus('后端状态：' + state, /失败|未完成|尚未/.test(state) ? 'error' : /完成|已导入|已接收/.test(state) ? 'success' : 'info');
+      if (/完成|失败|未完成/.test(state)) return;
     }
   }
 
@@ -2157,29 +2419,119 @@
     } });
   }
 
-  let resumeCaptureStatusBar = null;
-  let resumeCaptureStatusTimer = 0;
-
   function ensureResumeCaptureStatusBar() {
     if (resumeCaptureStatusBar && document.body.contains(resumeCaptureStatusBar)) return;
+    const mount = document.body || document.documentElement;
+    if (!mount) {
+      setTimeout(() => ensureResumeCaptureStatusBar(), 200);
+      return;
+    }
     resumeCaptureStatusBar = document.createElement('div');
     resumeCaptureStatusBar.id = '__recruitment_capture_status';
-    resumeCaptureStatusBar.style.cssText = 'position:fixed;top:60px;right:12px;z-index:2147483647;max-width:420px;background:rgba(0,0,0,0.82);color:#fff;font:12px/1.5 monospace;padding:8px 12px;border-radius:6px;white-space:pre-wrap;word-break:break-all;user-select:text;transition:opacity 0.3s;';
-    document.body.appendChild(resumeCaptureStatusBar);
+    resumeCaptureStatusBar.style.cssText = 'position:fixed;top:60px;right:12px;z-index:2147483647;width:min(280px,calc(100vw - 24px));max-height:60vh;background:rgba(15,23,42,.78);color:#fff;font:12px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;border:1px solid rgba(255,255,255,.10);border-radius:8px;box-shadow:0 4px 16px rgba(15,23,42,.15);overflow:hidden;user-select:text;';
+    const header = document.createElement('div');
+    header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 10px;border-bottom:1px solid rgba(255,255,255,.08);';
+    const title = document.createElement('strong');
+    title.textContent = '简历自动处理';
+    const copyBtn = document.createElement('button');
+    copyBtn.textContent = '复制全部';
+    copyBtn.style.cssText = 'padding:3px 8px;font:11px sans-serif;background:#2563eb;color:#fff;border:0;border-radius:5px;cursor:pointer;';
+    copyBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      navigator.clipboard.writeText(resumeCaptureStatusLog?.textContent || '');
+      copyBtn.textContent = '已复制';
+      setTimeout(() => { copyBtn.textContent = '复制全部'; }, 1500);
+    });
+    header.append(title, copyBtn);
+    resumeCaptureStatusLog = document.createElement('div');
+    resumeCaptureStatusLog.style.cssText = 'max-height:calc(60vh - 42px);overflow-y:auto;padding:8px 10px;white-space:pre-wrap;word-break:break-word;';
+    resumeCaptureStatusBar.append(header, resumeCaptureStatusLog);
+    resumeCaptureCopyBtn = copyBtn;
+    mount.appendChild(resumeCaptureStatusBar);
   }
 
-  function showResumeCaptureStatus(text) {
+  function showResumeCaptureStatus(text, tone = 'info') {
     ensureResumeCaptureStatusBar();
-    if (!resumeCaptureStatusBar) return;
-    const lines = resumeCaptureStatusBar.textContent.split('\n').filter(Boolean);
-    lines.push('[' + new Date().toLocaleTimeString() + '] ' + text);
-    if (lines.length > 6) lines.splice(0, lines.length - 6);
-    resumeCaptureStatusBar.textContent = lines.join('\n');
-    resumeCaptureStatusBar.style.opacity = '1';
-    clearTimeout(resumeCaptureStatusTimer);
-    resumeCaptureStatusTimer = setTimeout(() => {
-      if (resumeCaptureStatusBar) resumeCaptureStatusBar.style.opacity = '0.25';
-    }, 12000);
+    if (!resumeCaptureStatusBar || !resumeCaptureStatusLog) return;
+    const line = document.createElement('div');
+    const inferredTone = tone === 'info' && /失败|异常|未找到|无法|停止|无响应/.test(text) ? 'error'
+      : tone === 'info' && /成功|完成|已导入|已接收/.test(text) ? 'success' : tone;
+    line.style.cssText = `padding:4px 0;border-bottom:1px solid rgba(255,255,255,.07);color:${inferredTone === 'error' ? '#fca5a5' : inferredTone === 'success' ? '#86efac' : '#e2e8f0'};`;
+    line.textContent = '[' + new Date().toLocaleTimeString() + '] ' + String(text);
+    resumeCaptureStatusLog.appendChild(line);
+    while (resumeCaptureStatusLog.children.length > 30) resumeCaptureStatusLog.firstChild.remove();
+    resumeCaptureStatusLog.scrollTop = resumeCaptureStatusLog.scrollHeight;
+  }
+
+  function scheduleResumeCardScan(delay) {
+    clearTimeout(resumeCardScanTimer);
+    resumeCardScanTimer = setTimeout(async () => {
+      const bridge = await send({ type: 'BRIDGE_GET_STATUS' });
+      if (!bridge?.ok) {
+        showResumeCaptureStatus('状态检查失败：' + (bridge?.error || '扩展后台无响应'), 'error');
+        return;
+      }
+      if (bridge.status?.enabled === false) {
+        showResumeCaptureStatus('自动处理已停止：浏览器桥接当前处于暂停状态。', 'error');
+        return;
+      }
+      const raw = [...document.querySelectorAll('.message-card-wrap, .hyperLink, [class*="attachment-wrap"], [class*="resume-card"]')]
+        .filter((n) => n instanceof HTMLElement);
+      const cards = raw.filter((n) => visible(n));
+      const uniqueCards = cards.filter((c, i) => !cards.some((p, j) => j !== i && p.contains(c)));
+      if (raw.length > 0) {
+        showResumeCaptureStatus('原始匹配: ' + raw.length + ' 个, 可见: ' + cards.length + ' 个, 去重: ' + uniqueCards.length + ' 个');
+        raw.forEach((n) => {
+          if (!visible(n)) showResumeCaptureStatus('不可见: ' + n.tagName + '.' + (n.className || '').toString().slice(0, 60));
+        });
+      }
+      if (uniqueCards.length > 0) {
+        uniqueCards.forEach((card, i) => {
+          const tag = card.tagName + '.' + (card.className || '').toString().slice(0, 60);
+          showResumeCaptureStatus('卡片' + (i + 1) + ': ' + tag);
+          autoClickResumeCard(card);
+        });
+      } else {
+        showResumeCaptureStatus('未检测到简历卡片 DOM');
+      }
+    }, delay);
+  }
+
+  function autoClickResumeCard(card) {
+    try {
+      if (autoReplyBusy && !resumeAttachmentProcessing) { showResumeCaptureStatus('跳过点击: 自动回复进行中'); return; }
+      const actionArea = card.querySelector('.message-card-buttons') || card;
+      const buttons = [...actionArea.querySelectorAll('.card-btn, button, [role="button"]')]
+        .filter((btn) => btn instanceof HTMLElement && visible(btn));
+      const btnTexts = buttons.map((btn) => compact(controlLabel(btn))).filter(Boolean).join(', ');
+      showResumeCaptureStatus('按钮候选: ' + (btnTexts || '无'));
+
+      const previewBtn = buttons.find((btn) =>
+        /^(?:点击预览附件简历|预览附件简历|预览简历|查看简历)$/.test(compact(controlLabel(btn)))
+        && isAvailableAction(btn) && !clickedResumeCardControls.has(btn));
+      if (previewBtn) {
+        clickedResumeCardControls.add(previewBtn);
+        showResumeCaptureStatus('自动点击: ' + compact(controlLabel(previewBtn)));
+        previewBtn.click();
+        return;
+      }
+
+      const agreeBtn = buttons.find((btn) => /^同意$/.test(compact(controlLabel(btn)))
+        && isAvailableAction(btn) && !clickedResumeCardControls.has(btn));
+      if (agreeBtn) {
+        clickedResumeCardControls.add(agreeBtn);
+        showResumeCaptureStatus('自动点击: 同意接收简历，等待预览入口');
+        agreeBtn.click();
+        scheduleResumeCardScan(500);
+        setTimeout(() => scheduleResumeCardScan(0), 1_500);
+        setTimeout(() => scheduleResumeCardScan(0), 3_000);
+        return;
+      }
+
+      showResumeCaptureStatus('跳过点击: 暂无可用的同意或预览按钮');
+    } catch (error) {
+      showResumeCaptureStatus('点击异常: ' + String(error?.message || error || '未知错误'));
+    }
   }
 
   async function forwardResumeCaptureStatus(data) {
@@ -2194,8 +2546,7 @@
 
   function isAvailableAction(node) {
     return !node.disabled && node.getAttribute('aria-disabled') !== 'true'
-      && !node.classList.contains('disabled') && !node.closest('[aria-disabled="true"], .disabled')
-      && getComputedStyle(node).cursor === 'pointer';
+      && !node.classList.contains('disabled') && !node.closest('[aria-disabled="true"], .disabled');
   }
 
   function stableIdentity(item) {
