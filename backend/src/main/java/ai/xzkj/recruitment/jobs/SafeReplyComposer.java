@@ -22,13 +22,9 @@ public final class SafeReplyComposer {
         Company company = job.getCompany();
         List<String> missing = new ArrayList<>();
         List<String> blockers = new ArrayList<>();
-        addIf(!company.isKnowledgeApproved(), blockers, missing, "COMPANY_KNOWLEDGE_UNAPPROVED", "公司知识未审核");
-        addIf(isBlank(company.getKnowledgeIndustry()), blockers, missing, "COMPANY_INDUSTRY_MISSING", "公司行业");
-        addIf(isBlank(company.getKnowledgeSummary()), blockers, missing, "COMPANY_SUMMARY_MISSING", "公司介绍");
         addIf("VISIBLE_PAGE".equals(job.getCaptureSource()) && !job.isCaptureVerified(), blockers, missing, "VISIBLE_CAPTURE_UNVERIFIED", "页面采集资料待核对");
         addIf("UNREAD_OBSERVATION".equals(job.getCaptureSource()) && !job.isCaptureVerified(), blockers, missing, "OBSERVED_JOB_UNVERIFIED", "未读观察岗位资料待补全核对");
         addIf(!job.isKnowledgeApproved(), blockers, missing, "JOB_KNOWLEDGE_UNAPPROVED", "岗位知识未审核");
-        addIf(isBlank(job.getReplySummary()), blockers, missing, "JOB_REPLY_SUMMARY_MISSING", "岗位简介");
         if (!missing.isEmpty()) {
             return new Composition("GENERIC", GENERIC_REPLY, List.copyOf(blockers), List.copyOf(missing),
                     "资料不完整，已使用通用回退：" + String.join("、", missing));
@@ -43,8 +39,7 @@ public final class SafeReplyComposer {
             content = "您好，已收到您关于「" + concise(title, 32) + "」的消息。如果您有兴趣，欢迎继续沟通。";
         }
         return new Composition("KNOWLEDGE", content, List.of(), List.of(),
-                "已使用审核通过的公司知识 v" + company.getKnowledgeVersion()
-                        + " 与岗位知识 v" + job.getKnowledgeVersion());
+                "已使用审核通过的岗位知识 v" + job.getKnowledgeVersion());
     }
 
     /**

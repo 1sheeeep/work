@@ -81,15 +81,12 @@ public record JobPositionResponse(
             boolean profile = complete(job.getLocation()) && complete(job.getExperienceRequirement())
                     && complete(job.getEducationRequirement()) && complete(job.getDescription());
             boolean capture = "MANUAL".equals(job.getCaptureSource()) || job.isCaptureVerified();
-            var company = job.getCompany();
-            boolean companyKnowledge = company.isKnowledgeApproved() && complete(company.getKnowledgeIndustry())
-                    && complete(company.getKnowledgeSummary());
-            boolean jobKnowledge = job.isKnowledgeApproved() && complete(job.getReplySummary());
+            boolean companyKnowledge = true;
+            boolean jobKnowledge = job.isKnowledgeApproved();
             List<String> blockers = new java.util.ArrayList<>();
             if (!profile) blockers.add("岗位详情待补全");
             if (!capture) blockers.add("真实页面资料待核对");
-            if (!companyKnowledge) blockers.add("企业回复知识待审核");
-            if (!jobKnowledge) blockers.add("岗位回复知识待审核");
+            if (!jobKnowledge) blockers.add("岗位资料待审核");
             return new ReviewReadiness(imported, profile, capture, companyKnowledge, jobKnowledge,
                     job.getStatus() == JobPositionStatus.DRAFT && profile && capture && companyKnowledge && jobKnowledge,
                     List.copyOf(blockers));

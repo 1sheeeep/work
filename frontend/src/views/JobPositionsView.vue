@@ -110,9 +110,6 @@ const reviewRules: FormRules<JobReviewFormValue> = {
   description: [
     { required: true, message: "请输入真实职位描述", trigger: "blur" },
   ],
-  replySummary: [
-    { required: true, message: "请填写挂机回复中的岗位介绍", trigger: "blur" },
-  ],
 };
 
 function statusTagType(status: JobPositionStatus) {
@@ -313,7 +310,6 @@ function openImportedReview(job: JobPosition) {
 async function completeImportedReview() {
   if (reviewJob.value) {
     reviewForm.location = reviewForm.workAddress || reviewForm.location;
-    if (!reviewForm.replySummary.trim()) reviewForm.replySummary = suggestedReplySummary(reviewJob.value);
   }
   if (
     !reviewJob.value ||
@@ -326,10 +322,9 @@ async function completeImportedReview() {
   }
   if (
     !reviewForm.captureConfirmed ||
-    !reviewForm.knowledgeApproved ||
     !reviewForm.activateConfirmed
   ) {
-    ElMessage.warning("请完成三项人工确认后再启用岗位");
+    ElMessage.warning("请完成资料核对和启用确认后再启用岗位");
     return;
   }
   reviewSaving.value = true;
@@ -817,8 +812,6 @@ function showJobsHelp() {
         <div class="review-confirmations">
           <el-checkbox v-model="reviewForm.captureConfirmed"
             >我已对照真实 BOSS 岗位页核对上述资料</el-checkbox
-          ><el-checkbox v-model="reviewForm.knowledgeApproved"
-            >我确认系统仅使用上述真实字段生成安全草稿</el-checkbox
           ><el-checkbox v-model="reviewForm.activateConfirmed"
             >我确认现在启用此岗位，并参与严格标题匹配</el-checkbox
           >

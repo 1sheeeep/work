@@ -166,12 +166,6 @@ public class JobPositionService {
         requireCompletedReviewProfile(request);
         Company company = requireActiveAccessibleCompany(job.getCompany().getId(), user);
         BossAccount account = requireEligibleBossAccount(job.getBossAccount().getId(), company, user);
-        if (!company.isKnowledgeApproved() || company.getKnowledgeIndustry() == null
-                || company.getKnowledgeIndustry().isBlank() || company.getKnowledgeSummary() == null
-                || company.getKnowledgeSummary().isBlank()) {
-            throw new ApiException(HttpStatus.CONFLICT, "COMPANY_KNOWLEDGE_NOT_READY",
-                    "请先由系统管理员填写并审核企业回复知识");
-        }
         boolean duplicateActiveTitle = jobRepository.findAllByBossAccountIdAndStatus(account.getId(), JobPositionStatus.ACTIVE)
                 .stream().filter(other -> !other.getId().equals(job.getId()))
                 .anyMatch(other -> SafeReplyComposer.normalizePublicTitle(other.getTitle())
@@ -189,7 +183,7 @@ public class JobPositionService {
                 cleanOptional(request.overseasRequirement()), cleanOptional(request.jobKeywords()),
                 cleanOptional(request.workAddress()));
         job.verifyVisiblePageCapture();
-        job.updateKnowledge(cleanRequired(request.replySummary()), cleanOptional(request.salaryDisplay()), true);
+        job.updateKnowledge(cleanOptional(request.replySummary()), cleanOptional(request.salaryDisplay()), true);
         job.changeStatus(JobPositionStatus.ACTIVE);
         auditService.success("REVIEW_AND_ACTIVATE_IMPORTED_JOB", "JOB_POSITION", job.getId(), job.getTitle(),
                 "HR 逐项核对真实岗位资料、批准岗位知识并启用；企业知识版本 v" + company.getKnowledgeVersion()

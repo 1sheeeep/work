@@ -45,7 +45,8 @@ class SafeReplyComposerTest {
         assertThat(result.content()).contains("Java 开发工程师", "上海", "20-35K·13薪", "欢迎继续沟通");
         assertThat(result.content()).hasSizeLessThanOrEqualTo(SafeReplyComposer.MAX_REPLY_LENGTH);
         assertThat(result.content()).doesNotContain("专注于企业数字化产品", "负责稳定的后端服务开发");
-        assertThat(result.reason()).contains("公司知识 v1", "岗位知识 v1");
+        assertThat(result.reason()).contains("岗位知识 v1");
+        assertThat(result.reason()).doesNotContain("公司知识");
         assertThat(result.blockerCodes()).isEmpty();
     }
 

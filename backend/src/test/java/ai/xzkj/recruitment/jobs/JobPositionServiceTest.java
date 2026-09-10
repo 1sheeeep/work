@@ -175,7 +175,8 @@ class JobPositionServiceTest {
 
         assertThat(response.mode()).isEqualTo("GENERIC");
         assertThat(response.content()).doesNotContain("Java 开发工程师", allowedCompany.getName());
-        assertThat(response.missingFields()).contains("公司知识未审核", "岗位知识未审核");
+        assertThat(response.missingFields()).contains("岗位知识未审核");
+        assertThat(response.missingFields()).doesNotContain("公司知识未审核");
     }
 
     @Test
@@ -202,7 +203,7 @@ class JobPositionServiceTest {
     }
 
     @Test
-    void refusesObservedDraftActivationUntilCompanyKnowledgeIsApproved() {
+    void reviewsObservedDraftWithoutCompanyKnowledge() {
         SystemUser admin = user(UserRole.RECRUITMENT_ADMIN, allowedCompany);
         JobPosition job = job(allowedCompany, eligibleAccount, "Java 开发工程师");
         job.markUnreadObservation("a".repeat(64), true);
@@ -210,12 +211,13 @@ class JobPositionServiceTest {
         when(jobRepository.findWithDetailsById(job.getId())).thenReturn(Optional.of(job));
         when(companyRepository.findById(allowedCompany.getId())).thenReturn(Optional.of(allowedCompany));
         when(bossAccountRepository.findWithDetailsById(eligibleAccount.getId())).thenReturn(Optional.of(eligibleAccount));
+        when(jobRepository.findAllByBossAccountIdAndStatus(eligibleAccount.getId(), JobPositionStatus.ACTIVE)).thenReturn(List.of());
 
-        assertThatThrownBy(() -> service.reviewAndActivate(job.getId(), reviewRequest()))
-                .isInstanceOf(ApiException.class)
-                .hasMessage("请先由系统管理员填写并审核企业回复知识");
-        assertThat(job.getStatus()).isEqualTo(JobPositionStatus.DRAFT);
-        assertThat(job.isCaptureVerified()).isFalse();
+        JobPositionResponse response = service.reviewAndActivate(job.getId(), reviewRequest());
+
+        assertThat(response.status()).isEqualTo(JobPositionStatus.ACTIVE);
+        assertThat(response.captureVerified()).isTrue();
+        assertThat(response.reviewReadiness().companyKnowledgeReady()).isTrue();
     }
 
     @Test

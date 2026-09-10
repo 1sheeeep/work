@@ -89,7 +89,7 @@ class InboundJobReplyService {
         if (SENSITIVE.matcher(message).find()) return blocked("SENSITIVE", "消息涉及敏感信息或越权指令，已转人工");
         if (HUMAN_REQUIRED.matcher(message).find()) return blocked("HUMAN_HANDOFF", "消息涉及投诉、争议或明确要求人工处理，已转 HR 跟进");
         if (isInterviewCoordination(message, context)) return blocked("INTERVIEW_COORDINATION", "疑似正在确认或变更面试时间，已停止自动回复并转 HR 跟进");
-        if (!job.isKnowledgeApproved() || !job.getCompany().isKnowledgeApproved()) return blocked("UNCERTAIN", "企业或岗位回复资料尚未审核");
+        if (!job.isKnowledgeApproved()) return blocked("UNCERTAIN", "岗位回复资料尚未审核");
         if (!properties.isConfigured()) return blocked("UNCERTAIN", "AI 服务尚未完成可用配置");
 
         if (trustedRuntime.interviewScheduled()) return blocked("INTERVIEW_COORDINATION", "可信会话状态显示已经进入面试安排，已转 HR 跟进");
