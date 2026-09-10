@@ -16,7 +16,9 @@ boss-local-connector/node_modules/
 # 禁止再提交或生成旧的别名/符号链接，避免 Chrome 加载错目录。
 boss-browser-extension
 boss-browser-bridge/node_modules/
+tools/**/node_modules/
 # 一次性测试输出与本机临时文件不进入仓库。
+*.bak
 output/
 tmp/
 backups/

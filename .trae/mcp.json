@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "smart-editor": {
+      "command": "/opt/homebrew/bin/node",
+      "args": [
+        "/Users/jiahao/Desktop/自动招聘/招聘项目/tools/smart-editor-mcp/index.js"
+      ],
+      "env": {
+        "ALLOWED_ROOT": "/Users/jiahao"
+      }
+    }
+  }
+}
