@@ -1,0 +1,32 @@
+.store-app-read-preparation .compact-card-heading {
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.store-app-read-preparation .status-chip {
+  height: auto;
+  max-width: 100%;
+  white-space: normal;
+}
+
+.store-app-read-preparation .platform-detail-actions {
+  margin-block: 12px;
+}
+
+.store-app-read-preparation p {
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+
+.store-app-read-preparation .shop-table {
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+}
+
+.store-app-read-preparation .shop-table :is(th, td) {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

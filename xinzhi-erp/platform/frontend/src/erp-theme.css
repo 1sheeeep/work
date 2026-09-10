@@ -1,0 +1,302 @@
+/* All themes share structure and semantic status colors; only presentation varies. */
+:root {
+  --erp-color-primary: #795b43;
+  --erp-color-primary-hover: #604631;
+  --erp-color-primary-soft: #f3e7d5;
+  --erp-color-page: #fcfaf6;
+  --erp-color-surface: #ffffff;
+  --erp-color-surface-muted: #faf7f1;
+  --erp-color-navigation: #faf7f1;
+  --erp-color-navigation-border: var(--erp-color-border);
+  --erp-color-text: #35312d;
+  --erp-color-text-secondary: #655e54;
+  --erp-color-text-muted: #6a6055;
+  --erp-color-icon: #6a6055;
+  --erp-color-border: #e8e1d7;
+  --erp-color-border-strong: #928577;
+  --erp-color-danger: #a34136;
+  --erp-color-danger-soft: #faeae4;
+  --erp-color-focus: var(--erp-color-primary);
+  --erp-color-row-hover: var(--erp-color-surface-muted);
+  --erp-color-row-selected: var(--erp-color-primary-soft);
+  --erp-color-dialog: #fdfaf5;
+  --erp-overlay: rgb(57 48 38 / 24%);
+  --erp-control-radius: 9px;
+  --erp-panel-radius: 14px;
+  --erp-shadow-panel: 0 2px 5px rgb(57 48 38 / 3%);
+  --erp-shadow-dialog: 0 24px 80px rgb(57 48 38 / 18%);
+  --color-success: #49633f;
+  --color-success-soft: #e4ebdc;
+  --color-warning: #865b27;
+  --color-warning-soft: #f7eddc;
+  --color-error: #a34136;
+  --color-error-soft: #faeae4;
+  /* Existing report and detail-page aliases share the same color contract. */
+  --surface: var(--erp-color-surface);
+  --surface-subtle: var(--erp-color-surface-muted);
+  --surface-selected: var(--erp-color-row-selected);
+  --border-color: var(--erp-color-border);
+  --text-primary: var(--erp-color-text);
+  --text-secondary: var(--erp-color-text-secondary);
+  --text-muted: var(--erp-color-text-muted);
+  --accent: var(--erp-color-primary);
+  --color-page: var(--erp-color-page);
+  color: var(--erp-color-text);
+  background: var(--erp-color-page);
+}
+
+:root[data-erp-theme="peach"] {
+  --erp-color-primary: #945443;
+  --erp-color-primary-hover: #754033;
+  --erp-color-primary-soft: #f8e2d8;
+  --erp-color-page: #fff9f6;
+  --erp-color-surface-muted: #fcf4ef;
+  --erp-color-navigation: #fcf4ef;
+  --erp-color-border: #ecddd5;
+  --erp-color-dialog: #fffaf7;
+}
+:root[data-erp-theme="rose"] {
+  --erp-color-primary: #86555e;
+  --erp-color-primary-hover: #6c424b;
+  --erp-color-primary-soft: #f0dfdd;
+  --erp-color-page: #fcf9f8;
+  --erp-color-surface-muted: #faf3f3;
+  --erp-color-navigation: #faf3f3;
+  --erp-color-border: #e9dcde;
+  --erp-color-dialog: #fdf9f9;
+}
+:root[data-erp-theme="vanilla"] {
+  --erp-color-primary: #806035;
+  --erp-color-primary-hover: #654a27;
+  --erp-color-primary-soft: #f5eccf;
+  --erp-color-page: #fcfbf5;
+  --erp-color-surface-muted: #faf7ec;
+  --erp-color-navigation: #faf7ec;
+  --erp-color-border: #e8e2cc;
+  --erp-color-dialog: #fdfbf4;
+}
+:root[data-erp-theme="slate"] {
+  --erp-color-primary: #465f83;
+  --erp-color-primary-hover: #334965;
+  --erp-color-primary-soft: #e5ebf4;
+  --erp-color-page: #f7f8fa;
+  --erp-color-surface-muted: #f3f5f8;
+  --erp-color-navigation: #f3f5f8;
+  --erp-color-border: #dde2e9;
+  --erp-color-dialog: #fafbfd;
+}
+:root[data-erp-theme="teal"] {
+  --erp-color-primary: #286c68;
+  --erp-color-primary-hover: #1d5350;
+  --erp-color-primary-soft: #dfefeb;
+  --erp-color-page: #fafaf7;
+  --erp-color-surface-muted: #f2f7f5;
+  --erp-color-navigation: #f2f7f5;
+  --erp-color-border: #dce6e1;
+  --erp-color-dialog: #f8fcfa;
+}
+:root[data-erp-theme="blue"] {
+  --erp-color-primary: #245ecc;
+  --erp-color-primary-hover: #19469e;
+  --erp-color-primary-soft: #e7efff;
+  --erp-color-page: #f8fafc;
+  --erp-color-surface-muted: #f2f6fb;
+  --erp-color-navigation: #f2f6fb;
+  --erp-color-border: #dce3ee;
+  --erp-color-dialog: #fafcff;
+}
+:root[data-erp-theme="graphite"] {
+  --erp-color-primary: #454b54;
+  --erp-color-primary-hover: #30353c;
+  --erp-color-primary-soft: #e8eaed;
+  --erp-color-page: #f7f7f7;
+  --erp-color-surface-muted: #f4f4f4;
+  --erp-color-navigation: #f4f4f4;
+  --erp-color-border: #e0e1e3;
+  --erp-color-dialog: #fafafa;
+}
+:root[data-erp-theme="sage"] {
+  --erp-color-primary: #4f694a;
+  --erp-color-primary-hover: #3c5338;
+  --erp-color-primary-soft: #e4ebde;
+  --erp-color-page: #f7f8f5;
+  --erp-color-surface-muted: #f6f8f2;
+  --erp-color-navigation: #f4f6ef;
+  --erp-color-border: #e0e5da;
+  --erp-color-dialog: #f8faf4;
+}
+:root:is([data-erp-theme="slate"], [data-erp-theme="teal"], [data-erp-theme="blue"], [data-erp-theme="graphite"], [data-erp-theme="sage"]) {
+  --erp-color-text: #303640;
+  --erp-color-text-secondary: #59616c;
+  --erp-color-text-muted: #606771;
+  --erp-color-icon: #606771;
+  --erp-color-border-strong: #858d99;
+}
+
+.erp-theme-preference { display: grid; gap: 8px; min-width: 0; padding: 10px 0; }
+.erp-theme-label { display: flex; align-items: center; gap: 8px; }
+.erp-theme-swatches { margin-left: auto; display: flex; gap: 4px; }
+.erp-theme-swatches i { width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--erp-color-border-strong); background: var(--erp-color-page); }
+.erp-theme-swatches i:nth-child(2) { background: var(--erp-color-primary-soft); }
+.erp-theme-swatches i:nth-child(3) { background: var(--erp-color-primary); }
+.erp-theme-preference select { width: 100%; min-width: 0; }
+.erp-theme-preference small { color: var(--erp-color-text-muted); font-size: 12px; line-height: 1.5; }
+
+html .app-shell :is(.brand strong, .top-module-link, .breadcrumb a, label, legend, th) {
+  color: var(--erp-color-text);
+}
+html .app-shell .topbar { background: var(--erp-color-surface); padding-inline: 18px; }
+html .app-shell .top-module-nav { gap: 4px; }
+html .app-shell .top-module-link.active {
+  color: var(--erp-color-primary-hover);
+  background: var(--erp-color-primary-soft);
+  box-shadow: none;
+}
+html .app-shell :is(.sidebar, .sidebar-heading) {
+  background: var(--erp-color-navigation);
+  border-color: var(--erp-color-navigation-border);
+}
+html .app-shell .sidebar-heading { min-height: 46px; }
+html .app-shell .sidebar-navigation-scroll { padding-top: 10px; }
+html .app-shell .navigation-group-items .nav-item { border-radius: 9px; margin-block: 2px; }
+html .app-shell .navigation-group-items .nav-item.active {
+  color: var(--erp-color-primary-hover);
+  background: var(--erp-color-primary-soft);
+  font-weight: 600;
+  box-shadow: none;
+}
+html .app-shell :is(.navigation-group-items .nav-item:hover, .navigation-group-toggle:hover) { background: var(--erp-color-row-hover); }
+html .app-shell :is(.navigation-group-toggle svg, .nav-item svg, .breadcrumb-separator) { color: var(--erp-color-icon); }
+html .app-shell .breadcrumb { min-height: 44px; padding-inline: 18px; }
+html .app-shell .main-content { padding: 0 18px 34px; }
+
+html .app-shell .erp-filter-panel {
+  padding: 10px 14px;
+  border: 1px solid var(--erp-color-border);
+  border-radius: 14px;
+  background: var(--erp-color-surface);
+}
+html .app-shell .erp-filter-row { border-color: var(--erp-color-border); }
+html .app-shell .erp-filter-options { gap: 8px; }
+html .app-shell .erp-filter-options label {
+  gap: 5px;
+  padding: 5px 9px;
+  border-radius: 16px;
+  color: var(--erp-color-text-secondary);
+}
+html .app-shell .erp-filter-options label:has(input:checked) {
+  color: var(--erp-color-primary-hover);
+  background: var(--erp-color-primary-soft);
+}
+html .app-shell :is(.button-secondary, .secondary-button) {
+  border-color: var(--erp-color-border-strong);
+  color: var(--erp-color-text);
+  background: var(--erp-color-surface-muted);
+}
+html .app-shell :is(.button-secondary, .secondary-button):hover:not(:disabled) {
+  border-color: var(--erp-color-primary);
+  background: var(--erp-color-primary-soft);
+}
+html .app-shell :is(.erp-operation-bar, .pagination) {
+  padding: 10px 12px;
+  background: var(--erp-color-surface);
+  border-color: var(--erp-color-border);
+}
+html .app-shell .erp-data-workbench {
+  margin-top: 12px;
+  border: 1px solid var(--erp-color-border);
+  border-radius: 14px;
+  background: var(--erp-color-surface);
+}
+html .app-shell .erp-operation-bar { border-radius: 14px 14px 0 0; }
+html .app-shell .erp-data-workbench > .shop-table-scroll { border-inline: 0; }
+html .app-shell th { background: var(--erp-color-surface-muted); }
+html .app-shell th .text-button { color: var(--erp-color-text-secondary); }
+html .app-shell td { padding-block: 12px; border-color: var(--erp-color-border); font-variant-numeric: tabular-nums; }
+html .app-shell .shop-table td small { color: var(--erp-color-text-muted); }
+html .app-shell .shop-table code { color: var(--erp-color-primary); background: var(--erp-color-surface-muted); }
+html .app-shell .product-list-thumbnail {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  color: var(--erp-color-text-muted);
+  background: var(--erp-color-surface-muted);
+}
+html .app-shell .pagination { border-radius: 0 0 14px 14px; }
+html .app-shell .erp-pagination-selection .text-button { border: 0; border-radius: 8px; color: var(--erp-color-primary); background: transparent; }
+html .app-shell :is(.account-menu-trigger, .quick-navigation-trigger) { background: var(--erp-color-surface-muted); border-color: var(--erp-color-border); }
+html .app-shell :is(.erp-action-menu-popover, .account-menu-popover) { border-color: var(--erp-color-border); background: var(--erp-color-surface); }
+html .app-shell :is(.dialog-backdrop, .advanced-filter-overlay) { background: var(--erp-overlay); backdrop-filter: blur(4px); }
+html .app-shell :is(.write-dialog, .advanced-filter-dialog) {
+  border: 1px solid var(--erp-color-border);
+  border-radius: 22px;
+  color: var(--erp-color-text);
+  background: var(--erp-color-dialog);
+  box-shadow: var(--erp-shadow-dialog);
+}
+html .app-shell .write-dialog > .table-heading {
+  min-height: 64px;
+  border-bottom-color: var(--erp-color-border);
+  background: var(--erp-color-dialog);
+}
+html .app-shell .write-dialog > p { color: var(--erp-color-text-secondary); font-size: 13px; line-height: 1.7; }
+html .app-shell .write-dialog h2 { color: var(--erp-color-text); }
+html .app-shell .write-dialog .product-master-checkboxes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+  padding: 16px;
+  border-radius: 14px;
+  background: var(--erp-color-surface);
+  margin-block: 16px;
+}
+html .app-shell .write-dialog .product-master-checkboxes label {
+  display: flex;
+  min-width: 0;
+  gap: 7px;
+  align-items: center;
+  white-space: normal;
+}
+html .app-shell .write-dialog > label { display: grid; gap: 8px; margin-block: 14px; }
+html .app-shell .write-dialog .form-actions { padding-block: 16px 4px; background: transparent; border-color: var(--erp-color-border); }
+html .app-shell .write-dialog .form-actions .button { min-height: 40px; padding-inline: 20px; }
+html .app-shell :is(.shop-table-scroll, .write-dialog) { scrollbar-color: var(--erp-color-border-strong) transparent; }
+
+/* Portalled forms and non-product modules share the modal surfaces too.
+ * Do not change their widths, scrolling regions, footer position or focus flow. */
+html :is(.warehouse-dialog, .manual-modal, .platform-dialog, .credential-dialog, .quick-navigation-dialog) {
+  border-color: var(--erp-color-border);
+  border-radius: 20px;
+  color: var(--erp-color-text);
+  background: var(--erp-color-dialog);
+  box-shadow: var(--erp-shadow-dialog);
+}
+html :is(.warehouse-dialog, .manual-modal, .platform-dialog, .credential-dialog, .quick-navigation-dialog) > :is(header, .table-heading, .manual-modal-header, .platform-dialog-heading, .manual-modal-footer, .form-actions, footer) {
+  border-color: var(--erp-color-border);
+  color: var(--erp-color-text);
+  background: var(--erp-color-dialog);
+}
+html :is(.warehouse-dialog-backdrop, .manual-modal-backdrop, .modal-backdrop),
+html .quick-navigation-dialog::backdrop { background: var(--erp-overlay); backdrop-filter: blur(4px); }
+html :is(.login-card, .settings-page-section, .platform-section, .warehouse-archive-card, .manual-table-section) {
+  border-color: var(--erp-color-border);
+  border-radius: var(--erp-panel-radius);
+}
+html .app-shell :is(.manual-pagination, .supplier-pagination, .order-list-utilities, .order-selection-toolbar) { background: var(--erp-color-surface-muted); }
+html .app-shell :is(.manual-table-scroll, .order-table-scroll, .warehouse-table-scroll, .table-scroll, .warehouse-archive-table-wrap) { scrollbar-color: var(--erp-color-border-strong) transparent; }
+
+/* Sign-in is part of the same ERP, not a separate dark promotional theme. */
+html .login-intro { color: var(--erp-color-text); background: var(--erp-color-navigation); }
+html .login-intro :is(.eyebrow-light, .login-benefits li, .login-benefits svg),
+html .login-intro > div:nth-child(2) > p:last-child { color: var(--erp-color-text-secondary); }
+html .login-benefits strong { color: var(--erp-color-text); }
+html .login-intro::after { border-color: var(--erp-color-border); box-shadow: 0 0 0 60px rgb(121 91 67 / 4%), 0 0 0 120px rgb(121 91 67 / 3%); }
+html .login-card { background: var(--erp-color-surface); box-shadow: var(--erp-shadow-panel); }
+
+@media (max-width: 720px) {
+  html .app-shell .topbar { padding-inline: 10px; }
+  html .app-shell .main-content { padding: 0 8px 40px; }
+  html .app-shell .erp-filter-panel { padding: 10px; }
+  html .app-shell .erp-filter-options { flex-wrap: wrap; }
+  html .app-shell .write-dialog { border-radius: 20px; }
+}

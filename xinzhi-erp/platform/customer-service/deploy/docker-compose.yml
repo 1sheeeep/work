@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: shopify-support-postgres
+    environment:
+      POSTGRES_USER: support
+      POSTGRES_PASSWORD: support
+      POSTGRES_DB: shopify_support
+    ports:
+      - "54329:5432"
+    volumes:
+      - support-postgres-data:/var/lib/postgresql/data
+      # Fresh synthetic data directories only; entrypoint init never upgrades a named volume.
+      - ./postgres-init/001_customer_service_schema_roles.sql:/docker-entrypoint-initdb.d/001_customer_service_schema_roles.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U support -d shopify_support"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  support-postgres-data:

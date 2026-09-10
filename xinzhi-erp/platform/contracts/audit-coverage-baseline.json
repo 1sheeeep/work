@@ -1,0 +1,1923 @@
+{
+  "schemaVersion": 1,
+  "apiContract": "platform/contracts/api-contract-baseline.json",
+  "attemptedEvidence": {
+    "source": "platform/backend/src/main/java/cn/xzkj/erp/platformadmin/security/PlatformAdminTenantWriteAuditFilter.java",
+    "action": "platform_admin.tenant_write_attempted",
+    "semantics": "attempted-only",
+    "countsAsTransactionalSuccess": false
+  },
+  "operations": [
+    {
+      "operationId": "CustomerServiceEntryController#issue",
+      "classification": "tenant-security-event",
+      "controllerCall": "issue",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/customer/service/CustomerServiceEntryGrantService.java",
+      "evidenceMethod": "issue",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "CUSTOMER_SERVICE_ENTRY_GRANT_ISSUED", "value": "customer_service.entry_grant.issued" }],
+      "resourceTypes": ["customer_service_entry_grant"]
+    },
+    {
+      "operationId": "CustomerServiceEntryController#redeem",
+      "classification": "tenant-security-event",
+      "controllerCall": "redeem",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/customer/service/CustomerServiceEntryGrantService.java",
+      "evidenceMethod": "redeem",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "CUSTOMER_SERVICE_ENTRY_GRANT_REDEEMED", "value": "customer_service.entry_grant.redeemed" }],
+      "resourceTypes": ["customer_service_entry_grant"]
+    },
+    {
+      "operationId": "InventoryCountController#approve",
+      "classification": "tenant-business-success",
+      "controllerCall": "approve",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/inventory/service/InventoryCountService.java",
+      "evidenceMethod": "approve",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "APPROVED", "value": "inventory.count.approved" }],
+      "resourceTypes": ["inventory_count"]
+    },
+    {
+      "operationId": "InventoryCountController#cancel",
+      "classification": "tenant-business-success",
+      "controllerCall": "cancel",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/inventory/service/InventoryCountService.java",
+      "evidenceMethod": "cancel",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "CANCELLED", "value": "inventory.count.cancelled" }],
+      "resourceTypes": ["inventory_count"]
+    },
+    {
+      "operationId": "InventoryCountController#create",
+      "classification": "tenant-business-success",
+      "controllerCall": "create",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/inventory/service/InventoryCountService.java",
+      "evidenceMethod": "create",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "CREATED", "value": "inventory.count.created" }],
+      "resourceTypes": ["inventory_count"]
+    },
+    {
+      "operationId": "InventoryCountController#reject",
+      "classification": "tenant-business-success",
+      "controllerCall": "reject",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/inventory/service/InventoryCountService.java",
+      "evidenceMethod": "reject",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "REJECTED", "value": "inventory.count.rejected" }],
+      "resourceTypes": ["inventory_count"]
+    },
+    {
+      "operationId": "InventoryCountController#submit",
+      "classification": "tenant-business-success",
+      "controllerCall": "submit",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/inventory/service/InventoryCountService.java",
+      "evidenceMethod": "submit",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "SUBMITTED", "value": "inventory.count.submitted" }],
+      "resourceTypes": ["inventory_count"]
+    },
+    {
+      "operationId": "InventoryController#adjust",
+      "classification": "tenant-business-success",
+      "controllerCall": "adjust",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/inventory/service/InventoryService.java",
+      "evidenceMethod": "adjust",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "INVENTORY_EVENT_RECORDED", "value": "inventory.event.recorded" }],
+      "resourceTypes": ["inventory_event"]
+    },
+    {
+      "operationId": "InventoryController#reverse",
+      "classification": "tenant-business-success",
+      "controllerCall": "reverse",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/inventory/service/InventoryService.java",
+      "evidenceMethod": "reverse",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "INVENTORY_EVENT_RECORDED", "value": "inventory.event.recorded" }],
+      "resourceTypes": ["inventory_event"]
+    },
+    {
+      "operationId": "InventoryShopifyController#enqueue",
+      "classification": "tenant-business-success",
+      "controllerCall": "enqueue",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/inventory/service/ShopifyInventoryPublicationService.java",
+      "evidenceMethod": "enqueue",
+      "recorder": "security-atomic",
+      "actions": [
+        {
+          "symbol": "QUEUED",
+          "value": "inventory.shopify.publish.queued"
+        }
+      ],
+      "resourceTypes": [
+        "shopify_inventory_publication"
+      ]
+    },
+    {
+      "operationId": "ManualMovementController#batchCancel",
+      "classification": "tenant-business-success",
+      "controllerCall": "batchCancel",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/warehouse/operations/service/ManualMovementService.java",
+      "evidenceMethod": "cancel",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "CANCELLED", "value": "inventory.manual.cancelled" }],
+      "resourceTypes": ["inventory_manual_movement"]
+    },
+    {
+      "operationId": "ManualMovementController#batchPost",
+      "classification": "tenant-business-success",
+      "controllerCall": "batchPost",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/warehouse/operations/service/ManualMovementService.java",
+      "evidenceMethod": "post",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "POSTED", "value": "inventory.manual.posted" }],
+      "resourceTypes": ["inventory_manual_movement"]
+    },
+    {
+      "operationId": "ManualMovementController#batchReview",
+      "classification": "tenant-business-success",
+      "controllerCall": "batchReview",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/warehouse/operations/service/ManualMovementService.java",
+      "evidenceMethod": "review",
+      "recorder": "security-atomic",
+      "actions": [
+        { "symbol": "APPROVED", "value": "inventory.manual.approved" },
+        { "symbol": "REJECTED", "value": "inventory.manual.rejected" }
+      ],
+      "resourceTypes": ["inventory_manual_movement"]
+    },
+    {
+      "operationId": "ManualMovementController#cancel",
+      "classification": "tenant-business-success",
+      "controllerCall": "cancel",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/warehouse/operations/service/ManualMovementService.java",
+      "evidenceMethod": "cancel",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "CANCELLED", "value": "inventory.manual.cancelled" }],
+      "resourceTypes": ["inventory_manual_movement"]
+    },
+    {
+      "operationId": "ManualMovementController#create",
+      "classification": "tenant-business-success",
+      "controllerCall": "create",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/warehouse/operations/service/ManualMovementService.java",
+      "evidenceMethod": "create",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "CREATED", "value": "inventory.manual.created" }],
+      "resourceTypes": ["inventory_manual_movement"]
+    },
+    {
+      "operationId": "ManualMovementController#createType",
+      "classification": "tenant-business-success",
+      "controllerCall": "saveType",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/warehouse/operations/service/ManualMovementService.java",
+      "evidenceMethod": "saveType",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "TYPE_SAVED", "value": "inventory.manual.type.saved" }],
+      "resourceTypes": ["inventory_manual_movement_configuration"]
+    },
+    {
+      "operationId": "ManualMovementController#post",
+      "classification": "tenant-business-success",
+      "controllerCall": "post",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/warehouse/operations/service/ManualMovementService.java",
+      "evidenceMethod": "post",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "POSTED", "value": "inventory.manual.posted" }],
+      "resourceTypes": ["inventory_manual_movement"]
+    },
+    {
+      "operationId": "ManualMovementController#reverse",
+      "classification": "tenant-business-success",
+      "controllerCall": "reverse",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/warehouse/operations/service/ManualMovementService.java",
+      "evidenceMethod": "reverse",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "REVERSED", "value": "inventory.manual.reversed" }],
+      "resourceTypes": ["inventory_manual_movement"]
+    },
+    {
+      "operationId": "ManualMovementController#review",
+      "classification": "tenant-business-success",
+      "controllerCall": "review",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/warehouse/operations/service/ManualMovementService.java",
+      "evidenceMethod": "review",
+      "recorder": "security-atomic",
+      "actions": [
+        { "symbol": "APPROVED", "value": "inventory.manual.approved" },
+        { "symbol": "REJECTED", "value": "inventory.manual.rejected" }
+      ],
+      "resourceTypes": ["inventory_manual_movement"]
+    },
+    {
+      "operationId": "ManualMovementController#saveSettings",
+      "classification": "tenant-business-success",
+      "controllerCall": "saveSettings",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/warehouse/operations/service/ManualMovementService.java",
+      "evidenceMethod": "saveSettings",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "SETTINGS_UPDATED", "value": "inventory.manual.settings.updated" }],
+      "resourceTypes": ["inventory_manual_movement_configuration"]
+    },
+    {
+      "operationId": "ManualMovementController#submit",
+      "classification": "tenant-business-success",
+      "controllerCall": "submit",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/warehouse/operations/service/ManualMovementService.java",
+      "evidenceMethod": "submit",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "SUBMITTED", "value": "inventory.manual.submitted" }],
+      "resourceTypes": ["inventory_manual_movement"]
+    },
+    {
+      "operationId": "ManualMovementController#update",
+      "classification": "tenant-business-success",
+      "controllerCall": "update",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/warehouse/operations/service/ManualMovementService.java",
+      "evidenceMethod": "update",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "UPDATED", "value": "inventory.manual.updated" }],
+      "resourceTypes": ["inventory_manual_movement"]
+    },
+    {
+      "operationId": "ManualMovementController#updateType",
+      "classification": "tenant-business-success",
+      "controllerCall": "saveType",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/warehouse/operations/service/ManualMovementService.java",
+      "evidenceMethod": "saveType",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "TYPE_SAVED", "value": "inventory.manual.type.saved" }],
+      "resourceTypes": ["inventory_manual_movement_configuration"]
+    },
+    {
+      "operationId": "AuthController#changePassword",
+      "classification": "tenant-security-event",
+      "controllerCall": "changeOwnPassword",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/iam/application/IamAdministrationService.java",
+      "evidenceMethod": "changeOwnPassword",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "USER_PASSWORD_CHANGED", "value": "iam.user.password_changed" }],
+      "resourceTypes": ["user"]
+    },
+    {
+      "operationId": "AuthController#login",
+      "classification": "tenant-security-event",
+      "controllerCall": "login",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/iam/application/LoginService.java",
+      "evidenceMethod": "login",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "LOGIN_SUCCEEDED", "value": "iam.login.succeeded" }],
+      "resourceTypes": ["auth_session"]
+    },
+    {
+      "operationId": "AuthController#logout",
+      "classification": "tenant-security-event",
+      "controllerCall": "logout",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/iam/application/LoginService.java",
+      "evidenceMethod": "logout",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "SESSION_REVOKED", "value": "iam.session.revoked" }],
+      "resourceTypes": ["auth_session"]
+    },
+    {
+      "operationId": "AuthSessionController#revoke",
+      "classification": "tenant-security-event",
+      "controllerCall": "revokeOwnSession",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/iam/application/SessionManagementService.java",
+      "evidenceMethod": "revokeOwnSession",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "SESSION_REVOKED", "value": "iam.session.revoked" }],
+      "resourceTypes": ["auth_session"]
+    },
+    {
+      "operationId": "IamAdminController#changeMemberStatus",
+      "classification": "tenant-iam-success",
+      "controllerCall": "changeMemberStatus",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/iam/application/IamAdministrationService.java",
+      "evidenceMethod": "changeMemberStatus",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "USER_STATUS_CHANGED", "value": "iam.user.status_changed" }],
+      "resourceTypes": ["user"]
+    },
+    {
+      "operationId": "IamAdminController#createMember",
+      "classification": "tenant-iam-success",
+      "controllerCall": "createMember",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/iam/application/IamAdministrationService.java",
+      "evidenceMethod": "createMember",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "USER_CREATED", "value": "iam.user.created" }],
+      "resourceTypes": ["user"]
+    },
+    {
+      "operationId": "IamAdminController#createRole",
+      "classification": "tenant-iam-success",
+      "controllerCall": "createRole",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/iam/application/IamAdministrationService.java",
+      "evidenceMethod": "createRole",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "ROLE_CREATED", "value": "iam.role.created" }],
+      "resourceTypes": ["role"]
+    },
+    {
+      "operationId": "IamAdminController#replaceMemberRoles",
+      "classification": "tenant-iam-success",
+      "controllerCall": "replaceMemberRoles",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/iam/application/IamAdministrationService.java",
+      "evidenceMethod": "replaceMemberRoles",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "USER_ROLES_REPLACED", "value": "iam.user.roles_replaced" }],
+      "resourceTypes": ["user"]
+    },
+    {
+      "operationId": "IamAdminController#replaceRolePermissions",
+      "classification": "tenant-iam-success",
+      "controllerCall": "replaceRolePermissions",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/iam/application/IamAdministrationService.java",
+      "evidenceMethod": "replaceRolePermissions",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "ROLE_PERMISSIONS_REPLACED", "value": "iam.role.permissions_replaced" }],
+      "resourceTypes": ["role"]
+    },
+    {
+      "operationId": "IamAdminController#replaceWarehouseScope",
+      "classification": "tenant-iam-success",
+      "controllerCall": "replace",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/iam/warehousescope/WarehouseScopeService.java",
+      "evidenceMethod": "replace",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "WAREHOUSE_SCOPE_UPDATED", "value": "iam.warehouse_scope.updated" }],
+      "resourceTypes": ["user_warehouse_scope"]
+    },
+    {
+      "operationId": "IamAdminController#resetMemberPassword",
+      "classification": "tenant-iam-success",
+      "controllerCall": "resetMemberPassword",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/iam/application/IamAdministrationService.java",
+      "evidenceMethod": "resetMemberPassword",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "USER_PASSWORD_RESET_BY_ADMIN", "value": "iam.user.password_reset_by_admin" }],
+      "resourceTypes": ["user"]
+    },
+    {
+      "operationId": "IamAdminController#updateMember",
+      "classification": "tenant-iam-success",
+      "controllerCall": "updateMember",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/iam/application/IamAdministrationService.java",
+      "evidenceMethod": "updateMember",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "USER_UPDATED", "value": "iam.user.updated" }],
+      "resourceTypes": ["user"]
+    },
+    {
+      "operationId": "IamAdminController#updateRole",
+      "classification": "tenant-iam-success",
+      "controllerCall": "updateRole",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/iam/application/IamAdministrationService.java",
+      "evidenceMethod": "updateRole",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "ROLE_UPDATED", "value": "iam.role.updated" }],
+      "resourceTypes": ["role"]
+    },
+    {
+      "operationId": "OrderCenterController#changeLineSkuMatch",
+      "classification": "tenant-business-success",
+      "controllerCall": "changeLineSkuMatch",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/order/service/OrderCenterService.java",
+      "evidenceMethod": "changeLineSkuMatch",
+      "recorder": "security-atomic",
+      "actions": [
+        { "symbol": "LINE_SKU_MATCHED", "value": "order.line.sku_matched" },
+        { "symbol": "LINE_SKU_UNMATCHED", "value": "order.line.sku_unmatched" }
+      ],
+      "resourceTypes": ["order_line"]
+    },
+    {
+      "operationId": "OrderCenterController#changeStatus",
+      "classification": "tenant-business-success",
+      "controllerCall": "changeStatus",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/order/service/OrderCenterService.java",
+      "evidenceMethod": "changeStatus",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "STATUS_CHANGED", "value": "order.status_changed" }],
+      "resourceTypes": ["order"]
+    },
+    {
+      "operationId": "OrderCenterController#createOrder",
+      "classification": "tenant-business-success",
+      "controllerCall": "createOrder",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/order/service/OrderCenterService.java",
+      "evidenceMethod": "createOrder",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "CREATED", "value": "order.created" }],
+      "resourceTypes": ["order"]
+    },
+    {
+      "operationId": "OrderCenterController#importShopifyCatalog",
+      "classification": "tenant-business-success",
+      "controllerCall": "importSelectedOrders",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/order/service/OrderCenterService.java",
+      "evidenceMethod": "createOrder",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "CREATED", "value": "order.created" }],
+      "resourceTypes": ["order"]
+    },
+    {
+      "operationId": "PasswordCredentialAdminController#issue",
+      "classification": "tenant-iam-success",
+      "controllerCall": "issue",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/iam/application/PasswordCredentialService.java",
+      "evidenceMethod": "issue",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "PASSWORD_CREDENTIAL_ISSUED", "value": "iam.user.password_credential_issued" }],
+      "resourceTypes": ["user"]
+    },
+    {
+      "operationId": "PasswordCredentialAdminController#revoke",
+      "classification": "tenant-iam-success",
+      "controllerCall": "revoke",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/iam/application/PasswordCredentialService.java",
+      "evidenceMethod": "revoke",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "PASSWORD_CREDENTIAL_REVOKED", "value": "iam.user.password_credential_revoked" }],
+      "resourceTypes": ["user"]
+    },
+    {
+      "operationId": "PasswordCredentialExchangeController#redeem",
+      "classification": "tenant-security-event",
+      "controllerCall": "redeem",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/iam/application/PasswordCredentialService.java",
+      "evidenceMethod": "redeem",
+      "recorder": "security-atomic",
+      "actions": [
+        { "symbol": "USER_ACTIVATED", "value": "iam.user.activated" },
+        { "symbol": "USER_PASSWORD_RESET", "value": "iam.user.password_reset" }
+      ],
+      "resourceTypes": ["user"]
+    },
+    {
+      "operationId": "PlatformAdminController#activateSystemAdmin",
+      "classification": "platform-admin-success",
+      "controllerCall": "activate",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platformadmin/application/PlatformAdminManagementService.java",
+      "evidenceMethod": "activate",
+      "recorder": "platform-atomic",
+      "actions": [{ "symbol": "SYSTEM_ADMIN_STATUS_CHANGED", "value": "platform_admin.system_admin.status_changed" }],
+      "resourceTypes": ["system_admin"]
+    },
+    {
+      "operationId": "PlatformAdminController#changeOwnPassword",
+      "classification": "platform-security-event",
+      "controllerCall": "changeOwnPassword",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platformadmin/application/PlatformAdminAuthService.java",
+      "evidenceMethod": "changeOwnPassword",
+      "recorder": "platform-atomic",
+      "actions": [{ "symbol": "PASSWORD_CHANGED", "value": "platform_admin.password_changed" }],
+      "resourceTypes": ["system_admin"]
+    },
+    {
+      "operationId": "PlatformAdminController#createEnterpriseAdmin",
+      "classification": "platform-admin-success",
+      "controllerCall": "createEnterpriseAdmin",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platformadmin/application/PlatformTenantManagementService.java",
+      "evidenceMethod": "createEnterpriseAdmin",
+      "recorder": "platform-atomic",
+      "actions": [{ "symbol": "ENTERPRISE_ADMIN_CREATED", "value": "platform_admin.enterprise_admin.created" }],
+      "resourceTypes": ["user"]
+    },
+    {
+      "operationId": "PlatformAdminController#createSystemAdmin",
+      "classification": "platform-admin-success",
+      "controllerCall": "create",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platformadmin/application/PlatformAdminManagementService.java",
+      "evidenceMethod": "create",
+      "recorder": "platform-atomic",
+      "actions": [{ "symbol": "SYSTEM_ADMIN_CREATED", "value": "platform_admin.system_admin.created" }],
+      "resourceTypes": ["system_admin"]
+    },
+    {
+      "operationId": "PlatformAdminController#createTenant",
+      "classification": "platform-admin-success",
+      "controllerCall": "create",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platformadmin/application/PlatformTenantManagementService.java",
+      "evidenceMethod": "create",
+      "recorder": "platform-atomic",
+      "actions": [{ "symbol": "TENANT_CREATED", "value": "platform_admin.tenant.created" }],
+      "resourceTypes": ["tenant"]
+    },
+    {
+      "operationId": "PlatformAdminController#deleteSystemAdmin",
+      "classification": "platform-admin-success",
+      "controllerCall": "delete",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platformadmin/application/PlatformAdminManagementService.java",
+      "evidenceMethod": "delete",
+      "recorder": "platform-atomic",
+      "actions": [{ "symbol": "SYSTEM_ADMIN_DELETED", "value": "platform_admin.system_admin.deleted" }],
+      "resourceTypes": ["system_admin"]
+    },
+    {
+      "operationId": "PlatformAdminController#deleteTenant",
+      "classification": "platform-admin-success",
+      "controllerCall": "delete",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platformadmin/application/PlatformTenantManagementService.java",
+      "evidenceMethod": "delete",
+      "recorder": "platform-atomic",
+      "actions": [{ "symbol": "TENANT_DELETED", "value": "platform_admin.tenant.deleted" }],
+      "resourceTypes": ["tenant"]
+    },
+    {
+      "operationId": "PlatformAdminController#disableSystemAdmin",
+      "classification": "platform-admin-success",
+      "controllerCall": "disable",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platformadmin/application/PlatformAdminManagementService.java",
+      "evidenceMethod": "disable",
+      "recorder": "platform-atomic",
+      "actions": [{ "symbol": "SYSTEM_ADMIN_STATUS_CHANGED", "value": "platform_admin.system_admin.status_changed" }],
+      "resourceTypes": ["system_admin"]
+    },
+    {
+      "operationId": "PlatformAdminController#enterTenant",
+      "classification": "platform-admin-success",
+      "controllerCall": "enter",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platformadmin/application/PlatformTenantSessionService.java",
+      "evidenceMethod": "enter",
+      "recorder": "platform-atomic",
+      "actions": [{ "symbol": "TENANT_ENTERED", "value": "platform_admin.tenant.entered" }],
+      "resourceTypes": ["platform_admin_tenant_session"]
+    },
+    {
+      "operationId": "PlatformAdminController#issueResetCredential",
+      "classification": "platform-admin-success",
+      "controllerCall": "issueReset",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platformadmin/application/PlatformAdminCredentialService.java",
+      "evidenceMethod": "issue",
+      "recorder": "platform-atomic",
+      "actions": [{ "symbol": "CREDENTIAL_ISSUED", "value": "platform_admin.password_credential.issued" }],
+      "resourceTypes": ["system_admin"]
+    },
+    {
+      "operationId": "PlatformAdminController#leaveTenant",
+      "classification": "platform-admin-success",
+      "controllerCall": "logout",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platformadmin/application/PlatformTenantSessionService.java",
+      "evidenceMethod": "logout",
+      "recorder": "platform-atomic",
+      "actions": [{ "symbol": "TENANT_SESSION_REVOKED", "value": "platform_admin.tenant_session.revoked" }],
+      "resourceTypes": ["platform_admin_tenant_session"]
+    },
+    {
+      "operationId": "PlatformAdminController#login",
+      "classification": "platform-security-event",
+      "controllerCall": "login",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platformadmin/application/PlatformAdminAuthService.java",
+      "evidenceMethod": "login",
+      "recorder": "platform-atomic",
+      "actions": [{ "symbol": "LOGIN_SUCCEEDED", "value": "platform_admin.login.succeeded" }],
+      "resourceTypes": ["platform_admin_session"]
+    },
+    {
+      "operationId": "PlatformAdminController#logout",
+      "classification": "platform-security-event",
+      "controllerCall": "logout",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platformadmin/application/PlatformAdminAuthService.java",
+      "evidenceMethod": "logout",
+      "recorder": "platform-atomic",
+      "actions": [{ "symbol": "SESSION_REVOKED", "value": "platform_admin.session.revoked" }],
+      "resourceTypes": ["platform_admin_session"]
+    },
+    {
+      "operationId": "PlatformAdminController#redeem",
+      "classification": "platform-security-event",
+      "controllerCall": "redeem",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platformadmin/application/PlatformAdminCredentialService.java",
+      "evidenceMethod": "redeem",
+      "recorder": "platform-atomic",
+      "actions": [{ "symbol": "CREDENTIAL_REDEEMED", "value": "platform_admin.password_credential.redeemed" }],
+      "resourceTypes": ["system_admin"]
+    },
+    {
+      "operationId": "PlatformAdminController#resetEnterpriseAdminPassword",
+      "classification": "platform-admin-success",
+      "controllerCall": "resetEnterpriseAdminPassword",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platformadmin/application/PlatformTenantManagementService.java",
+      "evidenceMethod": "resetEnterpriseAdminPassword",
+      "recorder": "platform-atomic",
+      "actions": [{ "symbol": "ENTERPRISE_ADMIN_PASSWORD_RESET", "value": "platform_admin.enterprise_admin.password_reset" }],
+      "resourceTypes": ["user"]
+    },
+    {
+      "operationId": "PlatformAdminController#resetSystemAdminPassword",
+      "classification": "platform-admin-success",
+      "controllerCall": "resetPassword",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platformadmin/application/PlatformAdminManagementService.java",
+      "evidenceMethod": "resetPassword",
+      "recorder": "platform-atomic",
+      "actions": [{ "symbol": "SYSTEM_ADMIN_PASSWORD_RESET", "value": "platform_admin.system_admin.password_reset" }],
+      "resourceTypes": ["system_admin"]
+    },
+    {
+      "operationId": "PlatformAdminController#updateSystemAdmin",
+      "classification": "platform-admin-success",
+      "controllerCall": "update",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platformadmin/application/PlatformAdminManagementService.java",
+      "evidenceMethod": "update",
+      "recorder": "platform-atomic",
+      "actions": [{ "symbol": "SYSTEM_ADMIN_UPDATED", "value": "platform_admin.system_admin.updated" }],
+      "resourceTypes": ["system_admin"]
+    },
+    {
+      "operationId": "PlatformAdminController#updateTenant",
+      "classification": "platform-admin-success",
+      "controllerCall": "update",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platformadmin/application/PlatformTenantManagementService.java",
+      "evidenceMethod": "update",
+      "recorder": "platform-atomic",
+      "actions": [{ "symbol": "TENANT_UPDATED", "value": "platform_admin.tenant.updated" }],
+      "resourceTypes": ["tenant"]
+    },
+    {
+      "operationId": "PlatformAdminController#updateEnterpriseAdmin",
+      "classification": "platform-admin-success",
+      "controllerCall": "updateEnterpriseAdmin",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platformadmin/application/PlatformTenantManagementService.java",
+      "evidenceMethod": "updateEnterpriseAdmin",
+      "recorder": "platform-atomic",
+      "actions": [{ "symbol": "ENTERPRISE_ADMIN_UPDATED", "value": "platform_admin.enterprise_admin.updated" }],
+      "resourceTypes": ["user"]
+    },
+    {
+      "operationId": "ProductCenterController#archiveListing",
+      "classification": "tenant-business-success",
+      "controllerCall": "archiveListing",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/product/service/ProductCenterService.java",
+      "evidenceMethod": "archiveListing",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "LISTING_ARCHIVED", "value": "product_listing.archived" }],
+      "resourceTypes": ["product_listing"]
+    },
+    {
+      "operationId": "ProductCenterController#archiveSku",
+      "classification": "tenant-business-success",
+      "controllerCall": "archiveSku",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/product/service/ProductCenterService.java",
+      "evidenceMethod": "archiveSku",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "SKU_ARCHIVED", "value": "product_sku.archived" }],
+      "resourceTypes": ["product_sku"]
+    },
+    {
+      "operationId": "ProductCenterController#archiveSpu",
+      "classification": "tenant-business-success",
+      "controllerCall": "archiveSpuDetails",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/product/service/ProductCenterService.java",
+      "evidenceMethod": "archiveSpuDetails",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "SPU_ARCHIVED", "value": "product_spu.archived" }],
+      "resourceTypes": ["product_spu"]
+    },
+    {
+      "operationId": "ProductCenterController#createListing",
+      "classification": "tenant-business-success",
+      "controllerCall": "createListing",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/product/service/ProductCenterService.java",
+      "evidenceMethod": "createListing",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "LISTING_CREATED", "value": "product_listing.created" }],
+      "resourceTypes": ["product_listing"]
+    },
+    {
+      "operationId": "ProductCenterController#importShopifyCatalogListings",
+      "classification": "tenant-business-success",
+      "controllerCall": "importSelectedListings",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/product/service/ProductCenterService.java",
+      "evidenceMethod": "createListing",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "LISTING_CREATED", "value": "product_listing.created" }],
+      "resourceTypes": ["product_listing"]
+    },
+    {
+      "operationId": "ProductCenterController#createSku",
+      "classification": "tenant-business-success",
+      "controllerCall": "createSkuWithValues",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/product/service/ProductCenterService.java",
+      "evidenceMethod": "createSkuWithValues",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "SKU_CREATED", "value": "product_sku.created" }],
+      "resourceTypes": ["product_sku"]
+    },
+    {
+      "operationId": "ProductCenterController#createSpu",
+      "classification": "tenant-business-success",
+      "controllerCall": "createSpuWithInitialSkus",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/product/service/ProductCenterService.java",
+      "evidenceMethod": "createSpuWithInitialSkus",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "SPU_CREATED", "value": "product_spu.created" }],
+      "resourceTypes": ["product_spu"]
+    },
+    {
+      "operationId": "ProductCenterController#createSpuWithImages",
+      "classification": "tenant-business-success",
+      "controllerCall": "createSpuWithInitialSkus",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/product/service/ProductCenterService.java",
+      "evidenceMethod": "createSpuWithInitialSkus",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "SPU_CREATED", "value": "product_spu.created" }],
+      "resourceTypes": ["product_spu"]
+    },
+    {
+      "operationId": "ProductCenterController#updateListing",
+      "classification": "tenant-business-success",
+      "controllerCall": "updateListing",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/product/service/ProductCenterService.java",
+      "evidenceMethod": "updateListing",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "LISTING_UPDATED", "value": "product_listing.updated" }],
+      "resourceTypes": ["product_listing"]
+    },
+    {
+      "operationId": "ProductCenterController#updateSku",
+      "classification": "tenant-business-success",
+      "controllerCall": "updateSkuWithValues",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/product/service/ProductCenterService.java",
+      "evidenceMethod": "updateSkuWithValues",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "SKU_UPDATED", "value": "product_sku.updated" }],
+      "resourceTypes": ["product_sku"]
+    },
+    {
+      "operationId": "ProductCenterController#updateSpu",
+      "classification": "tenant-business-success",
+      "controllerCall": "updateSpu",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/product/service/ProductCenterService.java",
+      "evidenceMethod": "updateSpu",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "SPU_UPDATED", "value": "product_spu.updated" }],
+      "resourceTypes": ["product_spu"]
+    },
+    {
+      "operationId": "ProductCenterController#updateSpuWithImages",
+      "classification": "tenant-business-success",
+      "controllerCall": "updateSpu",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/product/service/ProductCenterService.java",
+      "evidenceMethod": "updateSpu",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "SPU_UPDATED", "value": "product_spu.updated" }],
+      "resourceTypes": ["product_spu"]
+    },
+    {
+      "operationId": "ProductCenterController#archiveSpuBatch",
+      "classification": "tenant-business-success",
+      "controllerCall": "archiveSpuBatch",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/product/service/ProductCenterService.java",
+      "evidenceMethod": "archiveSpuDetails",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "SPU_ARCHIVED", "value": "product_spu.archived" }],
+      "resourceTypes": ["product_spu"]
+    },
+    {
+      "operationId": "ProductCenterController#importSpus",
+      "classification": "tenant-business-success",
+      "controllerCall": "importSpus",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/product/service/ProductCenterService.java",
+      "evidenceMethod": "createSpuWithInitialSkus",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "SPU_CREATED", "value": "product_spu.created" }],
+      "resourceTypes": ["product_spu"]
+    },
+    {
+      "operationId": "ProductCenterController#importSpuUpdates",
+      "classification": "tenant-business-success",
+      "controllerCall": "importSpuUpdates",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/product/service/ProductCenterService.java",
+      "evidenceMethod": "updateSpu",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "SPU_UPDATED", "value": "product_spu.updated" }],
+      "resourceTypes": ["product_spu"]
+    },
+    {
+      "operationId": "ProductCenterController#reassignSku",
+      "classification": "tenant-business-success",
+      "controllerCall": "reassignSku",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/product/service/ProductCenterService.java",
+      "evidenceMethod": "reassignSku",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "SKU_UPDATED", "value": "product_sku.updated" }],
+      "resourceTypes": ["product_sku"]
+    },
+    {
+      "operationId": "ProductCenterController#updateSpuBatchStatus",
+      "classification": "tenant-business-success",
+      "controllerCall": "updateSpuBatchStatus",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/product/service/ProductCenterService.java",
+      "evidenceMethod": "updateSpuBatchStatus",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "SPU_UPDATED", "value": "product_spu.updated" }],
+      "resourceTypes": ["product_spu"]
+    },
+    {
+      "operationId": "ProductImageController#delete",
+      "classification": "tenant-business-success",
+      "controllerCall": "delete",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/product/service/ProductImageService.java",
+      "evidenceMethod": "delete",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "IMAGE_DELETED", "value": "product_image.deleted" }],
+      "resourceTypes": ["product_image"]
+    },
+    {
+      "operationId": "ProductImageController#replace",
+      "classification": "tenant-business-success",
+      "controllerCall": "replace",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/product/service/ProductImageService.java",
+      "evidenceMethod": "replace",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "IMAGE_REPLACED", "value": "product_image.replaced" }],
+      "resourceTypes": ["product_image"]
+    },
+    {
+      "operationId": "ProductImageController#update",
+      "classification": "tenant-business-success",
+      "controllerCall": "updatePresentation",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/product/service/ProductImageService.java",
+      "evidenceMethod": "updatePresentation",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "IMAGE_UPDATED", "value": "product_image.updated" }],
+      "resourceTypes": ["product_image"]
+    },
+    {
+      "operationId": "ProductImageController#upload",
+      "classification": "tenant-business-success",
+      "controllerCall": "upload",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/product/service/ProductImageService.java",
+      "evidenceMethod": "upload",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "IMAGE_UPLOADED", "value": "product_image.uploaded" }],
+      "resourceTypes": ["product_image"]
+    },
+    {
+      "operationId": "ProductMasterDataController#createCategory",
+      "classification": "tenant-business-success",
+      "controllerCall": "createCategory",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/product/service/ProductMasterDataService.java",
+      "evidenceMethod": "createCategory",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "CATEGORY_CREATED", "value": "product_category.created" }],
+      "resourceTypes": ["product_category"]
+    },
+    {
+      "operationId": "ProductMasterDataController#createPackageMaterial",
+      "classification": "tenant-business-success",
+      "controllerCall": "createPackageMaterial",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/product/service/ProductMasterDataService.java",
+      "evidenceMethod": "createPackageMaterial",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "PACKAGE_MATERIAL_CREATED", "value": "product_package_material.created" }],
+      "resourceTypes": ["product_package_material"]
+    },
+    {
+      "operationId": "ProductMasterDataController#deleteCategory",
+      "classification": "tenant-business-success",
+      "controllerCall": "deleteCategory",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/product/service/ProductMasterDataService.java",
+      "evidenceMethod": "deleteCategory",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "CATEGORY_DELETED", "value": "product_category.deleted" }],
+      "resourceTypes": ["product_category"]
+    },
+    {
+      "operationId": "ProductMasterDataController#deletePackageMaterial",
+      "classification": "tenant-business-success",
+      "controllerCall": "deletePackageMaterial",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/product/service/ProductMasterDataService.java",
+      "evidenceMethod": "deletePackageMaterial",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "PACKAGE_MATERIAL_DELETED", "value": "product_package_material.deleted" }],
+      "resourceTypes": ["product_package_material"]
+    },
+    {
+      "operationId": "ProductMasterDataController#updateCategory",
+      "classification": "tenant-business-success",
+      "controllerCall": "updateCategory",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/product/service/ProductMasterDataService.java",
+      "evidenceMethod": "updateCategory",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "CATEGORY_UPDATED", "value": "product_category.updated" }],
+      "resourceTypes": ["product_category"]
+    },
+    {
+      "operationId": "ProductMasterDataController#updatePackageMaterial",
+      "classification": "tenant-business-success",
+      "controllerCall": "updatePackageMaterial",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/product/service/ProductMasterDataService.java",
+      "evidenceMethod": "updatePackageMaterial",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "PACKAGE_MATERIAL_UPDATED", "value": "product_package_material.updated" }],
+      "resourceTypes": ["product_package_material"]
+    },
+    {
+      "operationId": "ShopCenterController#archivePlatform",
+      "classification": "tenant-business-success",
+      "controllerCall": "archivePlatform",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platform/service/ShopCenterService.java",
+      "evidenceMethod": "archivePlatform",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "PLATFORM_ARCHIVED", "value": "platform.archived" }],
+      "resourceTypes": ["platform"]
+    },
+    {
+      "operationId": "ShopCenterController#archiveShop",
+      "classification": "tenant-business-success",
+      "controllerCall": "archiveShop",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platform/service/ShopCenterService.java",
+      "evidenceMethod": "archiveShop",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "SHOP_ARCHIVED", "value": "shop.archived" }],
+      "resourceTypes": ["shop"]
+    },
+    {
+      "operationId": "ShopCenterController#createPlatform",
+      "classification": "tenant-business-success",
+      "controllerCall": "createPlatform",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platform/service/ShopCenterService.java",
+      "evidenceMethod": "createPlatform",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "PLATFORM_CREATED", "value": "platform.created" }],
+      "resourceTypes": ["platform"]
+    },
+    {
+      "operationId": "ShopCenterController#createShop",
+      "classification": "tenant-business-success",
+      "controllerCall": "createShop",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platform/service/ShopCenterService.java",
+      "evidenceMethod": "createShopWithDisplayName",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "SHOP_CREATED", "value": "shop.created" }],
+      "resourceTypes": ["shop"]
+    },
+    {
+      "operationId": "ShopCenterController#createSyncJob",
+      "classification": "tenant-business-success",
+      "controllerCall": "createSyncJob",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platform/service/ShopCenterService.java",
+      "evidenceMethod": "createSyncJob",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "SYNC_JOB_CREATED", "value": "shop_sync_job.created" }],
+      "resourceTypes": ["shop_sync_job"]
+    },
+    {
+      "operationId": "ShopCenterController#updateAuthorization",
+      "classification": "tenant-business-success",
+      "controllerCall": "updateAuthorization",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platform/service/ShopCenterService.java",
+      "evidenceMethod": "updateAuthorization",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "AUTHORIZATION_UPDATED", "value": "shop_authorization.updated" }],
+      "resourceTypes": ["shop_authorization"]
+    },
+    {
+      "operationId": "ShopCenterController#updateSyncJob",
+      "classification": "tenant-business-success",
+      "controllerCall": "updateSyncJob",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platform/service/ShopCenterService.java",
+      "evidenceMethod": "updateSyncJob",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "SYNC_JOB_STATUS_CHANGED", "value": "shop_sync_job.status_changed" }],
+      "resourceTypes": ["shop_sync_job"]
+    },
+    {
+      "operationId": "ShopCenterController#updateShop",
+      "classification": "tenant-business-success",
+      "controllerCall": "updateShop",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platform/service/ShopCenterService.java",
+      "evidenceMethod": "updateShop",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "SHOP_UPDATED", "value": "shop.updated" }],
+      "resourceTypes": ["shop"]
+    },
+    {
+      "operationId": "ShopChannelController#authorizeShopify",
+      "classification": "tenant-business-success",
+      "controllerCall": "authorizeShopify",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platform/service/ShopChannelService.java",
+      "evidenceMethod": "authorizeShopify",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "SHOPIFY_AUTHORIZE", "value": "shop.channel.shopify.authorize" }],
+      "resourceTypes": ["shop"]
+    },
+    {
+      "operationId": "ShopChannelController#bindEmail",
+      "classification": "tenant-business-success",
+      "controllerCall": "bindEmail",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platform/service/ShopChannelService.java",
+      "evidenceMethod": "bindEmail",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "MAILBOX_AUTHORIZE", "value": "shop.channel.email.authorize" }],
+      "resourceTypes": ["shop"]
+    },
+    {
+      "operationId": "ShopChannelController#deleteShopifyLocationMapping",
+      "classification": "tenant-business-success",
+      "controllerCall": "delete",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platform/service/ShopifyLocationMappingWriter.java",
+      "evidenceMethod": "delete",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "DELETE", "value": "shopify.location_mapping.delete" }],
+      "resourceTypes": ["shopify_location_mapping"]
+    },
+    {
+      "operationId": "ShopChannelController#retryEmail",
+      "classification": "tenant-business-success",
+      "controllerCall": "retryEmail",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platform/service/ShopChannelService.java",
+      "evidenceMethod": "retryEmail",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "MAILBOX_RETRY", "value": "shop.channel.email.retry" }],
+      "resourceTypes": ["shop"]
+    },
+    {
+      "operationId": "ShopChannelController#retryShopify",
+      "classification": "tenant-business-success",
+      "controllerCall": "retryShopify",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platform/service/ShopChannelService.java",
+      "evidenceMethod": "retryShopify",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "SHOPIFY_RETRY", "value": "shop.channel.shopify.retry" }],
+      "resourceTypes": ["shop"]
+    },
+    {
+      "operationId": "ShopChannelController#revokeEmail",
+      "classification": "tenant-business-success",
+      "controllerCall": "revokeEmail",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platform/service/ShopChannelService.java",
+      "evidenceMethod": "revokeEmail",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "MAILBOX_REVOKE", "value": "shop.channel.email.revoke" }],
+      "resourceTypes": ["shop"]
+    },
+    {
+      "operationId": "ShopChannelController#revokeShopify",
+      "classification": "tenant-business-success",
+      "controllerCall": "revokeShopify",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platform/service/ShopChannelService.java",
+      "evidenceMethod": "revokeShopify",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "SHOPIFY_REVOKE", "value": "shop.channel.shopify.revoke" }],
+      "resourceTypes": ["shop"]
+    },
+    {
+      "operationId": "ShopChannelController#upsertShopifyLocationMapping",
+      "classification": "tenant-business-success",
+      "controllerCall": "upsert",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/platform/service/ShopifyLocationMappingWriter.java",
+      "evidenceMethod": "upsert",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "UPSERT", "value": "shopify.location_mapping.upsert" }],
+      "resourceTypes": ["shopify_location_mapping"]
+    },
+    {
+      "operationId": "WarehouseController#archiveLocation",
+      "classification": "tenant-business-success",
+      "controllerCall": "archiveLocation",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/warehouse/service/WarehouseMasterDataService.java",
+      "evidenceMethod": "archiveLocation",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "LOCATION_ARCHIVED", "value": "warehouse_location.archived" }],
+      "resourceTypes": ["warehouse_location"]
+    },
+    {
+      "operationId": "WarehouseController#archiveWarehouse",
+      "classification": "tenant-business-success",
+      "controllerCall": "archiveWarehouse",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/warehouse/service/WarehouseMasterDataService.java",
+      "evidenceMethod": "archiveWarehouse",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "WAREHOUSE_ARCHIVED", "value": "warehouse.archived" }],
+      "resourceTypes": ["warehouse"]
+    },
+    {
+      "operationId": "WarehouseController#createLocation",
+      "classification": "tenant-business-success",
+      "controllerCall": "createLocation",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/warehouse/service/WarehouseMasterDataService.java",
+      "evidenceMethod": "createLocation",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "LOCATION_CREATED", "value": "warehouse_location.created" }],
+      "resourceTypes": ["warehouse_location"]
+    },
+    {
+      "operationId": "WarehouseController#createWarehouse",
+      "classification": "tenant-business-success",
+      "controllerCall": "createWarehouse",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/warehouse/service/WarehouseMasterDataService.java",
+      "evidenceMethod": "createWarehouse",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "WAREHOUSE_CREATED", "value": "warehouse.created" }],
+      "resourceTypes": ["warehouse"]
+    },
+    {
+      "operationId": "WarehouseController#updateLocation",
+      "classification": "tenant-business-success",
+      "controllerCall": "updateLocation",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/warehouse/service/WarehouseMasterDataService.java",
+      "evidenceMethod": "updateLocation",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "LOCATION_UPDATED", "value": "warehouse_location.updated" }],
+      "resourceTypes": ["warehouse_location"]
+    },
+    {
+      "operationId": "WarehouseController#updateWarehouse",
+      "classification": "tenant-business-success",
+      "controllerCall": "updateWarehouse",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/warehouse/service/WarehouseMasterDataService.java",
+      "evidenceMethod": "updateWarehouse",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "WAREHOUSE_UPDATED", "value": "warehouse.updated" }],
+      "resourceTypes": ["warehouse"]
+    },
+    {
+      "operationId": "OrderCenterController#updateProfile",
+      "classification": "tenant-business-success",
+      "controllerCall": "updateProfile",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/order/service/OrderCenterService.java",
+      "evidenceMethod": "updateProfile",
+      "recorder": "security-atomic",
+      "actions": [
+        {
+          "symbol": "PROFILE_UPDATED",
+          "value": "order.profile.updated"
+        }
+      ],
+      "resourceTypes": [
+        "order"
+      ]
+    },
+    {
+      "operationId": "OrderCenterController#updateShopifyShippingAddress",
+      "classification": "tenant-business-success",
+      "controllerCall": "update",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/order/service/OrderCenterService.java",
+      "evidenceMethod": "applyShopifyShippingAddressUpdate",
+      "recorder": "security-atomic",
+      "actions": [
+        {
+          "symbol": "SHOPIFY_SHIPPING_ADDRESS_UPDATED",
+          "value": "order.shopify.shipping_address.updated"
+        }
+      ],
+      "resourceTypes": [
+        "order"
+      ]
+    },
+    {
+      "operationId": "FulfillmentController#create",
+      "classification": "tenant-business-success",
+      "controllerCall": "create",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/fulfillment/service/FulfillmentService.java",
+      "evidenceMethod": "create",
+      "recorder": "security-atomic",
+      "actions": [
+        {
+          "symbol": "PLAN_CREATED",
+          "value": "fulfillment.plan.created"
+        }
+      ],
+      "resourceTypes": [
+        "fulfillment_plan"
+      ]
+    },
+    {
+      "operationId": "FulfillmentController#publishShopifyFulfillment",
+      "classification": "tenant-business-success",
+      "controllerCall": "publish",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/fulfillment/service/ShopifyFulfillmentPublicationFinalizer.java",
+      "evidenceMethod": "finalizePublished",
+      "recorder": "security-atomic",
+      "actions": [
+        {
+          "symbol": "SHOPIFY_FULFILLMENT_PUBLISHED",
+          "value": "fulfillment.shopify.published"
+        }
+      ],
+      "resourceTypes": [
+        "fulfillment_package"
+      ]
+    },
+    {
+      "operationId": "FulfillmentController#allocate",
+      "classification": "tenant-business-success",
+      "controllerCall": "allocate",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/fulfillment/service/FulfillmentService.java",
+      "evidenceMethod": "allocate",
+      "recorder": "security-atomic",
+      "actions": [
+        {
+          "symbol": "ALLOCATION_CHANGED",
+          "value": "fulfillment.allocation.changed"
+        }
+      ],
+      "resourceTypes": [
+        "fulfillment_plan"
+      ]
+    },
+    {
+      "operationId": "FulfillmentController#pick",
+      "classification": "tenant-business-success",
+      "controllerCall": "recordPick",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/fulfillment/service/FulfillmentService.java",
+      "evidenceMethod": "recordPick",
+      "recorder": "security-atomic",
+      "actions": [
+        {
+          "symbol": "PICK_RECORDED",
+          "value": "fulfillment.pick.recorded"
+        }
+      ],
+      "resourceTypes": [
+        "fulfillment_plan"
+      ]
+    },
+    {
+      "operationId": "FulfillmentController#createPackage",
+      "classification": "tenant-business-success",
+      "controllerCall": "createPackage",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/fulfillment/service/FulfillmentService.java",
+      "evidenceMethod": "createPackage",
+      "recorder": "security-atomic",
+      "actions": [
+        {
+          "symbol": "PACKAGE_CREATED",
+          "value": "fulfillment.package.created"
+        }
+      ],
+      "resourceTypes": [
+        "fulfillment_plan"
+      ]
+    },
+    {
+      "operationId": "FulfillmentController#seal",
+      "classification": "tenant-business-success",
+      "controllerCall": "sealPackage",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/fulfillment/service/FulfillmentService.java",
+      "evidenceMethod": "sealPackage",
+      "recorder": "security-atomic",
+      "actions": [
+        {
+          "symbol": "PACKAGE_SEALED",
+          "value": "fulfillment.package.sealed"
+        }
+      ],
+      "resourceTypes": [
+        "fulfillment_plan"
+      ]
+    },
+    {
+      "operationId": "FulfillmentController#handover",
+      "classification": "tenant-business-success",
+      "controllerCall": "handover",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/fulfillment/service/FulfillmentService.java",
+      "evidenceMethod": "handover",
+      "recorder": "security-atomic",
+      "actions": [
+        {
+          "symbol": "PACKAGE_HANDED_OVER",
+          "value": "fulfillment.package.handed_over"
+        }
+      ],
+      "resourceTypes": [
+        "fulfillment_plan"
+      ]
+    },
+    {
+      "operationId": "FulfillmentController#correctHandover",
+      "classification": "tenant-business-success",
+      "controllerCall": "correctHandover",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/fulfillment/service/FulfillmentService.java",
+      "evidenceMethod": "correctHandover",
+      "recorder": "security-atomic",
+      "actions": [
+        {
+          "symbol": "HANDOVER_CORRECTED",
+          "value": "fulfillment.package.handover_corrected"
+        }
+      ],
+      "resourceTypes": [
+        "fulfillment_plan"
+      ]
+    },
+    {
+      "operationId": "FulfillmentController#cancel",
+      "classification": "tenant-business-success",
+      "controllerCall": "cancelOpen",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/fulfillment/service/FulfillmentService.java",
+      "evidenceMethod": "cancelOpen",
+      "recorder": "security-atomic",
+      "actions": [
+        {
+          "symbol": "CANCELLED",
+          "value": "fulfillment.cancelled"
+        }
+      ],
+      "resourceTypes": [
+        "fulfillment_plan"
+      ]
+    },
+    {
+      "operationId": "FulfillmentController#pause",
+      "classification": "tenant-business-success",
+      "controllerCall": "pause",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/fulfillment/service/FulfillmentService.java",
+      "evidenceMethod": "pause",
+      "recorder": "security-atomic",
+      "actions": [
+        {
+          "symbol": "PAUSED",
+          "value": "fulfillment.paused"
+        }
+      ],
+      "resourceTypes": [
+        "fulfillment_plan"
+      ]
+    },
+    {
+      "operationId": "FulfillmentController#resume",
+      "classification": "tenant-business-success",
+      "controllerCall": "resume",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/fulfillment/service/FulfillmentService.java",
+      "evidenceMethod": "resume",
+      "recorder": "security-atomic",
+      "actions": [
+        {
+          "symbol": "RESUMED",
+          "value": "fulfillment.resumed"
+        }
+      ],
+      "resourceTypes": [
+        "fulfillment_plan"
+      ]
+    },
+    {
+      "operationId": "OrderOperationsController#bulkStatus",
+      "classification": "tenant-business-success",
+      "controllerCall": "bulkStatus",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/order/service/OrderOperationsService.java",
+      "evidenceMethod": "bulkStatus",
+      "recorder": "security-atomic",
+      "actions": [
+        {
+          "symbol": "BULK_STATUS_COMPLETED",
+          "value": "order.bulk_status.completed"
+        }
+      ],
+      "resourceTypes": [
+        "order_transfer_job"
+      ]
+    },
+    {
+      "operationId": "OrderOperationsController#export",
+      "classification": "tenant-business-success",
+      "controllerCall": "exportCsv",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/order/service/OrderOperationsService.java",
+      "evidenceMethod": "exportCsv",
+      "recorder": "security-atomic",
+      "actions": [
+        {
+          "symbol": "EXPORT_COMPLETED",
+          "value": "order.export.completed"
+        }
+      ],
+      "resourceTypes": [
+        "order_transfer_job"
+      ]
+    },
+    {
+      "operationId": "OrderOperationsController#importCsv",
+      "classification": "tenant-business-success",
+      "controllerCall": "importCsv",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/order/service/OrderOperationsService.java",
+      "evidenceMethod": "importCsv",
+      "recorder": "security-atomic",
+      "actions": [
+        {
+          "symbol": "IMPORT_COMPLETED",
+          "value": "order.import.completed"
+        }
+      ],
+      "resourceTypes": [
+        "order_transfer_job"
+      ]
+    },
+    {
+      "operationId": "OrderShopifyEditController#addCustomItem",
+      "classification": "tenant-business-success",
+      "controllerCall": "add",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/order/service/OrderShopifyCustomItemAddFinalizer.java",
+      "evidenceMethod": "finalizeSucceeded",
+      "recorder": "security-atomic",
+      "actions": [
+        {
+          "symbol": "SHOPIFY_CUSTOM_ITEM_ADDED",
+          "value": "order.shopify.custom_item.added"
+        }
+      ],
+      "resourceTypes": [
+        "order_line"
+      ]
+    },
+    {
+      "operationId": "OrderShopifyEditController#addLineDiscount",
+      "classification": "tenant-business-success",
+      "controllerCall": "add",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/order/service/OrderShopifyLineDiscountFinalizer.java",
+      "evidenceMethod": "finalizeSucceeded",
+      "recorder": "security-atomic",
+      "actions": [
+        {
+          "symbol": "SHOPIFY_LINE_DISCOUNT_ADDED",
+          "value": "order.shopify.line_discount.added"
+        }
+      ],
+      "resourceTypes": [
+        "order_line"
+      ]
+    },
+    {
+      "operationId": "OrderShopifyEditController#cancelOrder",
+      "classification": "tenant-business-success",
+      "controllerCall": "cancel",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/order/service/OrderShopifyCancellationFinalizer.java",
+      "evidenceMethod": "finalizeSucceeded",
+      "recorder": "security-atomic",
+      "actions": [
+        {
+          "symbol": "SHOPIFY_ORDER_CANCELLED",
+          "value": "order.shopify.cancelled"
+        }
+      ],
+      "resourceTypes": [
+        "order"
+      ]
+    },
+    {
+      "operationId": "OrderShopifyEditController#addVariant",
+      "classification": "tenant-business-success",
+      "controllerCall": "add",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/order/service/OrderShopifyVariantAddFinalizer.java",
+      "evidenceMethod": "finalizeSucceeded",
+      "recorder": "security-atomic",
+      "actions": [
+        {
+          "symbol": "SHOPIFY_VARIANT_ADDED",
+          "value": "order.shopify.variant.added"
+        }
+      ],
+      "resourceTypes": [
+        "order_line"
+      ]
+    },
+    {
+      "operationId": "OrderShopifyEditController#updateLineQuantity",
+      "classification": "tenant-business-success",
+      "controllerCall": "update",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/order/service/OrderShopifyLineQuantityFinalizer.java",
+      "evidenceMethod": "finalizeSucceeded",
+      "recorder": "security-atomic",
+      "actions": [
+        {
+          "symbol": "SHOPIFY_LINE_QUANTITY_UPDATED",
+          "value": "order.shopify.line_quantity.updated"
+        }
+      ],
+      "resourceTypes": [
+        "order_line"
+      ]
+    },
+    {
+      "operationId": "ProcurementPlanController#create",
+      "classification": "tenant-business-success",
+      "controllerCall": "create",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/procurement/service/ProcurementPlanService.java",
+      "evidenceMethod": "create",
+      "recorder": "security-atomic",
+      "actions": [
+        {
+          "symbol": "CREATED",
+          "value": "procurement_plan.created"
+        }
+      ],
+      "resourceTypes": [
+        "procurement_plan"
+      ]
+    },
+    {
+      "operationId": "ProcurementPlanController#voidPlan",
+      "classification": "tenant-business-success",
+      "controllerCall": "voidPlan",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/procurement/service/ProcurementPlanService.java",
+      "evidenceMethod": "voidPlan",
+      "recorder": "security-atomic",
+      "actions": [
+        {
+          "symbol": "VOIDED",
+          "value": "procurement_plan.voided"
+        }
+      ],
+      "resourceTypes": [
+        "procurement_plan"
+      ]
+    },
+    {
+      "operationId": "ProcurementPurchaseOrderController#create",
+      "classification": "tenant-business-success",
+      "controllerCall": "create",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/procurement/service/ProcurementPurchaseOrderService.java",
+      "evidenceMethod": "create",
+      "recorder": "security-atomic",
+      "actions": [
+        {
+          "symbol": "CREATED",
+          "value": "procurement_purchase_order.created"
+        }
+      ],
+      "resourceTypes": [
+        "procurement_purchase_order"
+      ]
+    },
+    {
+      "operationId": "ProcurementPurchaseOrderController#receive",
+      "classification": "tenant-business-success",
+      "controllerCall": "receive",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/procurement/service/ProcurementPurchaseOrderService.java",
+      "evidenceMethod": "receive",
+      "recorder": "security-atomic",
+      "actions": [
+        {
+          "symbol": "RECEIVED",
+          "value": "procurement_purchase_order.received"
+        }
+      ],
+      "resourceTypes": [
+        "procurement_purchase_order"
+      ]
+    },
+    {
+      "operationId": "WarehouseTransferController#approve",
+      "classification": "tenant-business-success",
+      "controllerCall": "approve",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/inventory/service/WarehouseTransferService.java",
+      "evidenceMethod": "approve",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "APPROVED", "value": "inventory.transfer.approved" }],
+      "resourceTypes": ["warehouse_transfer"]
+    },
+    {
+      "operationId": "WarehouseTransferController#cancel",
+      "classification": "tenant-business-success",
+      "controllerCall": "cancel",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/inventory/service/WarehouseTransferService.java",
+      "evidenceMethod": "cancel",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "CANCELLED", "value": "inventory.transfer.cancelled" }],
+      "resourceTypes": ["warehouse_transfer"]
+    },
+    {
+      "operationId": "WarehouseTransferController#create",
+      "classification": "tenant-business-success",
+      "controllerCall": "create",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/inventory/service/WarehouseTransferService.java",
+      "evidenceMethod": "create",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "CREATED", "value": "inventory.transfer.created" }],
+      "resourceTypes": ["warehouse_transfer"]
+    },
+    {
+      "operationId": "WarehouseTransferController#receive",
+      "classification": "tenant-business-success",
+      "controllerCall": "receive",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/inventory/service/WarehouseTransferService.java",
+      "evidenceMethod": "receive",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "RECEIVED", "value": "inventory.transfer.received" }],
+      "resourceTypes": ["warehouse_transfer"]
+    },
+    {
+      "operationId": "WarehouseTransferController#receivePartial",
+      "classification": "tenant-business-success",
+      "controllerCall": "receivePartial",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/inventory/service/WarehouseTransferService.java",
+      "evidenceMethod": "receivePartial",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "PARTIALLY_RECEIVED", "value": "inventory.transfer.partially_received" }],
+      "resourceTypes": ["warehouse_transfer"]
+    },
+    {
+      "operationId": "WarehouseTransferController#reject",
+      "classification": "tenant-business-success",
+      "controllerCall": "reject",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/inventory/service/WarehouseTransferService.java",
+      "evidenceMethod": "reject",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "REJECTED", "value": "inventory.transfer.rejected" }],
+      "resourceTypes": ["warehouse_transfer"]
+    },
+    {
+      "operationId": "WarehouseTransferController#ship",
+      "classification": "tenant-business-success",
+      "controllerCall": "ship",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/inventory/service/WarehouseTransferService.java",
+      "evidenceMethod": "ship",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "SHIPPED", "value": "inventory.transfer.shipped" }],
+      "resourceTypes": ["warehouse_transfer"]
+    },
+    {
+      "operationId": "WarehouseTransferController#submit",
+      "classification": "tenant-business-success",
+      "controllerCall": "submit",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/inventory/service/WarehouseTransferService.java",
+      "evidenceMethod": "submit",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "SUBMITTED", "value": "inventory.transfer.submitted" }],
+      "resourceTypes": ["warehouse_transfer"]
+    },
+    {
+      "operationId": "ProductCenterController#updateSkuStandardWeight",
+      "classification": "tenant-business-success",
+      "controllerCall": "updateSkuStandardWeight",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/product/service/ProductCenterService.java",
+      "evidenceMethod": "updateSkuStandardWeight",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "SKU_WEIGHT_UPDATED", "value": "product_sku.weight_updated" }],
+      "resourceTypes": ["product_sku"]
+    },
+    {
+      "operationId": "LogisticsAddressController#archive",
+      "classification": "tenant-business-success",
+      "controllerCall": "archive",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/logistics/address/LogisticsAddressService.java",
+      "evidenceMethod": "archive",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "ADDRESS_ARCHIVED", "value": "logistics.address.archived" }],
+      "resourceTypes": ["logistics_address"]
+    },
+    {
+      "operationId": "LogisticsAddressController#create",
+      "classification": "tenant-business-success",
+      "controllerCall": "create",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/logistics/address/LogisticsAddressService.java",
+      "evidenceMethod": "create",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "ADDRESS_CREATED", "value": "logistics.address.created" }],
+      "resourceTypes": ["logistics_address"]
+    },
+    {
+      "operationId": "LogisticsAddressController#update",
+      "classification": "tenant-business-success",
+      "controllerCall": "update",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/logistics/address/LogisticsAddressService.java",
+      "evidenceMethod": "update",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "ADDRESS_UPDATED", "value": "logistics.address.updated" }],
+      "resourceTypes": ["logistics_address"]
+    },
+    {
+      "operationId": "TrackingNumberController#archive",
+      "classification": "tenant-business-success",
+      "controllerCall": "archive",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/logistics/trackingnumber/TrackingNumberService.java",
+      "evidenceMethod": "archive",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "TRACKING_NUMBER_ARCHIVED", "value": "logistics.tracking_number.archived" }],
+      "resourceTypes": ["tracking_number"]
+    },
+    {
+      "operationId": "TrackingNumberController#importNumbers",
+      "classification": "tenant-business-success",
+      "controllerCall": "importNumbers",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/logistics/trackingnumber/TrackingNumberService.java",
+      "evidenceMethod": "importNumbers",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "TRACKING_NUMBERS_IMPORTED", "value": "logistics.tracking_numbers.imported" }],
+      "resourceTypes": ["tracking_number_batch"]
+    },
+    {
+      "operationId": "ShippingConfigurationController#createRule",
+      "classification": "tenant-business-success",
+      "controllerCall": "createRule",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/fulfillment/weighing/ShippingConfigurationService.java",
+      "evidenceMethod": "createRule",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "PACKAGING_RULE_CREATED", "value": "shipping.sku_packaging_rule.created" }],
+      "resourceTypes": ["sku_packaging_rule"]
+    },
+    {
+      "operationId": "ShippingConfigurationController#updateRule",
+      "classification": "tenant-business-success",
+      "controllerCall": "updateRule",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/fulfillment/weighing/ShippingConfigurationService.java",
+      "evidenceMethod": "updateRule",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "PACKAGING_RULE_UPDATED", "value": "shipping.sku_packaging_rule.updated" }],
+      "resourceTypes": ["sku_packaging_rule"]
+    },
+    {
+      "operationId": "ShippingConfigurationController#createScale",
+      "classification": "tenant-business-success",
+      "controllerCall": "createScale",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/fulfillment/weighing/ShippingConfigurationService.java",
+      "evidenceMethod": "createScale",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "SCALE_CREATED", "value": "shipping.scale.created" }],
+      "resourceTypes": ["shipping_scale"]
+    },
+    {
+      "operationId": "ShippingConfigurationController#createTemplate",
+      "classification": "tenant-business-success",
+      "controllerCall": "createTemplate",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/fulfillment/weighing/ShippingConfigurationService.java",
+      "evidenceMethod": "createTemplate",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "PACKAGING_TEMPLATE_CREATED", "value": "shipping.packaging_template.created" }],
+      "resourceTypes": ["packaging_template"]
+    },
+    {
+      "operationId": "ShippingConfigurationController#setTolerance",
+      "classification": "tenant-business-success",
+      "controllerCall": "setWarehouseTolerance",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/fulfillment/weighing/ShippingConfigurationService.java",
+      "evidenceMethod": "setWarehouseTolerance",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "WEIGHT_TOLERANCE_UPDATED", "value": "shipping.weight_tolerance.updated" }],
+      "resourceTypes": ["warehouse"]
+    },
+    {
+      "operationId": "ShippingConfigurationController#setWarehousePackaging",
+      "classification": "tenant-business-success",
+      "controllerCall": "setWarehousePackaging",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/fulfillment/weighing/ShippingConfigurationService.java",
+      "evidenceMethod": "setWarehousePackaging",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "WAREHOUSE_PACKAGING_UPDATED", "value": "shipping.warehouse_packaging.updated" }],
+      "resourceTypes": ["warehouse"]
+    },
+    {
+      "operationId": "ShippingConfigurationController#updateScale",
+      "classification": "tenant-business-success",
+      "controllerCall": "updateScale",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/fulfillment/weighing/ShippingConfigurationService.java",
+      "evidenceMethod": "updateScale",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "SCALE_UPDATED", "value": "shipping.scale.updated" }],
+      "resourceTypes": ["shipping_scale"]
+    },
+    {
+      "operationId": "ShippingConfigurationController#updateTemplate",
+      "classification": "tenant-business-success",
+      "controllerCall": "updateTemplate",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/fulfillment/weighing/ShippingConfigurationService.java",
+      "evidenceMethod": "updateTemplate",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "PACKAGING_TEMPLATE_UPDATED", "value": "shipping.packaging_template.updated" }],
+      "resourceTypes": ["packaging_template"]
+    },
+    {
+      "operationId": "ShippingWeighingController#assignPackaging",
+      "classification": "tenant-business-success",
+      "controllerCall": "assignPackaging",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/fulfillment/weighing/ShippingWeighingService.java",
+      "evidenceMethod": "assignPackaging",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "PACKAGING_ASSIGNED", "value": "fulfillment.package.packaging_assigned" }],
+      "resourceTypes": ["fulfillment_package"]
+    },
+    {
+      "operationId": "ShippingWeighingController#override",
+      "classification": "tenant-business-success",
+      "controllerCall": "override",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/fulfillment/weighing/ShippingWeighingService.java",
+      "evidenceMethod": "override",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "WEIGHING_OVERRIDDEN", "value": "fulfillment.package.weighing_overridden" }],
+      "resourceTypes": ["fulfillment_package"]
+    },
+    {
+      "operationId": "ShippingWeighingController#weigh",
+      "classification": "tenant-business-success",
+      "controllerCall": "weigh",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/fulfillment/weighing/ShippingWeighingService.java",
+      "evidenceMethod": "weigh",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "PACKAGE_WEIGHED", "value": "fulfillment.package.weighed" }],
+      "resourceTypes": ["fulfillment_package"]
+    },
+    {
+      "operationId": "LogisticsDeclarationEntityController#archive",
+      "classification": "tenant-business-success",
+      "controllerCall": "archive",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/logistics/declaration/LogisticsDeclarationEntityService.java",
+      "evidenceMethod": "archive",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "ARCHIVED", "value": "logistics.declaration_entity.archived" }],
+      "resourceTypes": ["logistics_declaration_entity"]
+    },
+    {
+      "operationId": "LogisticsDeclarationEntityController#create",
+      "classification": "tenant-business-success",
+      "controllerCall": "create",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/logistics/declaration/LogisticsDeclarationEntityService.java",
+      "evidenceMethod": "create",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "CREATED", "value": "logistics.declaration_entity.created" }],
+      "resourceTypes": ["logistics_declaration_entity"]
+    },
+    {
+      "operationId": "LogisticsDeclarationEntityController#update",
+      "classification": "tenant-business-success",
+      "controllerCall": "update",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/logistics/declaration/LogisticsDeclarationEntityService.java",
+      "evidenceMethod": "update",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "UPDATED", "value": "logistics.declaration_entity.updated" }],
+      "resourceTypes": ["logistics_declaration_entity"]
+    },
+    {
+      "operationId": "EnterpriseProfileController#save",
+      "classification": "tenant-business-success",
+      "controllerCall": "save",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/settings/enterprise/EnterpriseProfileService.java",
+      "evidenceMethod": "save",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "SAVED", "value": "settings.enterprise_profile.saved" }],
+      "resourceTypes": ["enterprise_profile"]
+    },
+    {
+      "operationId": "SupplierController#create",
+      "classification": "tenant-business-success",
+      "controllerCall": "create",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/supplier/service/SupplierMasterDataService.java",
+      "evidenceMethod": "create",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "CREATED", "value": "supplier.created" }],
+      "resourceTypes": ["supplier"]
+    },
+    {
+      "operationId": "SupplierController#createWithMapping",
+      "classification": "tenant-business-success",
+      "controllerCall": "createWithMapping",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/supplier/service/SupplierOnboardingService.java",
+      "evidenceMethod": "createWithMapping",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "ONBOARDED", "value": "supplier.onboarded" }],
+      "resourceTypes": ["supplier_onboarding"]
+    },
+    {
+      "operationId": "SupplierController#importSuppliers",
+      "classification": "tenant-business-success",
+      "controllerCall": "importSuppliers",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/supplier/service/SupplierMasterDataService.java",
+      "evidenceMethod": "importSuppliers",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "IMPORTED", "value": "supplier.imported" }],
+      "resourceTypes": ["supplier"]
+    },
+    {
+      "operationId": "SupplierController#update",
+      "classification": "tenant-business-success",
+      "controllerCall": "update",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/supplier/service/SupplierMasterDataService.java",
+      "evidenceMethod": "update",
+      "recorder": "security-atomic",
+      "actions": [
+        { "symbol": "ARCHIVED", "value": "supplier.archived" },
+        { "symbol": "UPDATED", "value": "supplier.updated" }
+      ],
+      "resourceTypes": ["supplier"]
+    },
+    {
+      "operationId": "SupplierSkuMappingController#create",
+      "classification": "tenant-business-success",
+      "controllerCall": "create",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/supplier/service/SupplierSkuMappingService.java",
+      "evidenceMethod": "create",
+      "recorder": "security-atomic",
+      "actions": [{ "symbol": "CREATED", "value": "supplier_sku_mapping.created" }],
+      "resourceTypes": ["supplier_sku_mapping"]
+    },
+    {
+      "operationId": "SupplierSkuMappingController#update",
+      "classification": "tenant-business-success",
+      "controllerCall": "update",
+      "evidenceFile": "platform/backend/src/main/java/cn/xzkj/erp/supplier/service/SupplierSkuMappingService.java",
+      "evidenceMethod": "update",
+      "recorder": "security-atomic",
+      "actions": [
+        { "symbol": "PREFERRED_CHANGED", "value": "supplier_sku_mapping.preferred_changed" },
+        { "symbol": "UPDATED", "value": "supplier_sku_mapping.updated" }
+      ],
+      "resourceTypes": ["supplier_sku_mapping"]
+    }
+  ],
+  "integritySha256": "974f9e466404f318a630af7ab8b4086a71d394ff75645816198b11c7b8559469"
+}

@@ -1,0 +1,130 @@
+name: xz-erp-customer-service-uat
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
+services:
+  postgres:
+    image: ${XZDESK_UAT_POSTGRES_IMAGE:?XZDESK_UAT_POSTGRES_IMAGE is required}
+    pull_policy: never
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: customer_service_uat
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${XZDESK_UAT_DB_ADMIN_PASSWORD:?XZDESK_UAT_DB_ADMIN_PASSWORD is required}
+      XZDESK_UAT_RUNTIME_DB_PASSWORD: ${XZDESK_UAT_RUNTIME_DB_PASSWORD:?XZDESK_UAT_RUNTIME_DB_PASSWORD is required}
+      XZDESK_UAT_MIGRATOR_DB_PASSWORD: ${XZDESK_UAT_MIGRATOR_DB_PASSWORD:?XZDESK_UAT_MIGRATOR_DB_PASSWORD is required}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d customer_service_uat"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - customer_service_uat_postgres_data:/var/lib/postgresql/data
+    mem_limit: 384m
+    cpus: 0.30
+    pids_limit: 128
+    logging: *default-logging
+    networks:
+      - data
+
+  api:
+    image: ${XZDESK_UAT_API_IMAGE:?XZDESK_UAT_API_IMAGE is required}
+    pull_policy: never
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://customer_service_runtime:${XZDESK_UAT_RUNTIME_DB_PASSWORD}@postgres:5432/customer_service_uat?sslmode=disable
+      XZDESK_DATABASE_MIGRATION_URL: postgres://customer_service_migrator:${XZDESK_UAT_MIGRATOR_DB_PASSWORD}@postgres:5432/customer_service_uat?sslmode=disable
+      XZDESK_DATABASE_SCHEMA: customer_service
+      XZDESK_ENVIRONMENT: uat
+      XZDESK_ALLOWED_ORIGINS: ${XZDESK_UAT_ERP_ORIGIN:?XZDESK_UAT_ERP_ORIGIN is required},${XZDESK_UAT_PUBLIC_ORIGIN:?XZDESK_UAT_PUBLIC_ORIGIN is required}
+      XZDESK_ERP_IAM_BASE_URL: ${XZDESK_UAT_ERP_ORIGIN}
+      XZDESK_PUBLIC_ORIGIN: ${XZDESK_UAT_PUBLIC_ORIGIN:?XZDESK_UAT_PUBLIC_ORIGIN is required}
+      PUBLIC_BASE_URL: ${XZDESK_UAT_PUBLIC_ORIGIN}
+      ERP_XZ_ERP_APP_CONNECTOR_TOKEN: ${XZDESK_UAT_ERP_CONNECTOR_TOKEN:?XZDESK_UAT_ERP_CONNECTOR_TOKEN is required}
+      AI_SETTINGS_ENCRYPTION_KEY: ${XZDESK_UAT_AI_SETTINGS_KEY:?XZDESK_UAT_AI_SETTINGS_KEY is required}
+      SHOPIFY_CREDENTIALS_ENCRYPTION_KEY: ${XZDESK_UAT_AI_SETTINGS_KEY}
+      SHOPIFY_APP_API_SECRET: ${XZDESK_UAT_SHOPIFY_APP_API_SECRET:?XZDESK_UAT_SHOPIFY_APP_API_SECRET is required}
+      XZ_ERP_LEGAL_NAME: ${XZDESK_UAT_XZ_ERP_LEGAL_NAME:?XZDESK_UAT_XZ_ERP_LEGAL_NAME is required}
+      XZ_ERP_SUPPORT_EMAIL: ${XZDESK_UAT_XZ_ERP_SUPPORT_EMAIL:?XZDESK_UAT_XZ_ERP_SUPPORT_EMAIL is required}
+      XZ_ERP_PRIVACY_EFFECTIVE_DATE: ${XZDESK_UAT_XZ_ERP_PRIVACY_EFFECTIVE_DATE:?XZDESK_UAT_XZ_ERP_PRIVACY_EFFECTIVE_DATE is required}
+      XZDESK_UPLOAD_DIR: /var/lib/xzdesk/uploads
+      XZDESK_DEPLOY_COLOR: uat-disabled
+      XZDESK_ACTIVE_COLOR_FILE: /var/run/xzdesk-background-never-active
+      XZDESK_RELEASE_ID: ${XZDESK_UAT_RELEASE_ID:?XZDESK_UAT_RELEASE_ID is required}
+      SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:8787/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 10s
+      timeout: 4s
+      retries: 20
+      start_period: 20s
+    read_only: true
+    volumes:
+      - customer_service_uat_uploads:/var/lib/xzdesk/uploads
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 768m
+    cpus: 0.60
+    pids_limit: 192
+    logging: *default-logging
+    networks:
+      - data
+      - app
+
+  web:
+    image: ${XZDESK_UAT_WEB_IMAGE:?XZDESK_UAT_WEB_IMAGE is required}
+    pull_policy: never
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${XZDESK_UAT_HTTP_PORT:-18787}:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8080/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    cpus: 0.20
+    pids_limit: 64
+    logging: *default-logging
+    networks:
+      app:
+      public_ingress:
+        aliases:
+          - erp-customer-service-uat-web
+
+volumes:
+  customer_service_uat_postgres_data:
+  customer_service_uat_uploads:
+
+networks:
+  app:
+  data:
+    internal: true
+  public_ingress:
+    external: true
+    name: xz-erp-public-ingress

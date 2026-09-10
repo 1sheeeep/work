@@ -1,0 +1,10 @@
+.git
+.env
+runtime
+release
+node_modules
+frontend/node_modules
+build
+bin
+*.log
+*.tmp

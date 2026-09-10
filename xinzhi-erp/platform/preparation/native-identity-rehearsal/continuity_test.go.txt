@@ -1,0 +1,99 @@
+package platform
+
+import (
+	"context"
+	"reflect"
+	"testing"
+	"time"
+)
+
+type ownedNativeContinuity struct {
+	chat, mail       Conversation
+	originalMessages []Message
+	pending          EmailOutboxRecord
+	user             User
+}
+
+func seedOwnedNativeContinuity(t *testing.T, ctx context.Context, s *PostgresStore, user User) ownedNativeContinuity {
+	t.Helper()
+	shop, err := s.CreateShop(ctx, Shop{DisplayName: "Synthetic continuity shop"})
+	if err != nil {
+		t.Fatal("continuity shop setup failed")
+	}
+	chatSource, err := s.CreateShopSource(ctx, ShopSource{ShopID: shop.ID, Type: SourceTypeShopifyChat})
+	if err != nil {
+		t.Fatal("chat source setup failed")
+	}
+	emailSource, err := s.CreateShopSource(ctx, ShopSource{ShopID: shop.ID, Type: SourceTypeEmail, Provider: "gmail", Address: "synthetic@example.invalid"})
+	if err != nil {
+		t.Fatal("mail source setup failed")
+	}
+	chat, err := s.CreateConversation(ctx, Conversation{ShopID: shop.ID, SourceID: chatSource.ID, CustomerName: "Synthetic visitor", Subject: "Owned chat continuity"})
+	if err != nil {
+		t.Fatal("chat setup failed")
+	}
+	mail, err := s.CreateConversation(ctx, Conversation{ShopID: shop.ID, SourceID: emailSource.ID, CustomerEmail: "buyer@example.invalid", Subject: "Owned mail continuity"})
+	if err != nil {
+		t.Fatal("mail setup failed")
+	}
+	var original []Message
+	for _, c := range []Conversation{chat, mail} {
+		m, _, err := s.AddMessage(ctx, Message{ConversationID: c.ID, Direction: MessageDirectionCustomer, Type: MessageTypeText, Body: "Synthetic historical message", SourceMessageID: "owned-history-" + c.ID})
+		if err != nil {
+			t.Fatal("historical message setup failed")
+		}
+		// Compare persisted values to persisted values (PostgreSQL timestamp
+		// precision/time-zone normalization is not a business mutation).
+		stored, err := s.GetMessage(ctx, c.ID, m.ID)
+		if err != nil {
+			t.Fatal("historical baseline read failed")
+		}
+		original = append(original, stored)
+	}
+	pending, err := s.BeginEmailOutbox(ctx, EmailOutboxRecord{ShopID: shop.ID, SourceID: emailSource.ID, ConversationID: mail.ID, ClientRequestID: "owned-interrupted-send", RequestedBy: user.ID, Body: "Synthetic interrupted reply", RequestMetadata: `{}`})
+	if err != nil {
+		t.Fatal("outbox setup failed")
+	}
+	if _, err = s.SetEmailOutboxState(ctx, pending.ID, "sending", `{}`, "", ""); err != nil {
+		t.Fatal("outbox interrupted setup failed")
+	}
+	return ownedNativeContinuity{chat, mail, original, pending, user}
+}
+
+func verifyOwnedNativeContinuity(t *testing.T, ctx context.Context, s *PostgresStore, f ownedNativeContinuity, phase string) {
+	t.Helper()
+	// Real native persistence and dedupe APIs, with synthetic channel messages;
+	// never starts a Gmail/IMAP/SMTP connector or contacts a real chat storefront.
+	for _, c := range []Conversation{f.chat, f.mail} {
+		input := Message{ConversationID: c.ID, Direction: MessageDirectionCustomer, Type: MessageTypeText, Body: "Synthetic incoming " + phase, SourceMessageID: "owned-incoming-" + phase + "-" + c.ID}
+		first, _, err := s.AddMessage(ctx, input)
+		if err != nil {
+			t.Fatal("incoming continuity failed")
+		}
+		again, _, err := s.AddMessage(ctx, input)
+		if err != nil || again.ID != first.ID {
+			t.Fatal("incoming dedupe failed")
+		}
+	}
+	for _, old := range f.originalMessages {
+		current, err := s.GetMessage(ctx, old.ConversationID, old.ID)
+		if err != nil || !reflect.DeepEqual(old, current) {
+			t.Fatal("historical message overwritten")
+		}
+	}
+	recovered, err := s.RecoverEmailOutbox(ctx, time.Now().UTC().Add(time.Second))
+	if err != nil {
+		t.Fatal("outbox recovery failed")
+	}
+	if phase == "prepared" && (len(recovered) != 1 || recovered[0].ID != f.pending.ID || recovered[0].Status != "ambiguous") {
+		t.Fatal("lost send result was not fenced")
+	}
+	if phase == "rolled-back" && len(recovered) != 0 {
+		t.Fatal("ambiguous mail unexpectedly recovered again")
+	}
+	var status string
+	if err = s.db.QueryRowContext(ctx, `SELECT status FROM public.email_outbox WHERE id=$1`, f.pending.ID).Scan(&status); err != nil || status != "ambiguous" {
+		t.Fatal("uncertain email lost its no-resend fence")
+	}
+	t.Log("NATIVE_CONTINUITY_VERIFIED phase=" + phase + "; historical messages, incoming chat/mail dedupe and ambiguous outbox retained; no external channel contacted")
+}

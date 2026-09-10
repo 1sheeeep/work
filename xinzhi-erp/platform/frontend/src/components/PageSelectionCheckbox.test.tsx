@@ -1,0 +1,20 @@
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, expect, it, vi } from "vitest";
+import { PageSelectionCheckbox } from "./PageSelectionCheckbox";
+afterEach(cleanup);
+it("reports none, partial and full selection and retains the page selection callback", () => {
+  const changed = vi.fn();
+  const content = (count: number, total = 4) => <PageSelectionCheckbox aria-label="选择当前页" selectedCount={count} totalCount={total} onChange={changed} />;
+  const view = render(content(1));
+  const box = screen.getByRole("checkbox") as HTMLInputElement;
+  expect(box.indeterminate).toBe(true);
+  expect(box.getAttribute("aria-checked")).toBe("mixed");
+  fireEvent.click(box);
+  expect(changed).toHaveBeenCalledOnce();
+  view.rerender(content(4));
+  expect(box.checked).toBe(true);
+  expect(box.indeterminate).toBe(false);
+  view.rerender(content(0, 0));
+  expect(box.checked).toBe(false);
+  expect(box.getAttribute("aria-checked")).toBe("false");
+});

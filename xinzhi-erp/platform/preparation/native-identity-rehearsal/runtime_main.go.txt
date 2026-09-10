@@ -1,0 +1,39 @@
+package main
+
+import (
+ "context"
+ "crypto/tls"
+ "crypto/x509"
+ "encoding/json"
+ "fmt"
+ "net/http"
+ "os"
+ "os/signal"
+ "syscall"
+ "time"
+ "shopify-support-platform/internal/platform"
+)
+
+func main() {
+ if len(os.Args)==2 && os.Args[1]=="--health" {
+   pem,err:=os.ReadFile("/run/erp-identity/server.crt");roots:=x509.NewCertPool()
+   if err!=nil || !roots.AppendCertsFromPEM(pem) {os.Exit(1)}
+   client:=&http.Client{Timeout:2*time.Second,Transport:&http.Transport{TLSClientConfig:&tls.Config{RootCAs:roots,MinVersion:tls.VersionTLS12}}}
+   response,err:=client.Get("https://127.0.0.1:18910/healthz")
+   if err!=nil {os.Exit(1)};response.Body.Close();if response.StatusCode!=200 {os.Exit(1)};return
+ }
+ // Configuration lives in a read-only server-side secret mount; never logged.
+ var cfg struct { DatabaseURL string; ServiceToken string; Bindings []platform.ERPIdentityBinding }
+ raw,err:=os.ReadFile("/run/erp-identity/config.json")
+ if err!=nil || json.Unmarshal(raw,&cfg)!=nil {fmt.Fprintln(os.Stderr,"identity configuration unavailable");os.Exit(1)}
+ for i:=range raw {raw[i]=0}
+ ctx,cancel:=context.WithTimeout(context.Background(),20*time.Second)
+ h,closeDB,err:=platform.OpenNativeERPIdentityRuntime(ctx,cfg.DatabaseURL,cfg.ServiceToken,cfg.Bindings);cancel()
+ cfg.DatabaseURL="";cfg.ServiceToken=""
+ if err!=nil {fmt.Fprintln(os.Stderr,"identity initialization rejected");os.Exit(1)}
+ defer closeDB()
+ server:=&http.Server{Addr:":18910",Handler:h,ReadHeaderTimeout:3*time.Second,ReadTimeout:8*time.Second,WriteTimeout:8*time.Second,IdleTimeout:30*time.Second,MaxHeaderBytes:8192}
+ signals:=make(chan os.Signal,1);signal.Notify(signals,syscall.SIGTERM,syscall.SIGINT)
+ go func(){<-signals;c,stop:=context.WithTimeout(context.Background(),10*time.Second);defer stop();server.Shutdown(c)}()
+ if err=server.ListenAndServeTLS("/run/erp-identity/server.crt","/run/erp-identity/server.key");err!=nil && err!=http.ErrServerClosed {fmt.Fprintln(os.Stderr,"identity server stopped");os.Exit(1)}
+}

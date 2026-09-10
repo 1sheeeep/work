@@ -1,0 +1,3 @@
+./server.go
+./store.go
+./server_test.go

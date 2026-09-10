@@ -1,0 +1,9 @@
+{
+  "http_listen": "0.0.0.0:19091",
+  "tcp_listen": "0.0.0.0:19092",
+  "udp_listen": "0.0.0.0:19093",
+  "data_dir": "./data",
+  "max_body_bytes": 1048576,
+  "tcp_ack": "",
+  "allow_remote_status": false
+}

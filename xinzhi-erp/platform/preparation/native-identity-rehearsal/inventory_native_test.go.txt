@@ -1,0 +1,48 @@
+package platform
+
+import (
+	"context"
+	"net/http/httptest"
+	"testing"
+)
+
+func seedOwnedNativeInventory(t *testing.T, ctx context.Context, s *PostgresStore) StoreAppReadBinding {
+	t.Helper()
+	binding := preparationBinding()
+	shop, err := s.CreateShop(ctx, Shop{DisplayName: "Owned native inventory source", Platform: "shopify", Status: ShopStatusActive})
+	if err != nil {
+		t.Fatal("native source shop setup failed")
+	}
+	binding.CustomerServiceShopID = shop.ID
+	_, err = s.SaveShopifyAppProfile(ctx, ShopifyAppProfile{ShopID: shop.ID, ShopDomain: binding.ShopDomain, ClientID: binding.AppClientID, EncryptedClientSecret: "synthetic-not-real", EncryptedAutomationToken: "synthetic-not-real-automation"})
+	if err != nil {
+		t.Fatal("native source app setup failed")
+	}
+	_, err = s.SaveShopifyInstallation(ctx, ShopifyInstallation{ShopID: shop.ID, ShopDomain: binding.ShopDomain, AccessToken: "synthetic-owner-token-never-return", Scope: "write_inventory,read_locations"})
+	if err != nil {
+		t.Fatal("native source installation setup failed")
+	}
+	return binding
+}
+
+func verifyOwnedNativeInventory(t *testing.T, s *PostgresStore, b StoreAppReadBinding) {
+	t.Helper()
+	p := &inventoryPreparationTestProvider{preparationReadProvider: preparationProvider(b)}
+	p.facts.GrantedScopes = []string{"write_inventory", "read_locations"}
+	a := &inventoryPreparationTestAuthority{}
+	h, err := NewERPStoreAppInventoryPreparationHandler(s, p, preparationTestToken, []StoreAppReadBinding{b}, a)
+	if err != nil {
+		t.Fatal("native inventory candidate setup failed")
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, inventoryPreparationRequest(b))
+	if w.Code != 200 || p.writes != 1 || p.ownerToken != "synthetic-owner-token-never-return" {
+		t.Fatal("native source owner adapter failed")
+	}
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, inventoryPreparationRequest(b))
+	if w.Code != 409 || p.writes != 1 {
+		t.Fatal("native source replay guard failed")
+	}
+	t.Log("NATIVE_STORE_APP_ADAPTER_VERIFIED: original PostgreSQL shop, app and installation reads; synthetic upstream; routes remain unmounted")
+}

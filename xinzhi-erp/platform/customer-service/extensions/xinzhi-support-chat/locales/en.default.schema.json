@@ -1,0 +1,64 @@
+{
+  "settings": {
+    "greeting_message": { "label": "Greeting message" },
+    "featured_products": { "label": "Featured products" },
+    "show_featured_products": { "label": "Show featured products" },
+    "chat_background_color": { "label": "Background" },
+    "chat_font_color": { "label": "Text" },
+    "chat_colors": { "content": "Chat window colors" },
+    "launcher_colors": { "content": "Chat button colors" },
+    "launcher_background_color": { "label": "Background" },
+    "launcher_text_color": { "label": "Text" },
+    "launcher": { "content": "Chat button" },
+    "launcher_icon": {
+      "label": "Icon",
+      "options": {
+        "chat_bubble": { "label": "Chat bubble" },
+        "email": { "label": "Email" },
+        "question": { "label": "Question mark" },
+        "smile": { "label": "Smile" },
+        "team": { "label": "Team" },
+        "wave": { "label": "Wave" },
+        "none": { "label": "No icon" }
+      }
+    },
+    "launcher_label": {
+      "label": "Label",
+      "options": {
+        "chat": { "label": "Chat" },
+        "ask_anything": { "label": "Ask anything" },
+        "assistance": { "label": "Assistance" },
+        "contact": { "label": "Contact" },
+        "help": { "label": "Help" },
+        "support": { "label": "Support" },
+        "live_chat": { "label": "Live chat" },
+        "message_us": { "label": "Message us" },
+        "need_help": { "label": "Need help?" },
+        "none": { "label": "No text" }
+      }
+    },
+    "horizontal_position": {
+      "label": "Horizontal position",
+      "options": {
+        "left": { "label": "Left" },
+        "center": { "label": "Center" },
+        "right": { "label": "Right" }
+      }
+    },
+    "vertical_position": {
+      "label": "Vertical position",
+      "options": {
+        "lowest": { "label": "Lowest" },
+        "higher": { "label": "Higher" },
+        "highest": { "label": "Highest" }
+      }
+    },
+    "inherit_font": { "label": "Inherit the store theme font" },
+    "typography": { "content": "Typography" },
+    "border": { "content": "Corners" },
+    "border_radius": { "label": "Corner radius" },
+    "behavior_note": {
+      "content": "These appearance settings are saved to this Shopify theme. Configure routing, automated replies, and conversations in the Xinzhi Chat customer-service workspace."
+    }
+  }
+}

@@ -1,0 +1,20 @@
+// Build only the tracked frontend baseline and this account-integration slice.
+import {spawnSync} from 'node:child_process';
+import {mkdtempSync,mkdirSync,copyFileSync,writeFileSync,readFileSync} from 'node:fs';
+import {resolve,join} from 'node:path';
+const root=resolve(import.meta.dirname,'../..');
+const out=mkdtempSync(join(root,'platform/backend/target/native-identity-web-'));
+const env=Object.fromEntries(Object.entries(process.env).filter(([k])=>!/^VITE_|^ERP_|^SHOPIFY_/i.test(k)));
+const run=(cmd,args,cwd=root)=>{const r=spawnSync(cmd,args,{cwd,env,encoding:'utf8',windowsHide:true,timeout:180000});if(r.status!==0){process.stdout.write(r.stdout??'');process.stderr.write(r.stderr??'');throw Error('WEB_BUILD_FAILED');}return r.stdout;};
+run('git',['archive','--format=tar','--output='+join(out,'frontend.tar'),'HEAD:platform/frontend']);
+const source=join(out,'source');mkdirSync(source);run('tar',['-xf',join(out,'frontend.tar'),'-C',source]);
+for(const file of ['src/modules/customerServiceEntry.ts','src/modules/customerServiceEntry.test.ts','src/pages/CustomerServiceEntryPage.tsx','src/pages/CustomerServiceEntryPage.test.tsx','src/components/AppShell.tsx','src/components/AppShell.test.tsx'])copyFileSync(join(root,'platform/frontend',file),join(source,file));
+run('cmd.exe',['/d','/c','npm.cmd ci --no-audit --no-fund'],source);
+const tests=run('cmd.exe',['/d','/c','npm.cmd test -- src/modules/customerServiceEntry.test.ts src/pages/CustomerServiceEntryPage.test.tsx src/components/AppShell.test.tsx'],source);
+writeFileSync(join(out,'tests.txt'),tests);
+env.VITE_CUSTOMER_SERVICE_WORKBENCH_URL='https://kf.xzkj.ai';env.VITE_CUSTOMER_SERVICE_ENTRY_MODE='native';
+writeFileSync(join(out,'build.txt'),run('cmd.exe',['/d','/c','npm.cmd run build'],source));
+const runtime=join(out,'runtime');mkdirSync(runtime);
+run('tar',['-cf',join(runtime,'dist.tar'),'-C',join(source,'dist'),'.']);
+writeFileSync(join(runtime,'Dockerfile'),'FROM xz-erp-web:20260907T152000Z-usability-0c429e37\nCOPY dist/ /usr/share/nginx/html/\n');
+console.log(out);

@@ -1,0 +1,235 @@
+package platform
+
+import (
+	"context"
+	"database/sql"
+	_ "embed"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"net/http/httptest"
+	"reflect"
+	"testing"
+	"time"
+)
+
+var ownedIdentityPort = flag.Int("owned-identity-port", 0, "Owned synthetic loopback PostgreSQL port")
+
+//go:embed erp_identity_native_rehearsal.sql
+var ownedIdentitySQL string
+
+func TestNativeIdentityPreparationPreservesOriginalPostgresAndSessions(t *testing.T) {
+	if *ownedIdentityPort < 1024 || *ownedIdentityPort > 65535 {
+		t.Fatal("owned synthetic port required")
+	}
+	ctx := context.Background()
+	dsn := fmt.Sprintf("postgres://synthetic_native_identity:synthetic-native-only@127.0.0.1:%d/native_cs_identity_rehearsal?sslmode=disable", *ownedIdentityPort)
+	check, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal("owned database unavailable")
+	}
+	defer check.Close()
+	var marked bool
+	if err = check.QueryRowContext(ctx, `SELECT coalesce(shobj_description(oid,'pg_database'),'')='xz-owned-native-cs-identity-v1' FROM pg_database WHERE datname=current_database()`).Scan(&marked); err != nil || !marked {
+		t.Fatal("owned marker missing")
+	}
+	original, err := OpenPostgresStore(ctx, dsn)
+	if err != nil {
+		t.Fatal("native source database bootstrap failed")
+	}
+	defer original.Close()
+	_, _, seed, binding := identityFixture(t)
+	u, err := original.CreateUser(ctx, seed)
+	if err != nil {
+		t.Fatal("synthetic account setup failed")
+	}
+	// Preserve the extra legacy table observed in the explicitly authorized
+	// 2026-09-07 catalog snapshot. This is a fixture in the marker-checked owned
+	// database, not a migration, One integration, or import of real identities.
+	if _, err = original.db.ExecContext(ctx, `CREATE TABLE public.one_identity_links (
+		issuer text NOT NULL, subject text NOT NULL, user_id text NOT NULL,
+		created_at timestamptz NOT NULL DEFAULT now(),
+		PRIMARY KEY (issuer, subject), UNIQUE (issuer, user_id),
+		FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE RESTRICT)`); err != nil {
+		t.Fatal("owned historical link schema setup failed")
+	}
+	if _, err = original.db.ExecContext(ctx, `INSERT INTO public.one_identity_links(issuer,subject,user_id)
+		VALUES('synthetic-legacy-issuer','synthetic-legacy-subject',$1)`, u.ID); err != nil {
+		t.Fatal("owned historical link fixture failed")
+	}
+	// The native CreateUser intentionally normalizes input scopes. Seed a
+	// legacy stored row directly in this marker-checked synthetic database;
+	// otherwise the restart test would silently exercise only default values.
+	if _, err = original.db.ExecContext(ctx, `UPDATE public.users SET data_scopes='{"knowledge":"assigned","monitor":"assigned","records":"assigned","tickets":"assigned","orders":"assigned","shops":"assigned"}'::jsonb WHERE id=$1`, u.ID); err != nil {
+		t.Fatal("synthetic historical scopes setup failed")
+	}
+	u, err = original.SetUserReceptionOnline(ctx, u.ID, false)
+	if err != nil {
+		t.Fatal("synthetic presence setup failed")
+	}
+	if len(u.DataScopes) != 6 || u.DataScopes["orders"] != "assigned" {
+		t.Fatal("historical scope fixture was normalized before preservation test")
+	}
+	_, err = original.CreateSession(ctx, Session{UserID: u.ID, TokenHash: hashSessionToken("synthetic-original-cs-session"), ExpiresAt: time.Now().Add(time.Hour)})
+	if err != nil {
+		t.Fatal("synthetic original session setup failed")
+	}
+	continuity := seedOwnedNativeContinuity(t, ctx, original, u)
+	inventoryBinding := seedOwnedNativeInventory(t, ctx, original)
+	protectedBefore, err := collectOwnedNativePreservation(ctx, original.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if link, ok := protectedBefore["one_identity_links"]; !ok || link.Rows != 1 || len(protectedBefore) != 39 {
+		t.Fatal("historical identity link omitted from owned preservation")
+	}
+	if _, err = original.db.ExecContext(ctx, ownedIdentitySQL); err != nil {
+		t.Fatal("owned identity sidecar SQL failed")
+	}
+	verifyNativeLedgerRestart(t, ctx, original, dsn)
+	verifyNativeRestrictedIdentityRuntime(t, ctx, original, binding)
+	// This now exercises the actual candidate application bootstrap as well.
+	replica, err := OpenPostgresStore(ctx, dsn)
+	if err != nil {
+		t.Fatal("native second connection failed")
+	}
+	defer replica.Close()
+	h, err := NewERPIdentityPreparationHandler(original, identityTestServiceToken, []ERPIdentityBinding{binding})
+	if err != nil {
+		t.Fatal("native identity adapter setup failed")
+	}
+	other, err := NewERPIdentityPreparationHandler(replica, identityTestServiceToken, []ERPIdentityBinding{binding})
+	if err != nil {
+		t.Fatal("native identity replica setup failed")
+	}
+	input := identityGrant(t, h, binding)
+	response := identityCall(other, "exchange", input)
+	if response.Code != 200 {
+		t.Fatalf("native exchange status %d", response.Code)
+	}
+	var output identityPreparationResponse
+	if json.Unmarshal(response.Body.Bytes(), &output) != nil {
+		t.Fatal("invalid native receipt")
+	}
+	if identityCall(h, "exchange", input).Code != 401 {
+		t.Fatal("native grant replay allowed")
+	}
+	input.Grant, input.Lease = "", output.Lease
+	if identityCall(h, "validate", input).Code != 200 {
+		t.Fatal("native persistent lease rejected")
+	}
+	protectedAfter, err := collectOwnedNativePreservation(ctx, original.db)
+	if err != nil || !reflect.DeepEqual(protectedBefore, protectedAfter) {
+		t.Fatal("identity changed original business table snapshot")
+	}
+	t.Logf("NATIVE_PRESERVATION_VERIFIED tables=%d; no raw business rows exported", len(protectedAfter))
+	verifyOwnedNativeInventory(t, original, inventoryBinding)
+	protectedAfter, err = collectOwnedNativePreservation(ctx, original.db)
+	if err != nil || !reflect.DeepEqual(protectedBefore, protectedAfter) {
+		t.Fatal("source adapter mutated native credentials or business data")
+	}
+	verifyOwnedNativeContinuity(t, ctx, original, continuity, "prepared")
+	current, err := original.GetUser(ctx, u.ID)
+	if err != nil {
+		t.Fatal("original native account unavailable")
+	}
+	if !reflect.DeepEqual(current, u) {
+		before, after := reflect.ValueOf(u), reflect.ValueOf(current)
+		for i := 0; i < before.NumField(); i++ {
+			if !reflect.DeepEqual(before.Field(i).Interface(), after.Field(i).Interface()) {
+				t.Errorf("original native account field changed: %s", before.Type().Field(i).Name)
+			}
+		}
+		t.FailNow()
+	}
+	var sessions int
+	if err = original.db.QueryRowContext(ctx, "SELECT count(*) FROM public.sessions").Scan(&sessions); err != nil || sessions != 1 {
+		t.Fatal("original native sessions changed")
+	}
+	req := httptest.NewRequest("GET", "/api/v1/auth/me", nil)
+	req.Header.Set("Authorization", "Bearer synthetic-original-cs-session")
+	w := httptest.NewRecorder()
+	NewServer(original).Routes().ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatal("native auth session rejected")
+	}
+	if code := identityCall(NewServer(original).Routes(), "verify", identityInput(binding)).Code; code != 404 && code != 405 {
+		t.Fatal("native route implicitly mounted")
+	}
+	for _, status := range []string{UserStatusDisabled, UserStatusActive} {
+		if _, err = original.UpdateUser(ctx, u.ID, User{Status: status}); err != nil {
+			t.Fatal("owned revocation setup failed")
+		}
+	}
+	if identityCall(other, "validate", input).Code != 401 {
+		t.Fatal("native transient revocation resurrected old lease")
+	}
+	var protectedTable string
+	for _, name := range []string{"email_outbox", "conversations", "messages"} {
+		if err = original.db.QueryRowContext(ctx, "SELECT coalesce(to_regclass($1)::text,'')", "public."+name).Scan(&protectedTable); err != nil || protectedTable == "" {
+			t.Fatal("native business table missing")
+		}
+	}
+	var replyLanguage bool
+	if err = original.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='conversation_reply_languages' AND column_name='code')`).Scan(&replyLanguage); err != nil || !replyLanguage {
+		t.Fatal("latest native reply-language migration missing")
+	}
+	beforeAudit, err := original.GetUser(ctx, u.ID)
+	if err != nil {
+		t.Fatal("audit baseline unavailable")
+	}
+	changed, err := auditOwnedNativeRestart(ctx, original)
+	if err != nil {
+		t.Fatal("owned native restart audit failed")
+	}
+	foundPermissions, foundDataScopes := false, false
+	for _, field := range changed {
+		if field == "permissions" {
+			foundPermissions = true
+		}
+		if field == "data_scopes" {
+			foundDataScopes = true
+		}
+	}
+	if !foundPermissions || !foundDataScopes {
+		t.Fatal("native permission and stored scope replay regressions were not detected")
+	}
+	afterAudit, err := original.GetUser(ctx, u.ID)
+	if err != nil || !reflect.DeepEqual(beforeAudit, afterAudit) {
+		t.Fatal("restart audit changed account instead of rolling back")
+	}
+	t.Logf("LEGACY_REPLAY_HAZARD_DETECTED fields=%v; audit transaction rolled back; candidate ledger prevents replay", changed)
+	protectedBefore, err = collectOwnedNativePreservation(ctx, original.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Removing only the preparation sidecar must preserve the original login
+	// and account. This database is explicitly owned and synthetic above.
+	if _, err = original.db.ExecContext(ctx, `DROP TRIGGER identity_preparation_revision ON public.users; DROP SCHEMA customer_service CASCADE`); err != nil {
+		t.Fatal("owned sidecar removal failed")
+	}
+	afterRemoval, err := original.GetUser(ctx, u.ID)
+	if err != nil || !reflect.DeepEqual(afterAudit, afterRemoval) {
+		t.Fatal("sidecar removal changed native account")
+	}
+	req = httptest.NewRequest("GET", "/api/v1/auth/me", nil)
+	req.Header.Set("Authorization", "Bearer synthetic-original-cs-session")
+	w = httptest.NewRecorder()
+	NewServer(original).Routes().ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatal("native session did not survive sidecar removal")
+	}
+	if identityCall(other, "validate", input).Code == 200 {
+		t.Fatal("removed sidecar still granted identity access")
+	}
+	protectedAfter, err = collectOwnedNativePreservation(ctx, original.db)
+	if err != nil || !reflect.DeepEqual(protectedBefore, protectedAfter) {
+		t.Fatal("sidecar rollback changed original business data")
+	}
+	restarted, err := OpenPostgresStore(ctx, dsn)
+	if err != nil {
+		t.Fatal("safe candidate restart after sidecar rollback failed")
+	}
+	defer restarted.Close()
+	verifyOwnedNativeContinuity(t, ctx, restarted, continuity, "rolled-back")
+}

@@ -1,0 +1,218 @@
+.settings-page {
+  --settings-panel-radius: 7px;
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.settings-page-header {
+  display: flex;
+  min-width: 0;
+  min-height: 54px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 9px 12px 9px 14px;
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-primary);
+  border-radius: var(--settings-panel-radius);
+  background: linear-gradient(90deg, var(--color-primary-soft) 0, var(--color-surface) 30%);
+}
+
+.settings-page-header-copy {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-page-section {
+  flex: none;
+  margin: 0;
+  padding-right: 12px;
+  border-right: 1px solid var(--color-border);
+  color: var(--color-primary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.settings-page-header h1 {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 17px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.settings-page-header-copy > div > p {
+  margin: 2px 0 0;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-page-header-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-page > .warehouse-archive-card,
+.settings-page > .iam-section,
+.settings-page .iam-section {
+  border-radius: var(--settings-panel-radius);
+  box-shadow: none;
+}
+
+.settings-page .warehouse-archive-filters {
+  grid-template-columns: repeat(auto-fit, minmax(176px, 1fr));
+  gap: 8px 10px;
+  padding: 10px 12px;
+}
+
+.settings-page .warehouse-archive-filters label,
+.settings-page .warehouse-archive-filter-control {
+  gap: 4px;
+}
+
+.settings-page .warehouse-archive-actions {
+  min-height: 46px;
+  gap: 7px;
+  padding: 7px 12px;
+  background: var(--color-surface);
+}
+
+.settings-page .warehouse-archive-tabs,
+.settings-page .iam-view-tabs {
+  min-height: 38px;
+  padding: 0 8px;
+  background: var(--color-surface);
+}
+
+.settings-page .warehouse-archive-tabs button,
+.settings-page .iam-view-tabs button {
+  min-height: 38px;
+  padding: 7px 12px;
+}
+
+.settings-page .warehouse-archive-table-wrap th {
+  height: 38px;
+  padding-block: 8px;
+  background: var(--color-surface-subtle);
+}
+
+.settings-page .warehouse-archive-table-wrap td {
+  padding-block: 9px;
+}
+
+.settings-page .warehouse-archive-card > .warehouse-processing-formula,
+.settings-page .warehouse-archive-card > .inline-alert,
+.settings-page .warehouse-archive-card > .warehouse-export-feedback {
+  margin: 10px 12px 0;
+  border-radius: 6px;
+}
+
+.settings-page .warehouse-dialog {
+  border-radius: 8px;
+}
+
+.settings-page .warehouse-dialog > .table-heading {
+  padding: 12px 14px;
+}
+
+.settings-page .warehouse-dialog > form:not(.warehouse-archive-filters):not(.logistics-fee-form) {
+  gap: 10px;
+  padding: 14px;
+}
+
+.settings-page .warehouse-dialog .inline-alert {
+  margin: 0;
+}
+
+.settings-page .settings-general-layout {
+  gap: 10px;
+}
+
+.settings-page .settings-general-layout fieldset,
+.settings-page form > fieldset,
+.settings-page .enterprise-watermark-form fieldset,
+.settings-page .settings-approver-fieldset {
+  border-radius: 7px;
+}
+
+.settings-page .settings-general-layout fieldset {
+  gap: 10px;
+  padding: 12px;
+}
+
+.settings-page .settings-deadline-summary,
+.settings-page .settings-address-config {
+  border-radius: 7px;
+  background: var(--color-surface-subtle);
+}
+
+.settings-page .settings-address-config {
+  gap: 12px;
+  padding: 12px;
+}
+
+.settings-page .warehouse-archive-pagination {
+  min-height: 42px;
+  padding: 6px 12px;
+}
+
+@media (max-width: 900px) {
+  .settings-page-header {
+    align-items: flex-start;
+  }
+
+  .settings-page-header-copy {
+    align-items: flex-start;
+  }
+
+  .settings-page-header-copy > div > p {
+    overflow: visible;
+    white-space: normal;
+  }
+}
+
+@media (max-width: 640px) {
+  .settings-page {
+    gap: 8px;
+  }
+
+  .settings-page-header {
+    display: grid;
+    padding: 10px 11px;
+  }
+
+  .settings-page-header-copy {
+    display: grid;
+    gap: 5px;
+  }
+
+  .settings-page-section {
+    width: fit-content;
+    padding: 0;
+    border: 0;
+  }
+
+  .settings-page-header-actions {
+    justify-content: flex-start;
+  }
+
+  .settings-page .warehouse-archive-filters {
+    grid-template-columns: 1fr;
+    padding: 10px;
+  }
+
+  .settings-page .warehouse-archive-actions {
+    padding-inline: 10px;
+  }
+}

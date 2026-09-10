@@ -1,0 +1,25 @@
+.shopify-link-page { max-width: 780px; margin: 0 auto; padding: 24px; color: var(--color-text); }
+.shopify-link-page > header, .shopify-link-brand { display: flex; align-items: center; gap: 12px; }
+.shopify-link-page > header { justify-content: space-between; margin-bottom: 24px; }
+.shopify-link-page .language-switcher { min-width: 56px; min-height: 44px; color: var(--color-text); background: var(--color-surface); border: 1px solid var(--color-border-strong); }
+.shopify-link-page .language-switcher:hover { background: var(--color-surface-subtle); }
+.shopify-link-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 12px; padding: 28px; }
+.shopify-link-card h1 { margin: 0; font-size: 24px; }
+.shopify-link-card p { line-height: 1.65; overflow-wrap: anywhere; }
+.shopify-link-details { margin: 24px 0; border-top: 1px solid var(--color-border); }
+.shopify-link-details > div { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 16px; padding: 16px 0; border-bottom: 1px solid var(--color-border); }
+.shopify-link-details dt, .shopify-link-muted { color: var(--color-text-muted); }
+.shopify-link-details dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.shopify-link-details small { display: block; font-weight: 400; margin-top: 4px; }
+.shopify-link-consent { display: flex; align-items: flex-start; gap: 10px; padding: 16px 0; line-height: 1.6; cursor: pointer; }
+.shopify-link-consent input { flex: 0 0 auto; width: 18px; height: 18px; margin-top: 4px; }
+.shopify-link-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 16px; }
+.shopify-link-page .button { min-height: 44px; white-space: normal; text-align: center; }
+.shopify-link-error { padding: 12px; color: var(--color-error); background: var(--color-error-soft); border: 1px solid var(--color-error); border-radius: 6px; }
+.shopify-link-page :focus-visible { outline: 2px solid var(--color-primary); outline-offset: 3px; }
+@media (max-width: 560px) {
+  .shopify-link-page { padding: 16px; }
+  .shopify-link-card { padding: 20px; }
+  .shopify-link-details > div { grid-template-columns: 1fr; gap: 6px; }
+  .shopify-link-actions .button { width: 100%; }
+}

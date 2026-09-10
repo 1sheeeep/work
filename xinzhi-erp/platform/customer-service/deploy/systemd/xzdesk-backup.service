@@ -1,0 +1,15 @@
+[Unit]
+Description=Xzdesk encrypted PostgreSQL, upload, and production configuration backup
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/xzdesk
+ExecStartPre=/usr/bin/test -x /usr/bin/age
+ExecStartPre=/usr/bin/test -f /etc/xzdesk/backup-recipients.txt
+ExecStart=/bin/sh /opt/xzdesk/deploy/backup-production.sh
+UMask=0077
+

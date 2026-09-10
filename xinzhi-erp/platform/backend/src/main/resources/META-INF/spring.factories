@@ -1,0 +1,3 @@
+org.springframework.boot.EnvironmentPostProcessor=\
+cn.xzkj.erp.config.ProductionSafetyEnvironmentPostProcessor,\
+cn.xzkj.erp.iam.bootstrap.InitialAdminBootstrapEnvironmentPostProcessor

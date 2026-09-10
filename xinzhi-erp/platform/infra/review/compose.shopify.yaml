@@ -1,0 +1,79 @@
+name: xz-erp-shopify
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
+services:
+  connector:
+    image: ${SHOPIFY_CONNECTOR_IMAGE:?SHOPIFY_CONNECTOR_IMAGE is required}
+    entrypoint: ["/shopify-connector"]
+    command: ["-addr", "0.0.0.0:8790"]
+    pull_policy: never
+    restart: unless-stopped
+    environment:
+      XZ_ERP_CONNECTOR_TOKEN: ${ERP_XZ_ERP_APP_CONNECTOR_TOKEN:?ERP_XZ_ERP_APP_CONNECTOR_TOKEN is required}
+      SHOPIFY_APP_API_KEY: ${SHOPIFY_APP_API_KEY:?SHOPIFY_APP_API_KEY is required}
+      SHOPIFY_APP_API_SECRET: ${SHOPIFY_APP_API_SECRET:?SHOPIFY_APP_API_SECRET is required}
+      SHOPIFY_APP_SCOPES: ${SHOPIFY_APP_SCOPES:?SHOPIFY_APP_SCOPES is required}
+      SHOPIFY_APP_API_VERSION: ${SHOPIFY_APP_API_VERSION:-2026-07}
+      SHOPIFY_CONNECTOR_CALLBACK_URL: ${SHOPIFY_CONNECTOR_CALLBACK_URL:-https://erp.xzkj.ai/shopify/oauth/callback}
+      SHOPIFY_CONNECTOR_DATA_FILE: /var/lib/xz-erp-connector/installations.enc
+      SHOPIFY_CONNECTOR_ENCRYPTION_KEY: ${SHOPIFY_CONNECTOR_ENCRYPTION_KEY:?SHOPIFY_CONNECTOR_ENCRYPTION_KEY is required}
+      SHOPIFY_CONNECTOR_ENCRYPTION_KEY_VERSION: ${SHOPIFY_CONNECTOR_ENCRYPTION_KEY_VERSION:?SHOPIFY_CONNECTOR_ENCRYPTION_KEY_VERSION is required}
+      SHOPIFY_CONNECTOR_REVOCATION_EFFECTS_MODE: connector-only
+      # Keep the canonical production origin as the shared-app default. Route
+      # only the prepared review shop to kf-uat through the per-shop override.
+      SHOPIFY_CHAT_WIDGET_SERVICE_ORIGIN: ${SHOPIFY_CHAT_WIDGET_SERVICE_ORIGIN:-https://kf.xzkj.ai}
+      SHOPIFY_CHAT_WIDGET_SERVICE_ORIGIN_OVERRIDES: ${SHOPIFY_CHAT_WIDGET_SERVICE_ORIGIN_OVERRIDES:-}
+      SHOPIFY_PUBLIC_LEGAL_NAME: ${SHOPIFY_PUBLIC_LEGAL_NAME:?SHOPIFY_PUBLIC_LEGAL_NAME is required}
+      SHOPIFY_PUBLIC_COMPANY_WEBSITE: ${SHOPIFY_PUBLIC_COMPANY_WEBSITE:?SHOPIFY_PUBLIC_COMPANY_WEBSITE is required}
+      SHOPIFY_PUBLIC_SUPPORT_EMAIL: ${SHOPIFY_PUBLIC_SUPPORT_EMAIL:?SHOPIFY_PUBLIC_SUPPORT_EMAIL is required}
+      SHOPIFY_PUBLIC_PRIVACY_EMAIL: ${SHOPIFY_PUBLIC_PRIVACY_EMAIL:?SHOPIFY_PUBLIC_PRIVACY_EMAIL is required}
+      SHOPIFY_PUBLIC_EFFECTIVE_DATE: ${SHOPIFY_PUBLIC_EFFECTIVE_DATE:?SHOPIFY_PUBLIC_EFFECTIVE_DATE is required}
+      SHOPIFY_PUBLIC_BUSINESS_ADDRESS: ${SHOPIFY_PUBLIC_BUSINESS_ADDRESS:?SHOPIFY_PUBLIC_BUSINESS_ADDRESS is required}
+      SHOPIFY_PUBLIC_PROCESSING_REGIONS: ${SHOPIFY_PUBLIC_PROCESSING_REGIONS:?SHOPIFY_PUBLIC_PROCESSING_REGIONS is required}
+      SHOPIFY_PUBLIC_SUBPROCESSORS: ${SHOPIFY_PUBLIC_SUBPROCESSORS:?SHOPIFY_PUBLIC_SUBPROCESSORS is required}
+      SHOPIFY_PUBLIC_TRANSFER_MECHANISM: ${SHOPIFY_PUBLIC_TRANSFER_MECHANISM:?SHOPIFY_PUBLIC_TRANSFER_MECHANISM is required}
+      SHOPIFY_PUBLIC_ORDER_RETENTION: ${SHOPIFY_PUBLIC_ORDER_RETENTION:?SHOPIFY_PUBLIC_ORDER_RETENTION is required}
+      SHOPIFY_PUBLIC_BACKUP_RETENTION: ${SHOPIFY_PUBLIC_BACKUP_RETENTION:?SHOPIFY_PUBLIC_BACKUP_RETENTION is required}
+      SHOPIFY_PUBLIC_DELETION_PROCESS: ${SHOPIFY_PUBLIC_DELETION_PROCESS:?SHOPIFY_PUBLIC_DELETION_PROCESS is required}
+      SHOPIFY_PUBLIC_PRIVACY_OFFICER: ${SHOPIFY_PUBLIC_PRIVACY_OFFICER:?SHOPIFY_PUBLIC_PRIVACY_OFFICER is required}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8790/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    volumes:
+      - connector_data:/var/lib/xz-erp-connector
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    cpus: 1.00
+    logging: *default-logging
+    networks:
+      erp_app:
+        aliases:
+          - shopify-connector
+      public_ingress:
+        aliases:
+          - shopify-oauth
+
+volumes:
+  connector_data:
+
+networks:
+  erp_app:
+    external: true
+    name: ${ERP_APP_NETWORK_NAME:-xz-erp-test_app}
+  public_ingress:
+    external: true
+    name: xz-erp-public-ingress

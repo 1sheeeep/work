@@ -1,0 +1,56 @@
+/* Native sign-in must not inherit the desktop workbench's minimum width. */
+body:has(.native-auth-shell) {
+  min-width: 0;
+  min-height: 100dvh;
+  overflow: auto;
+}
+
+body:has(.native-auth-shell) #root {
+  height: auto;
+  min-height: 100dvh;
+}
+
+.native-auth-shell {
+  min-height: 100dvh;
+  height: auto;
+  overflow: visible;
+}
+
+.native-auth-shell .platform-main {
+  min-width: 0;
+  overflow: visible;
+}
+
+.native-auth-shell .auth-layout {
+  overflow: visible;
+}
+
+.native-auth-shell .form-grid label,
+.native-auth-shell .form-grid input,
+.native-auth-shell .form-grid small {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 900px) {
+  .native-auth-shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
+  .native-auth-shell .platform-sidebar {
+    grid-template-rows: auto;
+    justify-items: start;
+    gap: 0;
+    padding: 8px 16px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .native-auth-shell .platform-sidebar .nav-stack,
+  .native-auth-shell .platform-sidebar .sidebar-footer { display: none; }
+  .native-auth-shell .brand-block { width: auto; min-height: 48px; padding: 0; }
+  .native-auth-shell .brand-mark { flex: 0 0 38px; }
+  .native-auth-shell .brand-block > div:not(.brand-mark) { display: block; }
+  .native-auth-shell .platform-main { padding: 12px; align-content: start; }
+  .native-auth-shell .auth-layout { grid-template-columns: minmax(0, 1fr); }
+  .native-auth-shell .feature-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .native-auth-shell .platform-topbar { flex-wrap: wrap; gap: 8px; }
+  .native-auth-shell input { font-size: 16px; }
+}

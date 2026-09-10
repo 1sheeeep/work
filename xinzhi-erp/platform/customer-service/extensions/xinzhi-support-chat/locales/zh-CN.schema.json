@@ -1,0 +1,64 @@
+{
+  "settings": {
+    "greeting_message": { "label": "欢迎语" },
+    "featured_products": { "label": "精选商品" },
+    "show_featured_products": { "label": "显示精选商品" },
+    "chat_background_color": { "label": "背景色" },
+    "chat_font_color": { "label": "文字颜色" },
+    "chat_colors": { "content": "聊天窗口颜色" },
+    "launcher_colors": { "content": "聊天按钮颜色" },
+    "launcher_background_color": { "label": "背景色" },
+    "launcher_text_color": { "label": "文字颜色" },
+    "launcher": { "content": "聊天按钮" },
+    "launcher_icon": {
+      "label": "图标",
+      "options": {
+        "chat_bubble": { "label": "聊天气泡" },
+        "email": { "label": "邮件" },
+        "question": { "label": "问号" },
+        "smile": { "label": "笑脸" },
+        "team": { "label": "团队" },
+        "wave": { "label": "挥手" },
+        "none": { "label": "不显示图标" }
+      }
+    },
+    "launcher_label": {
+      "label": "按钮文字",
+      "options": {
+        "chat": { "label": "聊天" },
+        "ask_anything": { "label": "有问题请问" },
+        "assistance": { "label": "需要协助" },
+        "contact": { "label": "联系我们" },
+        "help": { "label": "帮助" },
+        "support": { "label": "客服支持" },
+        "live_chat": { "label": "在线聊天" },
+        "message_us": { "label": "给我们留言" },
+        "need_help": { "label": "需要帮助？" },
+        "none": { "label": "不显示文字" }
+      }
+    },
+    "horizontal_position": {
+      "label": "水平位置",
+      "options": {
+        "left": { "label": "左侧" },
+        "center": { "label": "居中" },
+        "right": { "label": "右侧" }
+      }
+    },
+    "vertical_position": {
+      "label": "垂直位置",
+      "options": {
+        "lowest": { "label": "贴近底部" },
+        "higher": { "label": "适当抬高" },
+        "highest": { "label": "较高" }
+      }
+    },
+    "inherit_font": { "label": "继承店铺主题字体" },
+    "typography": { "content": "字体" },
+    "border": { "content": "圆角" },
+    "border_radius": { "label": "圆角大小" },
+    "behavior_note": {
+      "content": "这些外观设置保存在当前 Shopify 主题中。客服分配、自动回复和会话请到 Xinzhi Chat 客服工作台管理。"
+    }
+  }
+}

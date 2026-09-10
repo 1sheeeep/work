@@ -1,0 +1,203 @@
+package platform
+
+// Source-only candidate, installed only by the owned native rehearsal runner.
+// Existing databases without a reviewed baseline are rejected, never upgraded
+// implicitly. This file does not register a route, task or production command.
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"fmt"
+	"strings"
+)
+
+const nativeBaselineCommit = "5f8a1f3ab3a36bb194d1fe517a19bce3c2e602f2"
+const nativeMigrationLock int64 = 6363137172437496147
+
+type nativeMigration struct{ name, checksum, sql string }
+type nativeBaselineReview struct{ sourceCommit, migrationDigest, schemaDigest string }
+
+func nativeDigest(raw []byte) string {
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+func nativeMigrations() ([]nativeMigration, error) {
+	entries, err := migrationFiles.ReadDir("migrations")
+	if err != nil {
+		return nil, err
+	}
+	var result []nativeMigration
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
+			continue
+		}
+		raw, err := migrationFiles.ReadFile("migrations/" + entry.Name())
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, nativeMigration{entry.Name(), nativeDigest(raw), string(raw)})
+	}
+	return result, nil
+}
+
+func nativeMigrationDigest(items []nativeMigration) string {
+	var joined strings.Builder
+	for _, item := range items {
+		fmt.Fprintf(&joined, "%s:%s\n", item.name, item.checksum)
+	}
+	return nativeDigest([]byte(joined.String()))
+}
+
+// Catalog fingerprint covers columns/defaults, constraints and indexes. It is
+// an optimistic concurrency guard for a separately reviewed baseline, NOT an
+// automatic claim that an arbitrary schema has the correct business history.
+func nativeSchemaDigest(ctx context.Context, tx *sql.Tx) (string, error) {
+	var raw string
+	err := tx.QueryRowContext(ctx, `SELECT coalesce(string_agg(v,E'\n' ORDER BY v),'') FROM (
+ SELECT 'column:'||c.relname||':'||a.attname||':'||format_type(a.atttypid,a.atttypmod)||':'||a.attnotnull::text||':'||coalesce(pg_get_expr(d.adbin,d.adrelid),'') v
+ FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid
+ LEFT JOIN pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum
+ WHERE n.nspname='public' AND c.relkind IN ('r','p') AND a.attnum>0 AND NOT a.attisdropped
+ UNION ALL SELECT 'constraint:'||c.relname||':'||p.conname||':'||pg_get_constraintdef(p.oid)
+ FROM pg_constraint p JOIN pg_class c ON c.oid=p.conrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public'
+ UNION ALL SELECT 'index:'||tablename||':'||indexname||':'||indexdef FROM pg_indexes WHERE schemaname='public'
+ ) catalog`).Scan(&raw)
+	return nativeDigest([]byte(raw)), err
+}
+
+func nativeLedgerTx(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	if _, err = tx.ExecContext(ctx, `SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s'`); err == nil {
+		_, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, nativeMigrationLock)
+	}
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	return tx, nil
+}
+
+func createNativeLedger(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(ctx, `CREATE SCHEMA IF NOT EXISTS erp_native_preparation;
+ REVOKE ALL ON SCHEMA erp_native_preparation FROM PUBLIC;
+ CREATE TABLE erp_native_preparation.migration_ledger (
+ name text PRIMARY KEY, checksum text NOT NULL CHECK (length(checksum)=64),
+ origin text NOT NULL CHECK (origin IN ('EXECUTED','REVIEWED_BASELINE')),
+ source_commit text NOT NULL, recorded_at timestamptz NOT NULL DEFAULT now())`)
+	return err
+}
+
+func recordNativeMigration(ctx context.Context, tx *sql.Tx, m nativeMigration, origin string) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO erp_native_preparation.migration_ledger(name,checksum,origin,source_commit) VALUES($1,$2,$3,$4)`, m.name, m.checksum, origin, nativeBaselineCommit)
+	return err
+}
+
+func (s *PostgresStore) migrateWithNativeLedger(ctx context.Context) error {
+	items, err := nativeMigrations()
+	if err != nil {
+		return err
+	}
+	tx, err := nativeLedgerTx(ctx, s.db)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var exists bool
+	if err = tx.QueryRowContext(ctx, `SELECT to_regclass('erp_native_preparation.migration_ledger') IS NOT NULL`).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		var populated bool
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','S'))`).Scan(&populated); err != nil {
+			return err
+		}
+		if populated {
+			return fmt.Errorf("NATIVE_REVIEWED_BASELINE_REQUIRED")
+		}
+		if err = createNativeLedger(ctx, tx); err != nil {
+			return err
+		}
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT name,checksum FROM erp_native_preparation.migration_ledger ORDER BY name`)
+	if err != nil {
+		return err
+	}
+	var applied []nativeMigration
+	for rows.Next() {
+		var m nativeMigration
+		if err = rows.Scan(&m.name, &m.checksum); err != nil {
+			rows.Close()
+			return err
+		}
+		applied = append(applied, m)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	// Must be an exact prefix: catches deleted, reordered, edited and inserted
+	// historical migrations, as well as a binary rollback behind the DB version.
+	if len(applied) > len(items) {
+		return fmt.Errorf("NATIVE_MIGRATION_HISTORY_MISMATCH")
+	}
+	for i, m := range applied {
+		if m.name != items[i].name || m.checksum != items[i].checksum {
+			return fmt.Errorf("NATIVE_MIGRATION_HISTORY_MISMATCH")
+		}
+	}
+	for _, m := range items[len(applied):] {
+		if _, err = tx.ExecContext(ctx, m.sql); err != nil {
+			return fmt.Errorf("NATIVE_MIGRATION_EXECUTION_FAILED")
+		}
+		if err = recordNativeMigration(ctx, tx, m, "EXECUTED"); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// Only callable from explicit preparation code after review. No environment
+// bypass and no automatic baseline-on-start. Never replays historical DML.
+func (s *PostgresStore) adoptReviewedNativeBaseline(ctx context.Context, review nativeBaselineReview) error {
+	items, err := nativeMigrations()
+	if err != nil {
+		return err
+	}
+	if review.sourceCommit != nativeBaselineCommit || review.migrationDigest != nativeMigrationDigest(items) || len(review.schemaDigest) != 64 {
+		return fmt.Errorf("NATIVE_BASELINE_REVIEW_INVALID")
+	}
+	tx, err := nativeLedgerTx(ctx, s.db)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	digest, err := nativeSchemaDigest(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if digest != review.schemaDigest {
+		return fmt.Errorf("NATIVE_BASELINE_SCHEMA_CHANGED")
+	}
+	var users bool
+	if err = tx.QueryRowContext(ctx, `SELECT to_regclass('public.users') IS NOT NULL`).Scan(&users); err != nil {
+		return err
+	}
+	if !users {
+		return fmt.Errorf("NATIVE_BASELINE_SCHEMA_REQUIRED")
+	}
+	if err = createNativeLedger(ctx, tx); err != nil {
+		return fmt.Errorf("NATIVE_BASELINE_ALREADY_EXISTS_OR_INVALID")
+	}
+	for _, m := range items {
+		if err = recordNativeMigration(ctx, tx, m, "REVIEWED_BASELINE"); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}

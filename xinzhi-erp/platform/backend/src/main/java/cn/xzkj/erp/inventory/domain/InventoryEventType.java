@@ -1,0 +1,13 @@
+package cn.xzkj.erp.inventory.domain;
+
+public enum InventoryEventType {
+    OPENING_BALANCE,
+    CORRECTION,
+    REVERSAL,
+    FULFILLMENT_SHIPMENT,
+    DOCUMENT_POST,
+    WAREHOUSE_TRANSFER_SHIPMENT,
+    WAREHOUSE_TRANSFER_RECEIPT,
+    PURCHASE_ORDER_RECEIPT,
+    PURCHASE_ORDER_RETURN
+}

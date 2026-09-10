@@ -1,0 +1,24 @@
+title = "ERP source publication checks"
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Reviewed synthetic idempotency keys, not authentication credentials"
+condition = "AND"
+paths = ['''platform/(frontend/src/modules/(shopifyAfterSalesApi|orderCenterApi)\.test\.ts|customer-service/internal/platform/shopify_order_(cancellation|line_discount)_test\.go)$''']
+regexTarget = "secret"
+regexes = ['''^web\.(order-(cancel|discount)-(1|10)|fulfillment-1|return-(refund|decision)\.10\.1234567890abcdef)$''']
+
+[[allowlists]]
+description = "Browser local storage key is not a credential"
+condition = "AND"
+paths = ['''platform/frontend/src/pages/OrderCenterPage\.tsx$''']
+regexTarget = "secret"
+regexes = ['''^xz\.erp\.orders\.visibleColumns\.v1$''']
+
+[[allowlists]]
+description = "Deliberately invalid signatures exercise the security gate"
+condition = "AND"
+paths = ['''platform/scripts/frontend-build-security-gate\.test\.mjs$''']
+regexTarget = "secret"
+regexes = ['''^AKIAABCDEFGHIJKLMNOP$''', '''^eyJhbGciOiJIUzI1NiJ9\.eyJzdWIiOiIxMjM0NTY3ODkwIn0\.signature123$''']

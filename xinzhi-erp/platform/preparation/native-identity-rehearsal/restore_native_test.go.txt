@@ -1,0 +1,51 @@
+package platform
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"net/http/httptest"
+	"testing"
+)
+
+func TestNativeOwnedRestoreRetainsSessionsAndNewChannelMessages(t *testing.T) {
+	if *ownedIdentityPort == 0 {
+		t.Skip("separate owned restore pass")
+	}
+	ctx := context.Background()
+	dsn := fmt.Sprintf("postgres://synthetic_native_identity:synthetic-native-only@127.0.0.1:%d/native_cs_restore?sslmode=disable", *ownedIdentityPort)
+	probe, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal("owned restore unavailable")
+	}
+	defer probe.Close()
+	var marked bool
+	if err = probe.QueryRowContext(ctx, `SELECT current_database()='native_cs_restore' AND coalesce(shobj_description(oid,'pg_database'),'')='xz-owned-native-cs-restore-v1' FROM pg_database WHERE datname=current_database()`).Scan(&marked); err != nil || !marked {
+		t.Skip("separate owned restore pass")
+	}
+	store, err := OpenPostgresStore(ctx, dsn)
+	if err != nil {
+		t.Fatal("restored safe startup failed")
+	}
+	defer store.Close()
+	request := httptest.NewRequest("GET", "/api/v1/auth/me", nil)
+	request.Header.Set("Authorization", "Bearer synthetic-original-cs-session")
+	reply := httptest.NewRecorder()
+	NewServer(store).Routes().ServeHTTP(reply, request)
+	if reply.Code != 200 {
+		t.Fatal("original session lost after restore")
+	}
+	var messages, ambiguous int
+	if err = store.db.QueryRowContext(ctx, `SELECT count(*) FROM public.messages`).Scan(&messages); err != nil || messages < 6 {
+		t.Fatal("new channel messages missing after restore")
+	}
+	if err = store.db.QueryRowContext(ctx, `SELECT count(*) FROM public.email_outbox WHERE status='ambiguous'`).Scan(&ambiguous); err != nil || ambiguous != 1 {
+		t.Fatal("uncertain email fence missing after restore")
+	}
+	var historicalLinks int
+	if err = store.db.QueryRowContext(ctx, `SELECT count(*) FROM public.one_identity_links
+		WHERE issuer='synthetic-legacy-issuer' AND subject='synthetic-legacy-subject'`).Scan(&historicalLinks); err != nil || historicalLinks != 1 {
+		t.Fatal("historical identity link missing after restore")
+	}
+	t.Log("NATIVE_RESTORE_VERIFIED: original session, post-preparation messages and no-resend email fence survived actual pg_dump/pg_restore and safe constructor")
+}

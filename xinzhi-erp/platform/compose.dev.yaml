@@ -1,0 +1,12 @@
+# Local rough-development override.  It is intentionally separate from
+# compose.yaml so the static Docker preview keeps its release-like topology.
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:${ERP_DB_HOST_PORT:-5432}:5432"
+
+networks:
+  # Docker Desktop does not publish host ports from an internal-only network.
+  # This development-only override keeps the base preview topology isolated.
+  data:
+    internal: false

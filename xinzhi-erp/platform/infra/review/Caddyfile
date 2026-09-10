@@ -1,0 +1,121 @@
+{
+	admin off
+}
+
+erp.xzkj.ai {
+	encode zstd gzip
+
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		X-Content-Type-Options "nosniff"
+	}
+
+	# Shopify HTML owns its framing policy; never replace its verified shop with a wildcard.
+	@notShopifyOwnedPages not path /shopify/app /shopify/session/exchange /shopify/session/products /shopify/session/orders /shopify/session/chat-setup /shopify/session/link-grant /shopify/oauth/authorize /shopify/oauth/callback /shopify/privacy /shopify/terms /shopify/data-processing-terms /shopify/support /shopify/data-deletion /shopify/guide
+	header @notShopifyOwnedPages {
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'self'; form-action 'self'; img-src 'self' data: blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'"
+		X-Frame-Options "SAMEORIGIN"
+	}
+	@shopifyOwnedPages path /shopify/app /shopify/session/exchange /shopify/session/products /shopify/session/orders /shopify/session/chat-setup /shopify/session/link-grant /shopify/oauth/authorize /shopify/oauth/callback /shopify/privacy /shopify/terms /shopify/data-processing-terms /shopify/support /shopify/data-deletion /shopify/guide
+	header @shopifyOwnedPages {
+		?Content-Security-Policy "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+		?Referrer-Policy "no-referrer"
+	}
+
+	@shopifyOAuth path /shopify/oauth/authorize /shopify/oauth/callback
+	@oneControlPlane path /platform-admin /platform-admin/* /auth/one/* /api/v1/one/* /api/v1/platform-admin/* /api/v1/auth/one/* /api/v1/auth/application-entry-grants/identity/redeem
+	handle @oneControlPlane {
+		respond 404
+	}
+
+	handle @shopifyOAuth {
+		reverse_proxy shopify-oauth:8790
+	}
+	@shopifyUninstall path /webhooks/shopify/app/uninstalled
+	handle @shopifyUninstall {
+		reverse_proxy shopify-oauth:8790
+	}
+	@shopifyEmbedded path /shopify/app /shopify/session/exchange /shopify/session/products /shopify/session/orders /shopify/session/chat-setup /shopify/session/link-grant
+	handle @shopifyEmbedded {
+		reverse_proxy shopify-oauth:8790
+	}
+	@shopifyPublic path /shopify/privacy /shopify/terms /shopify/data-processing-terms /shopify/support /shopify/data-deletion /shopify/guide /shopify/proxy/chat/session /webhooks/shopify/compliance
+	handle @shopifyPublic {
+		reverse_proxy shopify-oauth:8790
+	}
+
+	handle {
+		reverse_proxy erp-web:8080 {
+			header_up -Forwarded
+			header_up -X-Forwarded-For
+			header_up -X-Forwarded-Host
+			header_up -X-Forwarded-Proto
+			header_up -X-Real-IP
+			header_up Host {host}
+			header_up X-Real-IP {remote_host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Host {host}
+			header_up X-Forwarded-Proto {scheme}
+			health_uri /readyz
+			health_interval 15s
+			health_timeout 3s
+		}
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}
+
+one.xzkj.ai {
+	encode zstd gzip
+
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Content-Type-Options "nosniff"
+		Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'self'; form-action 'self'; img-src 'self' data: blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'"
+		X-Frame-Options "SAMEORIGIN"
+	}
+
+	@shopifyBoundary path /shopify/* /webhooks/shopify/*
+	handle @shopifyBoundary {
+		respond 404
+	}
+	@erpBusinessApi {
+		path /api/v1/*
+		not path /api/v1/auth/* /api/v1/one/* /api/v1/platform-admin/* /api/v1/system/info
+	}
+	handle @erpBusinessApi {
+		respond 404
+	}
+
+	handle {
+		reverse_proxy erp-web:8080 {
+			header_up -Forwarded
+			header_up -X-Forwarded-For
+			header_up -X-Forwarded-Host
+			header_up -X-Forwarded-Proto
+			header_up -X-Real-IP
+			header_up Host {host}
+			header_up X-Real-IP {remote_host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Host {host}
+			header_up X-Forwarded-Proto {scheme}
+			health_uri /readyz
+			health_interval 15s
+			health_timeout 3s
+		}
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

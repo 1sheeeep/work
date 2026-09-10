@@ -1,0 +1,40 @@
+package platform
+
+import (
+ "context"
+ "database/sql"
+ "encoding/json"
+ "fmt"
+ "net/http/httptest"
+ "testing"
+ "time"
+)
+
+// Called only after the parent verifies its disposable database marker.
+func verifyNativeRestrictedIdentityRuntime(t *testing.T,ctx context.Context,original *PostgresStore,b ERPIdentityBinding) {
+ t.Helper()
+ _,err:=original.db.ExecContext(ctx,`CREATE ROLE erp_identity_bridge LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION CONNECTION LIMIT 4 PASSWORD 'synthetic-bridge-only';
+ GRANT CONNECT ON DATABASE native_cs_identity_rehearsal TO erp_identity_bridge;
+ GRANT USAGE ON SCHEMA public,customer_service TO erp_identity_bridge;
+ GRANT SELECT ON public.users,customer_service.identity_preparation_revisions TO erp_identity_bridge;
+ GRANT SELECT,INSERT,UPDATE,DELETE ON customer_service.identity_preparation_tokens,customer_service.identity_preparation_login_windows TO erp_identity_bridge;`)
+ if err!=nil {t.Fatal("owned restricted role setup failed")}
+ dsn:=fmt.Sprintf("postgres://erp_identity_bridge:synthetic-bridge-only@127.0.0.1:%d/native_cs_identity_rehearsal?sslmode=disable",*ownedIdentityPort)
+ db,err:=sql.Open("pgx",dsn);if err!=nil {t.Fatal(err)};defer db.Close()
+ var safe bool
+ err=db.QueryRowContext(ctx,`SELECT NOT has_table_privilege(current_user,'public.users','UPDATE') AND NOT has_table_privilege(current_user,'public.conversations','SELECT') AND NOT has_table_privilege(current_user,'public.sessions','INSERT')`).Scan(&safe)
+ if err!=nil || !safe {t.Fatal("bridge role can access business writes or conversations")}
+ h,closeDB,err:=OpenNativeERPIdentityRuntime(ctx,dsn,identityTestServiceToken,[]ERPIdentityBinding{b})
+ if err!=nil {t.Fatal("restricted runtime startup failed")};defer closeDB()
+ tls:=httptest.NewTLSServer(h);defer tls.Close()
+ response,err:=tls.Client().Get(tls.URL+"/healthz");if err!=nil {t.Fatal("TLS health failed")};response.Body.Close()
+ if response.StatusCode!=200 {t.Fatal("runtime health rejected")}
+ input:=identityGrant(t,h,b)
+ exchanged:=identityCall(h,"exchange",input)
+ var receipt identityPreparationResponse
+ if exchanged.Code!=200 || json.Unmarshal(exchanged.Body.Bytes(),&receipt)!=nil {t.Fatal("restricted runtime exchange failed")}
+ if time.Until(receipt.ExpiresAt)<7*time.Hour || time.Until(receipt.ExpiresAt)>8*time.Hour {t.Fatal("runtime lease duration incorrect")}
+ input.Grant="";input.Lease=receipt.Lease
+ if identityCall(h,"validate",input).Code!=200 {t.Fatal("restricted runtime validation failed")}
+ t.Log("NATIVE_RESTRICTED_RUNTIME_VERIFIED no migration; TLS health; original business writes denied; eight-hour lease")
+}

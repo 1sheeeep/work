@@ -1,0 +1,192 @@
+x-api-environment: &api-environment
+  DATABASE_URL: "postgres://support:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/shopify_support?sslmode=verify-full&sslrootcert=/etc/xzdesk/postgres-tls/server.crt"
+  DB_MAX_OPEN_CONNS: ${DB_MAX_OPEN_CONNS:-30}
+  DB_MAX_IDLE_CONNS: ${DB_MAX_IDLE_CONNS:-10}
+  DB_CONN_MAX_LIFETIME: ${DB_CONN_MAX_LIFETIME:-30m}
+  EMAIL_RECONCILE_INTERVAL: ${EMAIL_RECONCILE_INTERVAL:-24h}
+  SHOPIFY_API_KEY: ${SHOPIFY_API_KEY:-}
+  SHOPIFY_API_SECRET: ${SHOPIFY_API_SECRET:-}
+  PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+  SHOPIFY_SCOPES: ${SHOPIFY_SCOPES:-read_all_orders,read_customers,read_locations,read_products,read_shopify_payments_disputes,write_inventory,write_merchant_managed_fulfillment_orders,write_order_edits,write_orders,write_returns}
+  XZDESK_UPLOAD_DIR: /var/lib/xzdesk/uploads
+  SHOPIFY_API_VERSION: ${SHOPIFY_API_VERSION:-2026-01}
+  SHOPIFY_APP_DISTRIBUTION: ${SHOPIFY_APP_DISTRIBUTION:-per_shop}
+  SHOPIFY_APP_API_KEY: ${SHOPIFY_APP_API_KEY:-}
+  SHOPIFY_APP_API_SECRET: ${SHOPIFY_APP_API_SECRET:-}
+  SHOPIFY_APP_BASE_URL: ${SHOPIFY_APP_BASE_URL:-}
+  SHOPIFY_APP_CALLBACK_PATH: ${SHOPIFY_APP_CALLBACK_PATH:-/auth/callback}
+  SHOPIFY_APP_API_VERSION: ${SHOPIFY_APP_API_VERSION:-2026-07}
+  SHOPIFY_APP_SCOPES: ${SHOPIFY_APP_SCOPES:-}
+  XZ_ERP_LEGAL_NAME: ${XZ_ERP_LEGAL_NAME:-}
+  XZ_ERP_SUPPORT_EMAIL: ${XZ_ERP_SUPPORT_EMAIL:-}
+  XZ_ERP_PRIVACY_EFFECTIVE_DATE: ${XZ_ERP_PRIVACY_EFFECTIVE_DATE:-}
+  SHOPIFY_CREDENTIALS_ENCRYPTION_KEY: ${SHOPIFY_CREDENTIALS_ENCRYPTION_KEY:-}
+  SHOPIFY_CLI_PATH: ${SHOPIFY_CLI_PATH:-shopify}
+  SHOPIFY_EXTENSION_TEMPLATE_DIR: ${SHOPIFY_EXTENSION_TEMPLATE_DIR:-/opt/xzdesk/extensions/xinzhi-support-chat}
+  XZ_ERP_CONNECTOR_TOKEN: ${XZ_ERP_CONNECTOR_TOKEN:-}
+  XZ_SHOPIFY_CONNECTOR_INTERNAL_BASE_URL: ${XZ_SHOPIFY_CONNECTOR_INTERNAL_BASE_URL:-}
+  AI_BASE_URL: ${AI_BASE_URL:-https://api.deepseek.com/chat/completions}
+  AI_MODEL: ${AI_MODEL:-deepseek-v4-flash}
+  AI_API_KEY: ${AI_API_KEY:-}
+  AI_SETTINGS_ENCRYPTION_KEY: ${AI_SETTINGS_ENCRYPTION_KEY:?AI_SETTINGS_ENCRYPTION_KEY is required}
+  OUTLOOK_CLIENT_ID: ${OUTLOOK_CLIENT_ID:-}
+  OUTLOOK_CLIENT_SECRET: ${OUTLOOK_CLIENT_SECRET:-}
+  OUTLOOK_TENANT_ID: ${OUTLOOK_TENANT_ID:-common}
+  OUTLOOK_SCOPES: ${OUTLOOK_SCOPES:-offline_access User.Read Mail.Read Mail.ReadWrite Mail.Send}
+  OUTLOOK_BASE_URL: ${OUTLOOK_BASE_URL:-}
+  OUTLOOK_WEBHOOK_SECRET: ${OUTLOOK_WEBHOOK_SECRET:-}
+  GMAIL_CLIENT_ID: ${GMAIL_CLIENT_ID:-}
+  GMAIL_CLIENT_SECRET: ${GMAIL_CLIENT_SECRET:-}
+  GMAIL_SCOPES: ${GMAIL_SCOPES:-https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send}
+  GMAIL_BASE_URL: ${GMAIL_BASE_URL:-}
+  GMAIL_PUBSUB_TOPIC: ${GMAIL_PUBSUB_TOPIC:-}
+  GMAIL_PUBSUB_AUDIENCE: ${GMAIL_PUBSUB_AUDIENCE:-}
+  GMAIL_PUBSUB_SERVICE_ACCOUNT_EMAIL: ${GMAIL_PUBSUB_SERVICE_ACCOUNT_EMAIL:-}
+  XZDESK_ACTIVE_COLOR_FILE: /var/run/xzdesk-deploy/active-color
+  SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+
+x-api-service: &api-service
+  dns:
+    - 1.1.1.1
+    - 8.8.8.8
+  extra_hosts:
+    - "97fhkz-dz.myshopify.com:23.227.38.74"
+    - "1fyp5m-fz.myshopify.com:23.227.38.74"
+  restart: unless-stopped
+  logging: &default-logging
+    driver: local
+    options:
+      max-size: "20m"
+      max-file: "5"
+  environment: *api-environment
+  volumes:
+    - /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro
+    - type: bind
+      source: "${XZDESK_POSTGRES_TLS_DIR:?XZDESK_POSTGRES_TLS_DIR is required}/server.crt"
+      target: /etc/xzdesk/postgres-tls/server.crt
+      read_only: true
+      bind:
+        create_host_path: false
+    - type: bind
+      source: "${XZDESK_UPLOAD_HOST_DIR:?XZDESK_UPLOAD_HOST_DIR is required}"
+      target: /var/lib/xzdesk/uploads
+      bind:
+        create_host_path: false
+    - type: bind
+      source: "${XZDESK_DEPLOY_STATE_HOST_DIR:-/opt/xzdesk/runtime/deploy}"
+      target: /var/run/xzdesk-deploy
+      read_only: true
+      bind:
+        create_host_path: false
+  depends_on:
+    postgres:
+      condition: service_healthy
+  expose:
+    - "8787"
+  healthcheck:
+    test:
+      - CMD
+      - node
+      - -e
+      - fetch('http://127.0.0.1:8787/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+    interval: 5s
+    timeout: 4s
+    retries: 12
+    start_period: 10s
+  stop_grace_period: 20s
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/etc/xzdesk/postgres-tls/server.crt
+      - -c
+      - ssl_key_file=/etc/xzdesk/postgres-tls/server.key
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      POSTGRES_USER: support
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: shopify_support
+    volumes:
+      - type: bind
+        source: "${XZDESK_POSTGRES_HOST_DIR:?XZDESK_POSTGRES_HOST_DIR is required}"
+        target: /var/lib/postgresql/data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: "${XZDESK_POSTGRES_TLS_DIR:?XZDESK_POSTGRES_TLS_DIR is required}/server.crt"
+        target: /etc/xzdesk/postgres-tls/server.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: "${XZDESK_POSTGRES_TLS_DIR:?XZDESK_POSTGRES_TLS_DIR is required}/server.key"
+        target: /etc/xzdesk/postgres-tls/server.key
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U support -d shopify_support"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  api:
+    <<: *api-service
+    profiles: ["legacy"]
+    image: ${XZDESK_API_LEGACY_IMAGE:-shopify-support-platform-api:latest}
+    environment:
+      <<: *api-environment
+      XZDESK_RELEASE_ID: ${XZDESK_API_LEGACY_RELEASE:-legacy}
+      XZDESK_DEPLOY_COLOR: legacy
+
+  api-blue:
+    <<: *api-service
+    profiles: ["blue"]
+    image: ${XZDESK_API_BLUE_IMAGE:-shopify-support-platform-api:blue}
+    environment:
+      <<: *api-environment
+      XZDESK_RELEASE_ID: ${XZDESK_API_BLUE_RELEASE:-blue}
+      XZDESK_DEPLOY_COLOR: blue
+
+  api-green:
+    <<: *api-service
+    profiles: ["green"]
+    image: ${XZDESK_API_GREEN_IMAGE:-shopify-support-platform-api:green}
+    environment:
+      <<: *api-environment
+      XZDESK_RELEASE_ID: ${XZDESK_API_GREEN_RELEASE:-green}
+      XZDESK_DEPLOY_COLOR: green
+
+  web:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      XZDESK_DOMAIN: ${XZDESK_DOMAIN:?XZDESK_DOMAIN is required}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../frontend/dist:/srv/frontend:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - default
+      - erp-public-ingress
+
+volumes:
+  caddy-data:
+  caddy-config:
+
+networks:
+  erp-public-ingress:
+    external: true
+    name: xz-erp-public-ingress

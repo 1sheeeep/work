@@ -1,0 +1,2 @@
+ALTER TABLE ai_settings
+ADD COLUMN IF NOT EXISTS models JSONB NOT NULL DEFAULT '[]'::jsonb;

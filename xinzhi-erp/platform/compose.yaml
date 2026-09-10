@@ -1,0 +1,97 @@
+name: xz-erp-local
+
+services:
+  postgres:
+    image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${ERP_DB_NAME:-xz_erp}
+      POSTGRES_USER: ${ERP_DB_USER:-erp_app}
+      POSTGRES_PASSWORD: ${ERP_DB_PASSWORD:-local-development-only}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ERP_DB_USER:-erp_app} -d ${ERP_DB_NAME:-xz_erp}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - erp_postgres_data:/var/lib/postgresql/data
+    mem_limit: 768m
+    cpus: 0.75
+    networks:
+      - data
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    environment:
+      ERP_DB_URL: jdbc:postgresql://postgres:5432/${ERP_DB_NAME:-xz_erp}
+      ERP_DB_USER: ${ERP_DB_USER:-erp_app}
+      ERP_DB_PASSWORD: ${ERP_DB_PASSWORD:-local-development-only}
+      ERP_ENVIRONMENT: local
+      ERP_FIRST_PARTY_ZHAOYAOJING_ORIGIN: ${ERP_FIRST_PARTY_ZHAOYAOJING_ORIGIN:-https://zhaoyaojing.xzkj.ai}
+      ERP_FIRST_PARTY_ASSET_REGISTRY_ORIGIN: ${ERP_FIRST_PARTY_ASSET_REGISTRY_ORIGIN:-https://asset.xzkj.ai}
+      ERP_FIRST_PARTY_ZHAOYAOJING_CLIENT_TOKEN: ${ERP_FIRST_PARTY_ZHAOYAOJING_CLIENT_TOKEN:-}
+      ERP_FIRST_PARTY_ASSET_REGISTRY_CLIENT_TOKEN: ${ERP_FIRST_PARTY_ASSET_REGISTRY_CLIENT_TOKEN:-}
+      ERP_PRODUCT_IMAGES_ROOT: /var/lib/xz-erp/product-images
+      ERP_SHOPIFY_RELEASE_CREDENTIAL_KEY: ${ERP_SHOPIFY_RELEASE_CREDENTIAL_KEY:-}
+      JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=70.0 -XX:+UseG1GC
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8080/actuator/health/readiness"]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+    read_only: true
+    volumes:
+      - erp_product_images:/var/lib/xz-erp/product-images
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1536m
+    cpus: 1.0
+    networks:
+      - data
+      - app
+
+  web:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${ERP_HTTP_PORT:-18888}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8080/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    cpus: 0.25
+    networks:
+      - app
+
+volumes:
+  erp_postgres_data:
+  erp_product_images:
+
+networks:
+  app:
+  data:
+    internal: true

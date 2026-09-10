@@ -1,0 +1,44 @@
+spring:
+  datasource:
+    url: ${ERP_DB_URL}
+    username: ${ERP_DB_USER}
+    password: ${ERP_DB_PASSWORD}
+  flyway:
+    enabled: false
+  jpa:
+    hibernate:
+      ddl-auto: validate
+
+management:
+  endpoint:
+    health:
+      show-details: never
+      show-components: never
+      group:
+        liveness:
+          include: livenessState
+          exclude:
+          show-details: never
+          show-components: never
+        readiness:
+          include: readinessState,db
+          show-details: never
+          show-components: never
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+logging:
+  level:
+    org.apache.coyote.http11.Http11Processor: WARN
+    org.hibernate.orm.connections.pooling: WARN
+    org.hibernate.orm.jdbc.error: ERROR
+
+erp:
+  environment: production
+  bootstrap:
+    initial-admin:
+      enabled: false
+    platform-admin:
+      enabled: false

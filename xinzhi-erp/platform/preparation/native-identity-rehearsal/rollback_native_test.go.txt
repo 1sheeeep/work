@@ -1,0 +1,57 @@
+package platform
+
+import (
+	"context"
+	"database/sql"
+	"flag"
+	"fmt"
+	"net/http/httptest"
+	"reflect"
+	"testing"
+)
+
+var ownedRollbackPort = flag.Int("owned-rollback-port", 0, "Owned synthetic rollback database port")
+
+func TestOwnedNativeRollbackBinaryRetainsDataAndOriginalSession(t *testing.T) {
+	if *ownedRollbackPort < 1024 || *ownedRollbackPort > 65535 {
+		t.Fatal("owned rollback port required")
+	}
+	ctx := context.Background()
+	dsn := fmt.Sprintf("postgres://synthetic_native_identity:synthetic-native-only@127.0.0.1:%d/native_cs_identity_rehearsal?sslmode=disable", *ownedRollbackPort)
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal("owned rollback unavailable")
+	}
+	defer db.Close()
+	before, err := collectOwnedNativePreservation(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if link, ok := before["one_identity_links"]; !ok || link.Rows != 1 || len(before) != 39 {
+		t.Fatal("rollback did not include historical link fixture")
+	}
+	store, err := OpenPostgresStore(ctx, dsn)
+	if err != nil {
+		t.Fatal("rollback binary failed safe migration validation")
+	}
+	defer store.Close()
+	request := httptest.NewRequest("GET", "/api/v1/auth/me", nil)
+	request.Header.Set("Authorization", "Bearer synthetic-original-cs-session")
+	response := httptest.NewRecorder()
+	NewServer(store).Routes().ServeHTTP(response, request)
+	if response.Code != 200 {
+		t.Fatal("rollback binary lost original session")
+	}
+	for _, path := range []string{"/internal/v1/erp-identity/validate", "/internal/v1/erp-store-app/shopify/inventory-set-preparation"} {
+		response = httptest.NewRecorder()
+		NewServer(store).Routes().ServeHTTP(response, httptest.NewRequest("POST", path, nil))
+		if response.Code != 404 && response.Code != 405 {
+			t.Fatal("rollback binary exposed preparation routes")
+		}
+	}
+	after, err := collectOwnedNativePreservation(ctx, db)
+	if err != nil || !reflect.DeepEqual(before, after) {
+		t.Fatal("rollback binary changed original business rows")
+	}
+	t.Log("NATIVE_ROLLBACK_BINARY_VERIFIED: original source plus migration safety only, no identity/source adapter code, all business rows and session retained")
+}

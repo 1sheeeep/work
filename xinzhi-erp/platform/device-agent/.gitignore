@@ -1,0 +1,4 @@
+config.json
+data/
+/ks01-agent
+*.exe

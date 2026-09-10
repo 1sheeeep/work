@@ -1,0 +1,4 @@
+kf-uat.xzkj.ai {
+	encode zstd gzip
+	reverse_proxy erp-customer-service-uat-web:8080
+}

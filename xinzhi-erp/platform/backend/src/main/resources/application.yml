@@ -1,0 +1,112 @@
+spring:
+  application:
+    name: xz-erp
+  datasource:
+    url: ${ERP_DB_URL:jdbc:postgresql://localhost:5432/xz_erp}
+    username: ${ERP_DB_USER:erp_app}
+    password: ${ERP_DB_PASSWORD}
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 6MB
+  web:
+    error:
+      include-path: never
+
+server:
+  port: 8080
+  shutdown: graceful
+  forward-headers-strategy: framework
+
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+erp:
+  environment: ${ERP_ENVIRONMENT:local}
+  first-party:
+    erp-origin: ${ERP_FIRST_PARTY_ERP_ORIGIN:https://erp.xzkj.ai}
+    zhaoyaojing-origin: ${ERP_FIRST_PARTY_ZHAOYAOJING_ORIGIN:https://zhaoyaojing.xzkj.ai}
+    asset-registry-origin: ${ERP_FIRST_PARTY_ASSET_REGISTRY_ORIGIN:https://asset.xzkj.ai}
+  customer-service:
+    entry-origin: ${ERP_CUSTOMER_SERVICE_ENTRY_ORIGIN:}
+    grant-ttl: ${ERP_CUSTOMER_SERVICE_GRANT_TTL:PT1M}
+    session-ttl: ${ERP_CUSTOMER_SERVICE_SESSION_TTL:PT15M}
+  channel-connector:
+    mode: ${ERP_CHANNEL_CONNECTOR_MODE:unconfigured}
+    xz-erp-app:
+      base-url: ${ERP_XZ_ERP_APP_CONNECTOR_BASE_URL:}
+      token: ${ERP_XZ_ERP_APP_CONNECTOR_TOKEN:}
+      timeout: ${ERP_XZ_ERP_APP_CONNECTOR_TIMEOUT:PT10S}
+      allow-private-http: ${ERP_XZ_ERP_APP_CONNECTOR_ALLOW_PRIVATE_HTTP:false}
+  shopify-release:
+    credential-key: ${ERP_SHOPIFY_RELEASE_CREDENTIAL_KEY:${ERP_LOGISTICS_CREDENTIAL_KEY:}}
+    cli-path: ${ERP_SHOPIFY_RELEASE_CLI_PATH:}
+    project-directory: ${ERP_SHOPIFY_RELEASE_PROJECT_DIR:../customer-service}
+    timeout: ${ERP_SHOPIFY_RELEASE_TIMEOUT:PT10M}
+  logistics-connector:
+    credential-key: ${ERP_LOGISTICS_CREDENTIAL_KEY:}
+    chuda:
+      base-url: ${ERP_CHUDA_LOGISTICS_BASE_URL:https://erp.ocl56.com/api/api-server}
+      timeout: ${ERP_CHUDA_LOGISTICS_TIMEOUT:PT10S}
+    dayunjia:
+      base-url: ${ERP_DAYUNJIA_LOGISTICS_BASE_URL:http://43.138.180.250:8082}
+    biaoju:
+      base-url: ${ERP_BIAOJU_LOGISTICS_BASE_URL:https://yf56.itdida.com/itdida-api}
+    baidu-yixia:
+      base-url: ${ERP_BAIDU_YIXIA_LOGISTICS_BASE_URL:https://erp.1st56.com/api/api-server/itdida-api}
+    hualei:
+      base-url: ${ERP_HUALEI_LOGISTICS_BASE_URL:http://106.55.154.6:8082}
+    tongxi:
+      base-url: ${ERP_TONGXI_LOGISTICS_BASE_URL:http://1.14.133.93:8082}
+    jiayun-shengtu:
+      base-url: ${ERP_JIAYUN_SHENGTU_LOGISTICS_BASE_URL:http://106.55.154.6:8082}
+    shandianhou-xiaobao:
+      base-url: ${ERP_SHANDIANHOU_XIAOBAO_LOGISTICS_BASE_URL:http://182.254.152.160:8082}
+      label-base-url: ${ERP_SHANDIANHOU_XIAOBAO_LOGISTICS_LABEL_BASE_URL:http://124.222.46.80:8089}
+    shandianhou-shangpai:
+      base-url: ${ERP_SHANDIANHOU_SHANGPAI_LOGISTICS_BASE_URL:https://tms.zhfulfill.com}
+    hualei-family:
+      timeout: ${ERP_HUALEI_LOGISTICS_TIMEOUT:PT10S}
+    itdida:
+      timeout: ${ERP_ITDIDA_LOGISTICS_TIMEOUT:PT10S}
+  inventory-publication:
+    worker-enabled: ${ERP_INVENTORY_PUBLICATION_WORKER_ENABLED:false}
+    worker-delay-ms: ${ERP_INVENTORY_PUBLICATION_WORKER_DELAY_MS:5000}
+  product-images:
+    root: ${ERP_PRODUCT_IMAGES_ROOT:./var/product-images}
+  bootstrap:
+    initial-admin:
+      enabled: ${ERP_BOOTSTRAP_INITIAL_ADMIN_ENABLED:false}
+    platform-admin:
+      enabled: ${ERP_BOOTSTRAP_PLATFORM_ADMIN_ENABLED:false}
+  security:
+    session-ttl: ${ERP_SESSION_TTL:PT8H}
+    password-credential-ttl: ${ERP_PASSWORD_CREDENTIAL_TTL:PT30M}
+    login-throttle:
+      max-failures: ${ERP_LOGIN_THROTTLE_MAX_FAILURES:5}
+      window: ${ERP_LOGIN_THROTTLE_WINDOW:PT15M}
+      lock-duration: ${ERP_LOGIN_THROTTLE_LOCK_DURATION:PT15M}

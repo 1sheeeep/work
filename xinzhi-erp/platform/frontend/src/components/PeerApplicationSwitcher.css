@@ -1,0 +1,7 @@
+.peer-app-switcher { position: relative; }
+.peer-app-switcher > button { min-width: 44px; min-height: 44px; }
+.peer-app-panel { position: absolute; z-index: 100; top: calc(100% + 8px); left: 0; width: min(290px, calc(100vw - 32px)); padding: 14px; display: grid; gap: 10px; background: var(--surface, var(--erp-color-surface)); color: var(--text, #172b4d); border: 1px solid var(--border, #dbe3ee); border-radius: 8px; box-shadow: 0 8px 24px #172b4d20; }
+.peer-app-panel a { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px; text-decoration: none; }
+.peer-app-panel a:hover { background: var(--surface-hover, var(--erp-color-surface-muted)); }
+.peer-app-panel a:focus-visible, .peer-app-switcher > button:focus-visible { outline: 2px solid var(--primary, var(--erp-color-primary)); outline-offset: 2px; }
+.peer-app-panel p, .peer-app-panel small { margin: 0; font-size: 12px; line-height: 1.5; }

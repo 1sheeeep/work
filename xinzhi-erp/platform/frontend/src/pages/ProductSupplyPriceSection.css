@@ -1,0 +1,88 @@
+.supply-price-filters {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(150px, 0.45fr) minmax(180px, 0.55fr) auto;
+  align-items: end;
+  gap: 12px;
+}
+
+.supply-price-table {
+  min-width: 1240px;
+}
+
+.supply-price-table td > small,
+.supply-price-table td > span + small,
+.supply-price-table td > strong + small {
+  display: block;
+  margin-top: 3px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.supply-price-dialog {
+  width: min(760px, 100%);
+}
+
+.supply-price-dialog-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.supply-price-dialog-grid label,
+.supply-price-dialog form > label {
+  display: grid;
+  gap: 6px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.supply-price-dialog fieldset {
+  min-width: 0;
+}
+
+.supply-price-dialog .warehouse-confirm-actions {
+  margin: 2px -16px -16px;
+}
+
+.supply-price-picker {
+  max-height: 210px;
+  margin-top: 10px;
+}
+
+.supply-price-selected,
+.supply-price-identity {
+  margin: 10px 0 0;
+  color: var(--color-text-muted);
+}
+
+.supply-price-selected strong {
+  color: var(--color-text);
+}
+
+.supply-price-identity {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--color-surface-muted);
+}
+
+.supply-price-identity strong {
+  color: var(--color-text);
+}
+
+@media (max-width: 960px) {
+  .supply-price-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .supply-price-filters,
+  .supply-price-dialog-grid {
+    grid-template-columns: 1fr;
+  }
+}

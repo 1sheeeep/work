@@ -1,0 +1,96 @@
+package platform
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"sort"
+	"strings"
+)
+
+// Native-source bridge only; same bounded strict JSON decoding as the existing
+// ERP-owned connector. No automatic route registration or database setup.
+func decodeERPConnectorRequest(w http.ResponseWriter, r *http.Request, target any) bool {
+	defer r.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(r.Body, 16385))
+	if err != nil || len(body) > 16384 {
+		w.WriteHeader(http.StatusBadRequest)
+		return false
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	var trailing any
+	if decoder.Decode(target) != nil || decoder.Decode(&trailing) != io.EOF {
+		w.WriteHeader(http.StatusBadRequest)
+		return false
+	}
+	return true
+}
+
+// Replays the unchanged native migration sequence inside a rolled-back
+// transaction ONLY in the marked synthetic database. Never a production helper.
+func auditOwnedNativeRestart(ctx context.Context, store *PostgresStore) ([]string, error) {
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	var owned bool
+	err = tx.QueryRowContext(ctx, `SELECT current_database()='native_cs_identity_rehearsal' AND current_user='synthetic_native_identity' AND coalesce(shobj_description(oid,'pg_database'),'')='xz-owned-native-cs-identity-v1' FROM pg_database WHERE datname=current_database()`).Scan(&owned)
+	if err != nil || !owned {
+		return nil, fmt.Errorf("owned native database required")
+	}
+	snapshot := func() (map[string]map[string]json.RawMessage, error) {
+		var raw []byte
+		err := tx.QueryRowContext(ctx, `SELECT coalesce(jsonb_object_agg(id,to_jsonb(users)),'{}'::jsonb) FROM public.users`).Scan(&raw)
+		var result map[string]map[string]json.RawMessage
+		if err == nil {
+			err = json.Unmarshal(raw, &result)
+		}
+		return result, err
+	}
+	before, err := snapshot()
+	if err != nil {
+		return nil, err
+	}
+	entries, err := migrationFiles.ReadDir("migrations")
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
+			continue
+		}
+		raw, err := migrationFiles.ReadFile("migrations/" + entry.Name())
+		if err != nil {
+			return nil, err
+		}
+		if _, err = tx.ExecContext(ctx, string(raw)); err != nil {
+			return nil, err
+		}
+	}
+	after, err := snapshot()
+	if err != nil {
+		return nil, err
+	}
+	changed := map[string]bool{}
+	if len(before) != len(after) {
+		changed["account_count"] = true
+	}
+	for id, fields := range before {
+		for field, value := range fields {
+			if !bytes.Equal(value, after[id][field]) {
+				changed[field] = true
+			}
+		}
+	}
+	result := make([]string, 0, len(changed))
+	for field := range changed {
+		result = append(result, field)
+	}
+	sort.Strings(result)
+	return result, tx.Rollback()
+}

@@ -1,0 +1,130 @@
+name: xz-erp-test
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
+services:
+  postgres:
+    image: ${ERP_POSTGRES_IMAGE:?ERP_POSTGRES_IMAGE is required}
+    pull_policy: never
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${ERP_DB_NAME}
+      POSTGRES_USER: ${ERP_DB_USER}
+      POSTGRES_PASSWORD: ${ERP_DB_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ERP_DB_USER} -d ${ERP_DB_NAME}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - erp_staging_postgres_data:/var/lib/postgresql/data
+    mem_limit: 384m
+    cpus: 0.30
+    pids_limit: 128
+    logging: *default-logging
+    networks:
+      - data
+
+  backend:
+    image: ${ERP_BACKEND_IMAGE}
+    pull_policy: never
+    restart: unless-stopped
+    environment:
+      ERP_DB_URL: jdbc:postgresql://postgres:5432/${ERP_DB_NAME}
+      ERP_DB_USER: ${ERP_DB_USER}
+      ERP_DB_PASSWORD: ${ERP_DB_PASSWORD}
+      ERP_ENVIRONMENT: staging
+      ERP_FIRST_PARTY_ZHAOYAOJING_ORIGIN: ${ERP_FIRST_PARTY_ZHAOYAOJING_ORIGIN:-https://zhaoyaojing.xzkj.ai}
+      ERP_FIRST_PARTY_ASSET_REGISTRY_ORIGIN: ${ERP_FIRST_PARTY_ASSET_REGISTRY_ORIGIN:-https://asset.xzkj.ai}
+      ERP_CHANNEL_CONNECTOR_MODE: ${ERP_CHANNEL_CONNECTOR_MODE:-unconfigured}
+      ERP_XZ_ERP_APP_CONNECTOR_BASE_URL: ${ERP_XZ_ERP_APP_CONNECTOR_BASE_URL:-}
+      ERP_XZ_ERP_APP_CONNECTOR_TOKEN: ${ERP_XZ_ERP_APP_CONNECTOR_TOKEN:-}
+      ERP_XZ_ERP_APP_CONNECTOR_ALLOW_PRIVATE_HTTP: ${ERP_XZ_ERP_APP_CONNECTOR_ALLOW_PRIVATE_HTTP:-false}
+      ERP_CUSTOMER_SERVICE_ENTRY_ORIGIN: ${ERP_CUSTOMER_SERVICE_ENTRY_ORIGIN:?ERP_CUSTOMER_SERVICE_ENTRY_ORIGIN is required}
+      ERP_LOGISTICS_CREDENTIAL_KEY: ${ERP_LOGISTICS_CREDENTIAL_KEY:?ERP_LOGISTICS_CREDENTIAL_KEY is required}
+      ERP_CHUDA_LOGISTICS_BASE_URL: ${ERP_CHUDA_LOGISTICS_BASE_URL:-https://erp.ocl56.com/api/api-server}
+      ERP_CHUDA_LOGISTICS_TIMEOUT: ${ERP_CHUDA_LOGISTICS_TIMEOUT:-PT10S}
+      ERP_DAYUNJIA_LOGISTICS_BASE_URL: ${ERP_DAYUNJIA_LOGISTICS_BASE_URL:-http://43.138.180.250:8082}
+      ERP_BIAOJU_LOGISTICS_BASE_URL: ${ERP_BIAOJU_LOGISTICS_BASE_URL:-https://yf56.itdida.com/itdida-api}
+      ERP_BAIDU_YIXIA_LOGISTICS_BASE_URL: ${ERP_BAIDU_YIXIA_LOGISTICS_BASE_URL:-https://erp.1st56.com/api/api-server/itdida-api}
+      ERP_HUALEI_LOGISTICS_BASE_URL: ${ERP_HUALEI_LOGISTICS_BASE_URL:-http://106.55.154.6:8082}
+      ERP_TONGXI_LOGISTICS_BASE_URL: ${ERP_TONGXI_LOGISTICS_BASE_URL:-http://1.14.133.93:8082}
+      ERP_SHANDIANHOU_XIAOBAO_LOGISTICS_BASE_URL: ${ERP_SHANDIANHOU_XIAOBAO_LOGISTICS_BASE_URL:-http://182.254.152.160:8082}
+      ERP_SHANDIANHOU_XIAOBAO_LOGISTICS_LABEL_BASE_URL: ${ERP_SHANDIANHOU_XIAOBAO_LOGISTICS_LABEL_BASE_URL:-http://124.222.46.80:8089}
+      ERP_SHANDIANHOU_SHANGPAI_LOGISTICS_BASE_URL: ${ERP_SHANDIANHOU_SHANGPAI_LOGISTICS_BASE_URL:-https://tms.zhfulfill.com}
+      ERP_HUALEI_LOGISTICS_TIMEOUT: ${ERP_HUALEI_LOGISTICS_TIMEOUT:-PT10S}
+      ERP_ITDIDA_LOGISTICS_TIMEOUT: ${ERP_ITDIDA_LOGISTICS_TIMEOUT:-PT10S}
+      ERP_PRODUCT_IMAGES_ROOT: /var/lib/xz-erp/product-images
+      JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=60.0 -XX:+UseG1GC
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8080/actuator/health/readiness"]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+      start_period: 90s
+    read_only: true
+    volumes:
+      - erp_staging_product_images:/var/lib/xz-erp/product-images
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1536m
+    cpus: 0.90
+    pids_limit: 256
+    logging: *default-logging
+    networks:
+      - data
+      - app
+
+  web:
+    image: ${ERP_WEB_IMAGE}
+    pull_policy: never
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${ERP_HTTP_PORT}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8080/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 96m
+    cpus: 0.15
+    pids_limit: 64
+    logging: *default-logging
+    networks:
+      app:
+      public_ingress:
+        aliases:
+          - erp-test-web
+
+volumes:
+  erp_staging_postgres_data:
+  erp_staging_product_images:
+
+networks:
+  app:
+  data:
+    internal: true
+  public_ingress:
+    external: true
+    name: xz-erp-public-ingress

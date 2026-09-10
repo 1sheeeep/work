@@ -1,0 +1,40 @@
+package platform
+
+import (
+ "context"
+ "database/sql"
+ "errors"
+ "net/http"
+ "time"
+)
+
+// Standalone identity process only. Deliberately never calls OpenPostgresStore,
+// Migrate, NewServer, mail/Shopify workers, native login/logout or presence APIs.
+func OpenNativeERPIdentityRuntime(ctx context.Context, dsn, token string, bindings []ERPIdentityBinding) (http.Handler, func() error, error) {
+ db, err := sql.Open("pgx", dsn)
+ if err != nil { return nil,nil,errors.New("identity database unavailable") }
+ db.SetMaxOpenConns(2); db.SetMaxIdleConns(2); db.SetConnMaxLifetime(10*time.Minute)
+ fail := func() (http.Handler,func()error,error) { db.Close(); return nil,nil,errors.New("identity runtime initialization rejected") }
+ if err=db.PingContext(ctx); err!=nil { return fail() }
+ var configured bool
+ err=db.QueryRowContext(ctx, `SELECT current_user='erp_identity_bridge' AND to_regclass('customer_service.identity_preparation_revisions') IS NOT NULL`).Scan(&configured)
+ if err!=nil || !configured { return fail() }
+ store:=&PostgresStore{db:db}
+ handler,err:=NewERPIdentityPreparationHandler(store,token,bindings)
+ if err!=nil {return fail()}
+ for _,b:=range bindings {
+   u,e:=store.ReadIdentitySnapshot(ctx,b.CustomerServiceUserID)
+   if e!=nil || u.Status!=UserStatusActive || u.SystemAdmin!=b.AllowSourceAdministrator {return fail()}
+ }
+ handler.(*erpIdentityPreparationHandler).leaseLifetime=8*time.Hour
+ // Bounded eight-hour metadata. ERP logout deletes its encrypted lease and
+ // session immediately; remaining source metadata expires without CS logout.
+ handler.(*erpIdentityPreparationHandler).tokenCapacity=4096
+ mux:=http.NewServeMux()
+ mux.Handle(ERPIdentityPreparationPrefix,handler)
+ mux.HandleFunc("GET /healthz",func(w http.ResponseWriter,r *http.Request){
+   c,cancel:=context.WithTimeout(r.Context(),time.Second);defer cancel()
+   if db.PingContext(c)!=nil {w.WriteHeader(503);return};w.WriteHeader(200)
+ })
+ return mux,db.Close,nil
+}

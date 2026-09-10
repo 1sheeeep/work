@@ -1,0 +1,190 @@
+.inventory-aging-report {
+  display: grid;
+  gap: 14px;
+}
+
+.inventory-aging-filters {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.65fr) minmax(210px, 0.85fr) minmax(280px, 1.5fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.inventory-aging-filters label {
+  display: grid;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.inventory-aging-filters input,
+.inventory-aging-filters select {
+  min-height: 36px;
+}
+
+.inventory-aging-filter-actions,
+.inventory-aging-toolbar,
+.inventory-aging-pagination,
+.inventory-aging-pagination > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inventory-aging-explanation {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-left: 3px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.inventory-aging-explanation strong {
+  flex: 0 0 auto;
+  color: var(--text);
+}
+
+.inventory-aging-option-note,
+.inventory-aging-feedback {
+  margin: 0;
+  font-size: 13px;
+}
+
+.inventory-aging-feedback.is-success {
+  color: var(--success-text, #166534);
+}
+
+.inventory-aging-feedback.is-error {
+  color: var(--danger-text, #b91c1c);
+}
+
+.inventory-aging-toolbar,
+.inventory-aging-pagination {
+  justify-content: space-between;
+}
+
+.inventory-aging-toolbar > span,
+.inventory-aging-pagination > span {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.inventory-aging-summary {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.inventory-aging-summary > div {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.inventory-aging-summary dt {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.inventory-aging-summary dd {
+  margin: 4px 0 0;
+  color: var(--text);
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.inventory-aging-summary .is-risk dd,
+.inventory-aging-number.is-risk {
+  color: var(--danger-text, #b91c1c);
+}
+
+.inventory-aging-table-wrap {
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.inventory-aging-table-wrap table {
+  width: 100%;
+  min-width: 1240px;
+  border-collapse: collapse;
+}
+
+.inventory-aging-table-wrap th,
+.inventory-aging-table-wrap td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.inventory-aging-table-wrap th {
+  background: var(--surface-subtle, var(--erp-color-surface-muted));
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.inventory-aging-table-wrap tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.inventory-aging-table-wrap td small {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-muted);
+}
+
+.inventory-aging-number {
+  text-align: right !important;
+  font-variant-numeric: tabular-nums;
+}
+
+.inventory-aging-status {
+  display: inline-flex;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.inventory-aging-status.is-success {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.inventory-aging-status.is-warning {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.inventory-aging-status.is-danger {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+@media (max-width: 1000px) {
+  .inventory-aging-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .inventory-aging-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .inventory-aging-filters,
+  .inventory-aging-summary {
+    grid-template-columns: 1fr;
+  }
+}

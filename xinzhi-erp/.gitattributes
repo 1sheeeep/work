@@ -1,0 +1,18 @@
+* text=auto
+
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.java text eol=lf
+*.sql text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.css text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.ps1 text eol=crlf
+
+platform/frontend/readiness/200 text eol=lf
+
+# Preserve imported upstream formatting; maintain it in its own source lifecycle.
+platform/customer-service/** whitespace=-blank-at-eol,-blank-at-eof

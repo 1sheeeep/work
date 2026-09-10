@@ -1,0 +1,5 @@
+export { SettingsShippingDeadlinePage } from './SettingsShippingDeadlinePage'
+export { SettingsAddressMappingPage } from './SettingsAddressMappingPage'
+export { SettingsAliasManagementPage } from './SettingsAliasManagementPage'
+export { SettingsOrderExceptionConfigPage } from './SettingsOrderExceptionConfigPage'
+export { SettingsApprovalRulesPage } from './SettingsApprovalRulesPage'

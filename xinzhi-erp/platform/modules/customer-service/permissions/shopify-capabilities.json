@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "authorizationModel": "single-published-app",
+  "credentialOwner": "shopify-connector",
+  "runtimeOwner": "customer-service-module",
+  "changesApplicationConfiguration": false,
+  "capabilities": [
+    {
+      "id": "customer-service.core",
+      "description": "Order and customer context used by customer-service workflows",
+      "oauthScopes": [
+        "read_orders"
+      ],
+      "protectedCustomerData": [
+        "name",
+        "email",
+        "phone",
+        "address"
+      ]
+    },
+    {
+      "id": "customer-service.returns-refunds",
+      "description": "Read, approve, decline and process returns and refunds",
+      "oauthScopes": [
+        "read_orders",
+        "read_returns",
+        "write_returns"
+      ],
+      "shopifyStaffPermissions": [
+        "refund_orders"
+      ]
+    },
+    {
+      "id": "customer-service.disputes",
+      "description": "Read Shopify Payments dispute metadata",
+      "oauthScopes": [
+        "read_shopify_payments_disputes"
+      ],
+      "shopifyStaffPermissionsAnyOf": [
+        "manage_disputes",
+        "manage_orders_information"
+      ]
+    }
+  ],
+  "erpRuntimeExclusions": [
+    "return approval or decline",
+    "return processing",
+    "refund execution",
+    "dispute evidence reading, editing, upload or submission"
+  ]
+}

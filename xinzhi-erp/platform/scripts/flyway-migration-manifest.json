@@ -1,0 +1,471 @@
+{
+  "schemaVersion": 1,
+  "algorithm": "sha256",
+  "migrations": [
+    {
+      "version": 1,
+      "file": "V1__identity_and_permissions.sql",
+      "sha256": "b7e81d3b97d54fa19c5bdc0ea24d27b66b2844f2aa12651c6cd512073ed0c612"
+    },
+    {
+      "version": 10,
+      "file": "V10__iam_authentication_foundation.sql",
+      "sha256": "d61d70c7d2ad432e96545d049031c96f8bf53a17547c43dec52abc21eae2b64d"
+    },
+    {
+      "version": 20,
+      "file": "V20__platform_shop_center.sql",
+      "sha256": "2e901aa0077ce65d014d74cc84d4c6eb5d2195756a10f16da58892c328ce331a"
+    },
+    {
+      "version": 21,
+      "file": "V21__iam_administration.sql",
+      "sha256": "0e24b5784c3e9d7bd211e22a97221e09cf6b5796fdc04f2fad43997c37fa859d"
+    },
+    {
+      "version": 30,
+      "file": "V30__product_center.sql",
+      "sha256": "906697e08b7f74069a49c911d8f3d1bb9c28431bee25c1267271c51f8dfef01a"
+    },
+    {
+      "version": 31,
+      "file": "V31__iam_password_credentials.sql",
+      "sha256": "2aee48a01031aa4130e32d1b6d1ec548442116a1be130f5a8523215b65d977d6"
+    },
+    {
+      "version": 32,
+      "file": "V32__order_center.sql",
+      "sha256": "381879711085343d35e9db5586758c1835b7e5c9818906cd4477b822b2a18cd4"
+    },
+    {
+      "version": 33,
+      "file": "V33__order_line_sku_matching.sql",
+      "sha256": "b406d8fe47cb18f0ea813f3f006871aefc5d4eb8219a0e98a557b0af5d63a446"
+    },
+    {
+      "version": 34,
+      "file": "V34__iam_permission_catalog.sql",
+      "sha256": "54254ee088d909db4d8f8dccfcca9c12fcc8ccf985741dda163c496d54d40384"
+    },
+    {
+      "version": 35,
+      "file": "V35__iam_login_throttles.sql",
+      "sha256": "b080fcb383dd67e11ee7c1a17152afb75c7be7a0adf7a60d2f6387b0cc18f2f7"
+    },
+    {
+      "version": 36,
+      "file": "V36__warehouse_master_data.sql",
+      "sha256": "f12da27f1e4a1f213ecaba847a53edb34ffd44d4000c692ba55a211f6f3ebd6f"
+    },
+    {
+      "version": 37,
+      "file": "V37__platform_system_administration.sql",
+      "sha256": "c11d936b8300375e3bd84cf6dd3dd927e4e238b6e0c2e80e6c50fb54d19b339c"
+    },
+    {
+      "version": 38,
+      "file": "V38__supplier_master_data.sql",
+      "sha256": "86f2e3fd06c56a92e46e1178c28835382dd5eb40bc1c54a50f351f6a9e56fed6"
+    },
+    {
+      "version": 39,
+      "file": "V39__supplier_sku_mappings.sql",
+      "sha256": "4b56b09a0f010e8042a27ca9865794908ada483fab42a120f9a0cfa29d6779b4"
+    },
+    {
+      "version": 40,
+      "file": "V40__iam_warehouse_data_scopes.sql",
+      "sha256": "a0fb7db165b5f6a230aadfd9ea4845306d4b99bd45e57f5b1cbec542f7677171"
+    },
+    {
+      "version": 42,
+      "file": "V42__iam_email_login_and_phone.sql",
+      "sha256": "985d8e8f58d3d9b61c8e07c4be895d895926c385d71c3064791bd92c6b61ea2f"
+    },
+    {
+      "version": 43,
+      "file": "V43__product_master_data_foundation.sql",
+      "sha256": "85893d5c76aa84fcbb6864f6e16a9b8b21751acf13a315c10fcd234354df3887"
+    },
+    {
+      "version": 44,
+      "file": "V44__inventory_minimal_quantity_loop.sql",
+      "sha256": "85a1ee496b07b139bd61dc6621965ab8e813b11ce316220fc333c405a971bd99"
+    },
+    {
+      "version": 45,
+      "file": "V45__product_master_data_and_images.sql",
+      "sha256": "c8c3c3ad29f6af34d06d6cac6359792dd863fbce5c82fb5c30d249826c935463"
+    },
+    {
+      "version": 46,
+      "file": "V46__customer_service_permission.sql",
+      "sha256": "9db323cee3cb2294d218b2eeec4aeda78bcc728ecf9514f14e39ba6924f64636"
+    },
+    {
+      "version": 47,
+      "file": "V47__order_operations_and_fulfillment.sql",
+      "sha256": "ef48fc7cca38f344fc50067b0c849fbc482e9c0ee43ca05e083e909a97af111b"
+    },
+    {
+      "version": 48,
+      "file": "V48__warehouse_operations.sql",
+      "sha256": "103a912f05aba895faa63dcad0f2a33aa3af87dfe7f15cc57a19a16c0b0ed8ba"
+    },
+    {
+      "version": 49,
+      "file": "V49__shopify_order_commands.sql",
+      "sha256": "3f055fc234b89af5f282b928e41d01edcc1954e1b1af15e2076373b1eba23685"
+    },
+    {
+      "version": 50,
+      "file": "V50__shopify_fulfillment_publications.sql",
+      "sha256": "b6019600ea787d7938a66619b293009abf35bdd87549e76f75090cb2ab45ef43"
+    },
+    {
+      "version": 51,
+      "file": "V51__shopify_dispute_evidence.sql",
+      "sha256": "3dbbdf84875113a438cec026eb3de955782e866538378b0455b6acb820a0cd0d"
+    },
+    {
+      "version": 52,
+      "file": "V52__shopify_order_line_quantity_edits.sql",
+      "sha256": "451874706c0254140959f5400cff6cb9feb0e052ccc4d9164c888e60239c9521"
+    },
+    {
+      "version": 53,
+      "file": "V53__shopify_order_variant_additions.sql",
+      "sha256": "741aa0e857a0398471e28b1ca59fec642693045a127688e00cd0527bdcb1b09c"
+    },
+    {
+      "version": 54,
+      "file": "V54__shopify_location_warehouse_mappings.sql",
+      "sha256": "32c0286b492bd9f278669f70daf5f8b43803fb7ea017095a6db51891e0b4bb20"
+    },
+    {
+      "version": 55,
+      "file": "V55__shopify_listing_inventory_items.sql",
+      "sha256": "95015d6aa6611f6f7025e079167dd129deefe5ce7bc5c14954419f7de758959b"
+    },
+    {
+      "version": 56,
+      "file": "V56__shopify_inventory_publications.sql",
+      "sha256": "60b3fb08c2492538694809dd92e566b60b2fafcd4ade560d88a07c55ab983245"
+    },
+    {
+      "version": 57,
+      "file": "V57__inventory_counts.sql",
+      "sha256": "37e5c6a2b5dd642593fa89e27930ea404c0a9feea6bdfff2f8004b50526272f2"
+    },
+    {
+      "version": 58,
+      "file": "V58__warehouse_transfers.sql",
+      "sha256": "ab2d0dcfa4213c9cd2d3c89041283ba6403b806565ec275239d62900de597ae2"
+    },
+    {
+      "version": 59,
+      "file": "V59__warehouse_transfer_partial_receipts.sql",
+      "sha256": "20ff24ee486e522a96e8b127c34e50582a6b7cd8b509ca9a439d70884d8d370d"
+    },
+    {
+      "version": 60,
+      "file": "V60__shopify_order_custom_items.sql",
+      "sha256": "3483a15723e5052f6999661fe3b8518c1e1478a55c22354df7726a1edf18fb00"
+    },
+    {
+      "version": 61,
+      "file": "V61__shopify_order_line_discounts.sql",
+      "sha256": "407d4a8532957ba8deef988cdbb525761b783870734444b53f38e12e0930019d"
+    },
+    {
+      "version": 62,
+      "file": "V62__shopify_order_cancellations.sql",
+      "sha256": "bfb238a7fc3b8a9fd7f0abf7800a9e1777557884a97a6cb7d90d9a2feebee361"
+    },
+    {
+      "version": 63,
+      "file": "V63__logistics_read_permission.sql",
+      "sha256": "d80405a53013b5fa833905b35419d33ff0d26cbe278533eeb2c779e037b05141"
+    },
+    {
+      "version": 64,
+      "file": "V64__procurement_read_permission.sql",
+      "sha256": "e252a8cdddc20421083f33765a8c1eed43be76d02758d6d009a58faea3fe52fd"
+    },
+    {
+      "version": 65,
+      "file": "V65__finance_read_permission.sql",
+      "sha256": "78ad02078d5c8dac2adbc579ec7df7aa9a500a18a7055e7539f4cae0f044d996"
+    },
+    {
+      "version": 66,
+      "file": "V66__analytics_read_permission.sql",
+      "sha256": "59ce81370b5706a2ded13f4ae914528e6bc2c164ef67a1ae0f8682ee7bfd34f1"
+    },
+    {
+      "version": 67,
+      "file": "V67__settings_read_permission.sql",
+      "sha256": "3d73c35f35e8d1478aab4201aa779d32a30264443f9b83a07f1dbfe37ea8dc9b"
+    },
+    {
+      "version": 68,
+      "file": "V68__customer_service_entry_grants.sql",
+      "sha256": "051d6d2a3313edf7646f3c4eaaad70652f420c24de70a12db6a7201c9ee0f926"
+    },
+    {
+      "version": 69,
+      "file": "V69__procurement_plans.sql",
+      "sha256": "d9da96ac47c2660e4b65ecde94eba090efdbbc4c503e9f2e3aaa3b6a72400f2c"
+    },
+    {
+      "version": 70,
+      "file": "V70__formalize_shopify_platform_name.sql",
+      "sha256": "915b1a5b55ccc97258f5d9737f766db8e6ce9a14ff696bd89825bc7e239f67bf"
+    },
+    {
+      "version": 71,
+      "file": "V71__ensure_shopify_platform_available.sql",
+      "sha256": "0720bf41c54c991d8f4006f76155eb8ce5ed1dff00edb7e2dd200b2126fc601f"
+    },
+    {
+      "version": 72,
+      "file": "V72__procurement_purchase_orders.sql",
+      "sha256": "139fcc7dede47b4e70fc80c3be4d70093e63ba8de6a9a12ae9571f00050b90bc"
+    },
+    {
+      "version": 73,
+      "file": "V73__procurement_purchase_order_receipts.sql",
+      "sha256": "5644b25c4dac01fff1193b092ffe8accd88f7f093ed0f0367b83c9f595692b32"
+    },
+    {
+      "version": 74,
+      "file": "V74__customer_service_platform_admin_entry.sql",
+      "sha256": "7c176e4a66202bc16ba7d8c608b79810d127466e263ff3a8cbe648c0c7339f1e"
+    },
+    {
+      "version": 75,
+      "file": "V75__email_or_phone_accounts_and_tenant_soft_delete.sql",
+      "sha256": "989d1b77945426607a6fc891b85cff14564ed1eedf4fb89df300edd8eb50befa"
+    },
+    {
+      "version": 76,
+      "file": "V76__shipping_weighing.sql",
+      "sha256": "9ecdb3a0ec939ed334b7bd964db82719b166e81fceae75aa8131ae9d7231ddb7"
+    },
+    {
+      "version": 77,
+      "file": "V77__logistics_tracking_number_pool.sql",
+      "sha256": "1c871559f849aaa8b4587eac2c52e1d92e3a2d97a094eebbc83693c7fd250d5c"
+    },
+    {
+      "version": 78,
+      "file": "V78__logistics_address_master_data.sql",
+      "sha256": "a8e6e357fe14dc10181d2d172150f98a35e60e61526134bc0eba607fdd99dac1"
+    },
+    {
+      "version": 79,
+      "file": "V79__logistics_declaration_entities.sql",
+      "sha256": "29e79f2ec8f54e5cb586211fb29d9206558b909e4c860aa248bcf167e629a504"
+    },
+    {
+      "version": 80,
+      "file": "V80__tenant_enterprise_profiles.sql",
+      "sha256": "f1d3eb76f389d868dcdb4b6368e5a192f7bbdbd87950676c4567ead73116e2fb"
+    },
+    {
+      "version": 81,
+      "file": "V81__procurement_purchase_order_reviews.sql",
+      "sha256": "145acaa8d8ebc3f57576f7b5881856f2d175292192c272c239a453cd8a3ab9c0"
+    },
+    {
+      "version": 82,
+      "file": "V82__procurement_purchase_returns.sql",
+      "sha256": "35b27f7e7ae9761eb44937cc8c02a353dd7b0b00d55f0b5a13a51b9ccf4badf2"
+    },
+    {
+      "version": 83,
+      "file": "V83__logistics_shipping_fee_rules.sql",
+      "sha256": "8c7c1493913143e853c1c080343a824e01a183a19f9cd2244185aee629d4966d"
+    },
+    {
+      "version": 84,
+      "file": "V84__logistics_label_templates.sql",
+      "sha256": "9aada3c52dfe322225ebb7bf913195209bd24c0055897fca02b1dc9e975735cb"
+    },
+    {
+      "version": 85,
+      "file": "V85__logistics_matching_rules.sql",
+      "sha256": "6e4d01cf0e4324bbd90b4a2d1311bdcfd203293667ab048fb6b0205bb0110a23"
+    },
+    {
+      "version": 86,
+      "file": "V86__logistics_authorization_profiles.sql",
+      "sha256": "40ed73034f6dd8c729fba62eaa6c3a40f9e617ea15e943e42226ec7a1ae9ff5c"
+    },
+    {
+      "version": 87,
+      "file": "V87__logistics_forecast_batches.sql",
+      "sha256": "90fdd0eef88e97ccaf026598dc1809a07673535ea751661ae8fa7c085206a382"
+    },
+    {
+      "version": 88,
+      "file": "V88__logistics_fee_records.sql",
+      "sha256": "48dc256c5f0eb3583cec5907c3ff9ee49b657675d85d67c4469bbad7241a05af"
+    },
+    {
+      "version": 89,
+      "file": "V89__logistics_inquiries.sql",
+      "sha256": "599b1c9d3078fca9dacb96b64e152ef9bb1f0b22f71dae8ef1b349fc565d4e13"
+    },
+    {
+      "version": 90,
+      "file": "V90__settings_tasks.sql",
+      "sha256": "22727f00345eff794e2ee5b1412382606f4edd9bc2dc13f65babf6cadc10ebfa"
+    },
+    {
+      "version": 91,
+      "file": "V91__settings_internal_notices.sql",
+      "sha256": "cda47a07af318b9b49a4e3858d24345c474f42aa29dd70282d4db6bddda51e73"
+    },
+    {
+      "version": 92,
+      "file": "V92__settings_message_reads.sql",
+      "sha256": "bf7433cde1e6091d0a2f1560f7104274d9da23f848e98cfba2ccc82d605bb3a9"
+    },
+    {
+      "version": 93,
+      "file": "V93__settings_transfer_task_results.sql",
+      "sha256": "4e66744f00ae3c151c2b7976ed45574b7cd2456d4c0574ca2ffd588908e1d1cd"
+    },
+    {
+      "version": 94,
+      "file": "V94__settings_shipping_deadline.sql",
+      "sha256": "f067d68cbacb6e071cdbdf4d45b5016cea9d42b078e3d961a8184083dcd96459"
+    },
+    {
+      "version": 95,
+      "file": "V95__settings_system_general.sql",
+      "sha256": "a6f2e96c3486844f8532d4374eb443b7e7384c04517eccb39978bc3f87663c32"
+    },
+    {
+      "version": 96,
+      "file": "V96__settings_address_mapping.sql",
+      "sha256": "5d24c81d912fc7bda72de349b0b155293958745f0d325d3fb1bbbbcde41a79f8"
+    },
+    {
+      "version": 97,
+      "file": "V97__settings_shop_aliases.sql",
+      "sha256": "e4023964d43f83d1507d88f5bbbcaca8335631f6d05ee91de4b6ce9b64bb1ce3"
+    },
+    {
+      "version": 98,
+      "file": "V98__settings_order_exception_categories.sql",
+      "sha256": "d49b2212550111cba1557247e714ed98522fd59fd7bbdb0f8bee9286cf245226"
+    },
+    {
+      "version": 99,
+      "file": "V99__settings_approval_rules.sql",
+      "sha256": "7b79b3469543be8378d0a3fa94e05b055c9909c27686f29e89f6a72582c41ae5"
+    },
+    {
+      "version": 100,
+      "file": "V100__tenant_enterprise_branding.sql",
+      "sha256": "84912ab459aee44e38572a7147f08b74521c718786f13dafc8431aa67c343560"
+    },
+    {
+      "version": 101,
+      "file": "V101__expand_inventory_event_type.sql",
+      "sha256": "905e6ebbbf7e499185d92ef2ecd690b415950b988b0ea6bfbf5b05b8ca20a3de"
+    },
+    {
+      "version": 102,
+      "file": "V102__product_bundle_skus.sql",
+      "sha256": "c8eaaf654b720efaf9576cc70c97936735d92d1cf419b79ccc35d19782729083"
+    },
+    {
+      "version": 103,
+      "file": "V103__product_supply_prices.sql",
+      "sha256": "65c15229defd2555ded5de8e43823db03c1a6d74d88c7cc86dc7320a1ee7d3d4"
+    },
+    {
+      "version": 104,
+      "file": "V104__smart_procurement_plans.sql",
+      "sha256": "96f90a9a388c55907af9578e468fc6882d1e84831bb7509a9be4b5884e7f68e2"
+    },
+    {
+      "version": 105,
+      "file": "V105__logistics_direct_credentials.sql",
+      "sha256": "5a091cae3081eacd7ff965af4a0e1d79e23f4275b8e7b7a5bc09b98898629345"
+    },
+    {
+      "version": 106,
+      "file": "V106__system_logistics_provider_credentials.sql",
+      "sha256": "44f2bb3d873c4e9039b84d1b7c3bfcc0e3479ac6caf22da615d41e5c9412e73a"
+    },
+    {
+      "version": 107,
+      "file": "V107__logistics_authorization_channels.sql",
+      "sha256": "5bd5b09680b3e9f442824dc604e7cbadeb58ab8b42e2d8c9b081c336044d0742"
+    },
+    {
+      "version": 108,
+      "file": "V108__logistics_provider_display_names.sql",
+      "sha256": "54ad3043e623edab0e0af7bfa6c181565a2e3f567be0c39a6e7c5cfd1704ef46"
+    },
+    {
+      "version": 109,
+      "file": "V109__logistics_shipment_lifecycle.sql",
+      "sha256": "093adb49e8660ba92064741507c8d2286e9fb2363b485beb4cbf9258aaab3a5e"
+    },
+    {
+      "version": 110,
+      "file": "V110__direct_procurement_purchase_orders.sql",
+      "sha256": "9f63a153e5760b5c207a468b13e150c6fbb7b63a4e8e8b7fbc9fae16694087c0"
+    },
+    {
+      "version": 111,
+      "file": "V111__supplier_management_core.sql",
+      "sha256": "9adbb585500523d2c5724dcd646016e3e5fea1b0f4f441d0a91b3e780e27b4a9"
+    },
+    {
+      "version": 112,
+      "file": "V112__supplier_currency_columns_varchar.sql",
+      "sha256": "f844193d3f6237f793822f59f71acfadea439f9352749114af2f946a1031b89c"
+    },
+    {
+      "version": 113,
+      "file": "V113__shopify_compliance_executions.sql",
+      "sha256": "31db426e2c7607d0e79867a97067e82ba1db55c918a1e83d9a26dc581ce14380"
+    },
+    {
+      "version": 114,
+      "file": "V114__internal_other_platform_shops.sql",
+      "sha256": "1b1c08b6449f248bef7ddb9ba30858e12682130062ba6540d30f18405b14eed1"
+    },
+    {
+      "version": 115,
+      "file": "V115__preset_department_roles.sql",
+      "sha256": "138a8b52ac5fca4289ca8cab410e2026406de42a86b95d8307f799f223618880"
+    },
+    {
+      "version": 116,
+      "file": "V116__remove_enterprise_logo.sql",
+      "sha256": "d722f16387d3206ede99b51f1b96729a97fbcfb6e4709a06d5a2676aabde487d"
+    },
+    {
+      "version": 117,
+      "file": "V117__system_shopify_app_release.sql",
+      "sha256": "a734296afd41876c97238312f55e0c1cba48e795e59845b269546e072bd2e23f"
+    },
+    {
+      "version": 118,
+      "file": "V118__first_party_application_entry_grants.sql",
+      "sha256": "df8caf6218c069e96744ce1d7480906b8a23b42ba494e3c1cb7c7bbbeb225f59"
+    },
+    {
+      "version": 119,
+      "file": "V119__tenant_application_entitlements.sql",
+      "sha256": "682a9df792b8881561d60815a2f0ecc48ef6256c9c73b1df63098b2364146d9b"
+    }
+  ]
+}

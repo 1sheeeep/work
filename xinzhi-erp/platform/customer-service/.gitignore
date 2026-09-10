@@ -1,0 +1,14 @@
+.shopify-ai-assistant/
+.codex/
+.env
+gmail_credentials.json
+deploy/production.env
+build/
+bin/
+runtime/
+release/
+frontend/node_modules/
+node_modules/
+*.log
+*.tmp
+tmp/

@@ -1,0 +1,84 @@
+package platform
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"fmt"
+	"strings"
+)
+
+type nativeProtectedTable struct {
+	Rows   int64
+	Digest string
+}
+
+// Source-side collector: one read-only repeatable-read snapshot, all public
+// business tables including credentials/config/history/outboxes. Raw rows never
+// leave the function or enter errors/logs. No cross-business database access.
+// This candidate is deliberately restricted to the owned rehearsal database.
+func collectOwnedNativePreservation(ctx context.Context, db *sql.DB) (map[string]nativeProtectedTable, error) {
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
+	if err != nil {
+		return nil, fmt.Errorf("PRESERVATION_UNAVAILABLE")
+	}
+	defer tx.Rollback()
+	var owned bool
+	if err = tx.QueryRowContext(ctx, `SELECT current_database()='native_cs_identity_rehearsal' AND current_user='synthetic_native_identity' AND coalesce(shobj_description(oid,'pg_database'),'')='xz-owned-native-cs-identity-v1' FROM pg_database WHERE datname=current_database()`).Scan(&owned); err != nil || !owned {
+		return nil, fmt.Errorf("OWNED_PRESERVATION_DATABASE_REQUIRED")
+	}
+	if _, err = tx.ExecContext(ctx, `SET LOCAL statement_timeout='15s'; SET LOCAL lock_timeout='2s'`); err != nil {
+		return nil, fmt.Errorf("PRESERVATION_UNAVAILABLE")
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename`)
+	if err != nil {
+		return nil, fmt.Errorf("PRESERVATION_CATALOG_UNAVAILABLE")
+	}
+	var names []string
+	for rows.Next() {
+		var name string
+		if err = rows.Scan(&name); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("PRESERVATION_CATALOG_INVALID")
+		}
+		names = append(names, name)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil || len(names) == 0 {
+		return nil, fmt.Errorf("PRESERVATION_CATALOG_INCOMPLETE")
+	}
+	result := map[string]nativeProtectedTable{}
+	for _, name := range names {
+		// Names come only from the catalog and are SQL identifier-quoted, never raw
+		// request input. Stable row JSON ordering also handles tables without a PK.
+		quoted := `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+		rows, err = tx.QueryContext(ctx, `SELECT to_jsonb(t)::text FROM public.`+quoted+` t ORDER BY to_jsonb(t)::text`)
+		if err != nil {
+			return nil, fmt.Errorf("PRESERVATION_TABLE_UNAVAILABLE")
+		}
+		hash := sha256.New()
+		var count int64
+		for rows.Next() {
+			var raw []byte
+			if err = rows.Scan(&raw); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("PRESERVATION_ROW_INVALID")
+			}
+			hash.Write(raw)
+			hash.Write([]byte{'\n'})
+			count++
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, fmt.Errorf("PRESERVATION_TABLE_INCOMPLETE")
+		}
+		result[name] = nativeProtectedTable{count, hex.EncodeToString(hash.Sum(nil))}
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, fmt.Errorf("PRESERVATION_SNAPSHOT_FAILED")
+	}
+	return result, nil
+}

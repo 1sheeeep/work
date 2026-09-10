@@ -1,0 +1,11 @@
+.env
+.idea/
+.vscode/
+backend/target/
+backend/var/
+frontend/dist/
+frontend/node_modules/
+frontend/*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
+release/

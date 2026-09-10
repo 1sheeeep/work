@@ -1,0 +1,4268 @@
+/*
+ * Xinzhi ERP authoritative presentation layer.
+ *
+ * Feature styles may describe feature-specific structure. This file owns the
+ * shared visual contract: type, spacing, controls, panels, filters, tables,
+ * dialogs and page actions. Keep it imported after feature/legacy styles.
+ */
+
+:root {
+  --erp-space-1: 4px;
+  --erp-space-2: 8px;
+  --erp-space-3: 12px;
+  --erp-space-4: 16px;
+  --erp-control-height: 34px;
+  --erp-shell-height: 56px;
+  --erp-breadcrumb-height: 36px;
+  --erp-font-body: 14px;
+  --erp-font-small: 13px;
+  --erp-font-caption: 12px;
+  --erp-font-label: 14px;
+  --erp-font-section: 17px;
+  --erp-font-weight-regular: 400;
+  --erp-font-weight-medium: 500;
+  --erp-font-weight-semibold: 600;
+  --erp-line-body: 1.5;
+  --erp-z-modal: 1000;
+  /* Legacy feature styles consume the same palette as the shared shell. */
+  --color-primary: var(--erp-color-primary);
+  --color-primary-hover: var(--erp-color-primary-hover);
+  --color-primary-soft: var(--erp-color-primary-soft);
+  --color-background: var(--erp-color-page);
+  --color-surface: var(--erp-color-surface);
+  --color-surface-subtle: var(--erp-color-surface-muted);
+  --color-text: var(--erp-color-text);
+  --color-text-secondary: var(--erp-color-text-secondary);
+  --color-text-muted: var(--erp-color-text-muted);
+  --color-border: var(--erp-color-border);
+  --color-border-strong: var(--erp-color-border-strong);
+}
+
+/* Opt-in only: the final column in these business lists is an action column.
+ * Narrow viewports retain horizontal scrolling so actions cannot cover the row. */
+@media (min-width: 1024px) {
+  .app-shell .erp-pinned-actions > :where(thead, tbody) > tr > :where(th, td):last-child:not([colspan]) {
+    position: sticky;
+    right: 0;
+    z-index: 1;
+    background: var(--erp-color-surface);
+    box-shadow: -1px 0 var(--erp-color-border);
+  }
+  .app-shell .erp-pinned-actions > thead > tr > th:last-child {
+    z-index: 3;
+    background: var(--erp-color-surface-muted);
+  }
+  .app-shell .erp-pinned-actions > tbody > tr:hover > td:last-child {
+    background: var(--erp-color-row-hover);
+  }
+  .app-shell .erp-pinned-actions > tbody > tr:has(> td:first-child input:checked) > td:last-child {
+    background: var(--erp-color-row-selected);
+  }
+}
+
+/*
+ * Shared overlay quality contract.
+ * Some feature dialogs are portalled to document.body, so these selectors are
+ * intentionally not scoped below .app-shell.
+ */
+.dialog-backdrop,
+.warehouse-dialog-backdrop,
+.manual-modal-backdrop,
+.modal-backdrop {
+  z-index: var(--erp-z-modal, 1000);
+  padding: 20px;
+  background: var(--erp-overlay);
+  overscroll-behavior: contain;
+}
+
+.write-dialog,
+.warehouse-dialog,
+.manual-modal,
+.platform-dialog,
+.credential-dialog {
+  border: 1px solid var(--erp-color-border);
+  border-radius: 8px;
+  background: var(--erp-color-surface);
+  box-shadow: var(--erp-shadow-dialog, 0 24px 72px rgb(47 57 41 / 28%));
+}
+
+.write-dialog > :where(.table-heading, .manual-modal-header, .platform-dialog-heading),
+.warehouse-dialog > :where(.table-heading, .manual-modal-header, .platform-dialog-heading),
+.manual-modal > :where(.table-heading, .manual-modal-header, .platform-dialog-heading),
+.platform-dialog > :where(.table-heading, .manual-modal-header, .platform-dialog-heading) {
+  border-bottom-color: var(--erp-color-border);
+  background: var(--erp-color-surface);
+}
+
+.app-shell :where(
+  .warehouse-archive-table-wrap,
+  .shop-table-scroll,
+  .warehouse-table-scroll,
+  .manual-table-scroll,
+  .order-table-scroll,
+  .table-scroll
+) {
+  /* Contain absolutely positioned screen-reader captions inside the scroller. */
+  position: relative;
+  scrollbar-color: #9aa9bd transparent;
+  scrollbar-width: thin;
+}
+
+.app-shell :where(.warehouse-archive-card, .order-overview-panel, .shop-list-section) {
+  border-color: #cfd9e7;
+}
+
+.app-shell :where(.logistics-row-action, table .text-button):focus-visible {
+  border-radius: 3px;
+  outline-offset: 1px;
+}
+
+.app-shell .logistics-row-action {
+  min-height: 28px;
+  padding: 3px 5px;
+  font-size: 13px;
+}
+
+.app-shell .logistics-row-action:hover:not(:disabled) {
+  border-radius: 3px;
+  background: var(--erp-color-primary-soft);
+  text-decoration: none;
+}
+
+@media (max-width: 720px) {
+  .dialog-backdrop,
+  .warehouse-dialog-backdrop,
+  .manual-modal-backdrop,
+  .modal-backdrop {
+    align-items: end;
+    padding: 8px;
+  }
+
+  .write-dialog,
+  .warehouse-dialog,
+  .manual-modal,
+  .platform-dialog {
+    width: 100%;
+    max-height: calc(100dvh - 16px);
+    border-radius: 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-shell *,
+  .app-shell *::before,
+  .app-shell *::after,
+  [aria-modal="true"],
+  [aria-modal="true"] * {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+/* Order workspace: navigation views, compact search, and contextual actions. */
+.app-shell .sidebar-navigation-scroll {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 4px 6px 12px;
+  scrollbar-gutter: stable;
+}
+
+.app-shell .sidebar .sidebar-navigation-scroll > nav {
+  position: static;
+  max-height: none;
+  overflow: visible;
+  padding: 0;
+}
+
+.app-shell .order-filter-panel {
+  display: block;
+  padding: 6px 8px;
+}
+
+.app-shell .order-search-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.app-shell .order-search-control {
+  min-width: min(100%, 144px);
+  flex: 0 1 176px;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.app-shell .order-search-control :where(select, input) {
+  width: 100%;
+  min-width: 0;
+}
+
+.app-shell .order-keyword-control {
+  min-width: min(100%, 260px);
+  flex: 1 1 420px;
+}
+
+.app-shell .order-advanced-filter-panel {
+  width: auto;
+  flex: 0 0 auto;
+  margin: 0;
+  border: 0;
+}
+
+.app-shell .order-advanced-filter-panel .advanced-filter-trigger {
+  width: auto;
+  min-height: var(--erp-control-height);
+  gap: 5px;
+  padding: 3px 9px;
+  border: 1px solid var(--erp-color-border-strong);
+  border-radius: var(--erp-control-radius);
+  color: var(--erp-color-text);
+  background: var(--erp-color-surface);
+  white-space: nowrap;
+}
+
+.app-shell .order-advanced-filter-panel .advanced-filter-summary-state {
+  display: none;
+}
+
+.app-shell .order-advanced-filter-panel > .advanced-filter-trigger > .advanced-filter-count {
+  min-width: 20px;
+  min-height: 20px;
+  justify-content: center;
+  padding: 1px 6px;
+  font-size: 0;
+}
+
+.app-shell .order-advanced-filter-panel > .advanced-filter-trigger > .advanced-filter-count::after {
+  content: attr(data-count);
+  font-size: var(--erp-font-small);
+}
+
+.app-shell .order-clear-filters,
+.app-shell .order-clear-selection {
+  min-height: var(--erp-control-height);
+  white-space: nowrap;
+}
+
+.app-shell .order-action-bar {
+  display: grid;
+  min-height: 0;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+}
+
+.app-shell .order-global-actions,
+.app-shell .order-global-actions-start,
+.app-shell .order-global-actions-end,
+.app-shell .order-selection-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.app-shell .order-global-actions {
+  justify-content: space-between;
+  padding: 5px 8px;
+}
+
+.app-shell .order-global-actions-end {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.app-shell .order-action-summary-value {
+  color: var(--erp-color-text-muted);
+  font-size: var(--erp-font-small);
+}
+
+.app-shell .order-selection-actions {
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  border-top: 1px solid #bfd4f3;
+  background: var(--erp-color-primary-soft);
+}
+
+.app-shell .order-selection-actions > strong {
+  min-width: 120px;
+  color: var(--erp-color-primary);
+  font-size: var(--erp-font-body);
+}
+
+.app-shell .order-selection-actions .order-bulk-target {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.app-shell .order-selection-actions .order-bulk-target select {
+  width: 168px;
+}
+
+.app-shell .order-action-bar > [role="status"] {
+  margin: 0;
+  padding: 6px 8px;
+  border-top: 1px solid var(--erp-color-border);
+}
+
+.app-shell .order-column-settings-menu {
+  width: min(460px, calc(100vw - 32px));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px 10px;
+  padding: 8px;
+}
+
+.app-shell .order-column-settings-menu > label {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 5px;
+  border-radius: var(--erp-control-radius);
+  font-weight: 400;
+}
+
+.app-shell .order-column-settings-menu > label:hover {
+  background: var(--erp-color-surface-muted);
+}
+
+.app-shell .order-column-settings-menu > button {
+  grid-column: 1 / -1;
+}
+
+.app-shell .order-create-backdrop {
+  z-index: 1300;
+}
+
+.app-shell .order-create-dialog {
+  display: flex;
+  width: min(1100px, calc(100vw - 48px));
+  max-width: 100%;
+  max-height: calc(100dvh - 48px);
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+
+.app-shell .order-create-dialog > .table-heading {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.app-shell .order-create-dialog > .table-heading h2 {
+  margin: 0;
+}
+
+.app-shell .order-create-form {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 18px 20px;
+  scrollbar-gutter: stable;
+}
+
+@media (max-width: 1180px) {
+  .app-shell .order-search-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .app-shell .order-search-control {
+    flex: 1 1 180px;
+  }
+
+  .app-shell .order-keyword-control {
+    flex-basis: min(100%, 360px);
+  }
+}
+
+@media (max-width: 720px) {
+  .app-shell .sidebar-navigation-scroll {
+    padding-bottom: 20px;
+  }
+
+  .app-shell .order-search-control,
+  .app-shell .order-keyword-control {
+    width: 100%;
+    min-width: 0;
+    flex-basis: 100%;
+  }
+
+  .app-shell .order-search-toolbar > .button,
+  .app-shell .order-search-toolbar > .order-advanced-filter-panel {
+    width: calc(50% - 3px);
+    flex: 1 1 calc(50% - 3px);
+  }
+
+  .app-shell .order-advanced-filter-panel .advanced-filter-trigger {
+    width: 100%;
+    min-height: 44px;
+    justify-content: center;
+  }
+
+  .app-shell .order-clear-filters {
+    width: 100%;
+  }
+
+  .app-shell .order-global-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .app-shell .order-global-actions-start,
+  .app-shell .order-global-actions-end {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .app-shell .order-global-actions-start > *,
+  .app-shell .order-global-actions-end > * {
+    flex: 1 1 calc(50% - 3px);
+  }
+
+  .app-shell .order-global-actions .button,
+  .app-shell .order-global-actions summary {
+    width: 100%;
+    min-height: 44px;
+    justify-content: center;
+  }
+
+  .app-shell .order-selection-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .app-shell .order-selection-actions .order-bulk-target,
+  .app-shell .order-selection-actions .order-bulk-target select,
+  .app-shell .order-selection-actions > .button,
+  .app-shell .order-selection-actions > .text-button {
+    width: 100%;
+  }
+
+  .app-shell .order-column-settings-menu {
+    position: static;
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-shell .order-column-settings-menu > button {
+    grid-column: 1;
+  }
+
+  .app-shell .order-create-backdrop {
+    padding: 0;
+  }
+
+  .app-shell .order-create-dialog {
+    width: 100%;
+    height: 100dvh;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .app-shell .order-create-form {
+    padding: 10px 12px 24px;
+  }
+}
+
+.app-shell {
+  color: var(--erp-color-text);
+  background: var(--erp-color-page);
+  font-size: var(--erp-font-body);
+  font-weight: var(--erp-font-weight-regular);
+  line-height: var(--erp-line-body);
+}
+
+.app-shell :where(button, a, input, select, textarea) {
+  transition:
+    color 150ms ease,
+    border-color 150ms ease,
+    background-color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.app-shell :where(button, a[href]) {
+  cursor: pointer;
+}
+
+.app-shell :where(button, a[href], [role="button"]):focus-visible {
+  outline: 2px solid var(--erp-color-primary);
+  outline-offset: 2px;
+}
+
+.app-shell :where(
+  .button,
+  .primary-button,
+  .secondary-button,
+  .button-compact,
+  .inline-alert > button,
+  .status-card button,
+  .pagination button
+) {
+  display: inline-flex;
+  min-height: var(--erp-control-height);
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border: 1px solid transparent;
+  border-radius: var(--erp-control-radius);
+  font-size: var(--erp-font-label);
+  font-weight: var(--erp-font-weight-medium);
+  line-height: 20px;
+  text-decoration: none;
+  white-space: nowrap;
+  box-shadow: none;
+}
+
+.app-shell :where(.button-primary, .primary-button) {
+  border-color: var(--erp-color-primary);
+  color: #fff;
+  background: var(--erp-color-primary);
+}
+
+.app-shell :where(.button-primary, .primary-button):hover:not(:disabled) {
+  border-color: var(--erp-color-primary-hover);
+  background: var(--erp-color-primary-hover);
+  box-shadow: none;
+}
+
+.app-shell :where(.form-actions, .manual-modal-footer) button.is-primary,
+.app-shell :is(.warehouse-archive-filter-actions, .warehouse-archive-actions) button:is(.button-primary, .is-primary) {
+  border-color: var(--erp-color-primary);
+  color: #fff;
+  background: var(--erp-color-primary);
+  font-weight: var(--erp-font-weight-medium);
+}
+
+.app-shell :where(.form-actions, .manual-modal-footer) button.is-primary:hover:not(:disabled),
+.app-shell :is(.warehouse-archive-filter-actions, .warehouse-archive-actions) button:is(.button-primary, .is-primary):hover:not(:disabled) {
+  border-color: var(--erp-color-primary-hover);
+  background: var(--erp-color-primary-hover);
+}
+
+.app-shell :where(.button-secondary, .secondary-button) {
+  border-color: var(--erp-color-border-strong);
+  color: var(--erp-color-text);
+  background: var(--erp-color-surface);
+}
+
+.app-shell :where(.button-secondary, .secondary-button):hover:not(:disabled) {
+  border-color: var(--erp-color-border-strong);
+  background: var(--erp-color-surface-muted);
+}
+
+.app-shell .page-back-button {
+  min-height: var(--erp-control-height);
+  padding-inline: 10px;
+}
+
+.app-shell .page-back-button > svg {
+  flex: 0 0 auto;
+}
+
+.app-shell .button-danger {
+  border-color: var(--erp-color-danger);
+  color: #fff;
+  background: var(--erp-color-danger);
+}
+
+.app-shell :where(.button, .primary-button, .secondary-button):disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
+.app-shell :where(button, input, select, textarea):disabled {
+  cursor: not-allowed;
+}
+
+.app-shell .text-button {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin: 0;
+  padding: 3px 2px;
+  border: 0;
+  border-radius: 2px;
+  color: var(--erp-color-primary);
+  background: transparent;
+  font-size: var(--erp-font-label);
+  font-weight: var(--erp-font-weight-medium);
+  line-height: 20px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.app-shell .text-button:hover:not(:disabled) {
+  color: var(--erp-color-primary-hover);
+  background: var(--erp-color-primary-soft);
+}
+
+.app-shell :where(
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+  select
+) {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--erp-control-height);
+  padding: 5px 8px;
+  border: 1px solid var(--erp-color-border-strong);
+  border-radius: var(--erp-control-radius);
+  color: var(--erp-color-text);
+  background: var(--erp-color-surface);
+  font-size: var(--erp-font-label);
+  line-height: 20px;
+  box-shadow: none;
+}
+
+.app-shell .main-content input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+.app-shell .main-content select {
+  height: var(--erp-control-height);
+  min-height: var(--erp-control-height);
+  padding: 5px 8px;
+  border: 1px solid var(--erp-color-border-strong);
+  border-radius: var(--erp-control-radius);
+  color: var(--erp-color-text);
+  background: var(--erp-color-surface);
+  font-family: inherit;
+  font-size: var(--erp-font-label);
+  line-height: 20px;
+  box-shadow: none;
+}
+
+.app-shell textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--erp-color-border-strong);
+  border-radius: var(--erp-control-radius);
+  color: var(--erp-color-text);
+  background: var(--erp-color-surface);
+  font-size: var(--erp-font-label);
+  line-height: 1.45;
+  box-shadow: none;
+}
+
+.app-shell :where(input, select, textarea):focus {
+  border-color: var(--erp-color-primary);
+  outline: 2px solid var(--erp-color-focus);
+  outline-offset: 0;
+}
+
+.app-shell :where(input, select, textarea):disabled {
+  color: var(--erp-color-text-muted);
+  background: var(--erp-color-surface-muted);
+}
+
+.app-shell .main-content input[type="checkbox"],
+.app-shell .main-content input[type="radio"] {
+  width: 16px;
+  height: 16px;
+  min-height: 16px;
+  flex: 0 0 16px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--erp-color-primary);
+}
+
+.app-shell :where(label, legend) {
+  color: var(--erp-color-text-secondary);
+  font-size: var(--erp-font-label);
+  line-height: 18px;
+}
+
+.app-shell :where(.page-actions, .form-actions, .row-actions, .table-actions) {
+  display: flex;
+  align-items: center;
+  gap: var(--erp-space-2);
+}
+
+.app-shell .page-actions {
+  margin-left: auto;
+  justify-content: flex-end;
+}
+
+.app-shell .form-actions {
+  justify-content: flex-end;
+}
+
+.app-shell .row-actions {
+  min-width: max-content;
+  flex-wrap: nowrap;
+  gap: 8px;
+}
+
+.app-shell .warehouse-row-actions,
+.app-shell .platform-row-actions,
+.app-shell .shop-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.app-shell table .text-button,
+.app-shell table .icon-text-button {
+  width: auto;
+  height: 28px;
+  min-height: 28px;
+  align-self: center;
+  padding: 3px 5px;
+  border-radius: 2px;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.app-shell .detail-card,
+.app-shell .detail-action-panel,
+.app-shell .confirmation-panel,
+.app-shell .shop-create-panel,
+.app-shell .shop-list-section,
+.app-shell .warehouse-card,
+.app-shell .manual-table-section,
+.app-shell .order-overview-panel,
+.app-shell .order-list-panel,
+.app-shell .platform-section {
+  border: 1px solid var(--erp-color-border);
+  border-radius: var(--erp-panel-radius);
+  background: var(--erp-color-surface);
+  box-shadow: none;
+}
+
+.app-shell .detail-card,
+.app-shell .detail-action-panel,
+.app-shell .confirmation-panel,
+.app-shell .shop-create-panel,
+.app-shell .warehouse-card,
+.app-shell .order-overview-panel {
+  padding: var(--erp-space-3);
+}
+
+.app-shell .order-overview-panel {
+  overflow: hidden;
+  padding: 0;
+}
+
+.app-shell :where(
+  .detail-card,
+  .detail-action-panel,
+  .confirmation-panel,
+  .shop-create-panel,
+  .warehouse-card
+) :where(h2, h3) {
+  color: var(--erp-color-text);
+}
+
+.app-shell .table-heading {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--erp-space-3);
+  padding: 7px 10px 5px;
+}
+
+.app-shell .table-heading h2 {
+  margin: 0;
+  font-size: var(--erp-font-section);
+  font-weight: 600;
+  line-height: 24px;
+}
+
+.app-shell .table-heading p {
+  margin: 1px 0 0;
+  color: var(--erp-color-text-secondary);
+  font-size: var(--erp-font-small);
+  line-height: 18px;
+}
+
+.app-shell .dialog-close-row {
+  display: flex;
+  justify-content: flex-end;
+  padding: 4px 4px 0;
+}
+
+.app-shell .dialog-close-button {
+  flex: 0 0 44px;
+  color: var(--erp-color-text-secondary);
+}
+
+.app-shell [role="dialog"]:not(.sidebar) {
+  position: relative;
+}
+
+.app-shell [role="dialog"] > :where(
+  .table-heading,
+  .order-detail-header,
+  .shop-onboarding-heading,
+  .manual-modal-header,
+  .inbound-documents-dialog-header,
+  .platform-dialog-heading
+) {
+  position: relative;
+  padding-right: 56px;
+}
+
+.app-shell [role="dialog"] > :where(
+  .table-heading,
+  .order-detail-header,
+  .shop-onboarding-heading,
+  .manual-modal-header,
+  .inbound-documents-dialog-header,
+  .platform-dialog-heading
+) .dialog-close-button {
+  position: absolute;
+  z-index: 5;
+  top: 4px;
+  right: 4px;
+}
+
+.app-shell .dialog-close-button:hover:not(:disabled) {
+  color: var(--erp-color-primary);
+  background: var(--erp-color-primary-soft);
+}
+
+.app-shell :where(
+  .product-filters,
+  .warehouse-filters,
+  .location-filters,
+  .order-filter-bar,
+  .shop-toolbar,
+  .iam-filters,
+  .platform-toolbar,
+  .toolbar-row,
+  .manual-filter-panel
+) {
+  align-items: center;
+  gap: 6px 10px;
+  margin: 0 0 var(--erp-space-2);
+  padding: 6px 8px;
+  border: 1px solid var(--erp-color-border);
+  border-radius: var(--erp-panel-radius);
+  background: var(--erp-color-surface);
+  box-shadow: none;
+}
+
+.app-shell :where(
+  .product-filters,
+  .warehouse-filters,
+  .location-filters,
+  .order-filter-bar,
+  .shop-toolbar,
+  .iam-filters,
+  .manual-filter-panel
+) label {
+  min-width: 0;
+  margin: 0;
+  color: var(--erp-color-text-secondary);
+  font-size: var(--erp-font-label);
+  font-weight: var(--erp-font-weight-medium);
+}
+
+.app-shell .iam-filters,
+.app-shell .shop-toolbar,
+.app-shell .manual-filter-panel,
+.app-shell .platform-toolbar {
+  align-items: end;
+}
+
+.app-shell :where(
+  .shop-table-scroll,
+  .warehouse-table-scroll,
+  .manual-table-scroll,
+  .order-table-scroll,
+  .table-scroll
+) {
+  min-width: 0;
+  overflow: auto;
+  border-radius: 0;
+}
+
+.app-shell table {
+  width: max-content;
+  min-width: 100%;
+  border-spacing: 0;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+  background: var(--erp-color-surface);
+}
+
+.app-shell th,
+.app-shell td {
+  height: 40px;
+  padding: 7px 10px;
+  border-top: 1px solid var(--erp-color-border);
+  color: var(--erp-color-text);
+  font-size: 13px;
+  line-height: 1.35;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.app-shell tbody td {
+  font-weight: var(--erp-font-weight-regular);
+}
+
+.app-shell tbody td > strong,
+.app-shell tbody td > a > strong,
+.app-shell .product-table-identity > strong {
+  font-weight: var(--erp-font-weight-medium);
+}
+
+.app-shell .shop-table th,
+.app-shell .shop-table td,
+.app-shell .warehouse-table th,
+.app-shell .warehouse-table td,
+.app-shell .manual-table-scroll th,
+.app-shell .manual-table-scroll td,
+.app-shell .platform-table th,
+.app-shell .platform-table td {
+  height: 38px;
+  padding: 6px 9px;
+  font-size: 13px;
+}
+
+.app-shell th {
+  color: var(--erp-color-text-secondary);
+  background: var(--erp-color-surface-muted);
+  font-weight: var(--erp-font-weight-semibold);
+  overflow-wrap: normal;
+  white-space: normal;
+  word-break: keep-all;
+}
+
+.app-shell tbody tr:hover {
+  background: var(--erp-color-row-hover);
+}
+
+.app-shell tbody tr:has(> td:first-child input[type="checkbox"]:checked) {
+  background: var(--erp-color-row-selected);
+}
+
+.app-shell th .text-button {
+  min-height: 24px;
+  padding-block: 1px;
+  color: inherit;
+  font: inherit;
+  white-space: normal;
+}
+
+.app-shell .action-bar {
+  display: flex;
+  min-height: 34px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 3px 10px 5px;
+  border-bottom: 1px solid var(--erp-color-border);
+  font-size: var(--erp-font-small);
+}
+
+.app-shell :where(.pagination, .manual-pagination, .supplier-pagination) {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  flex-wrap: wrap;
+  margin: 0;
+  padding: 5px 10px;
+  border-top: 1px solid var(--erp-color-border);
+  color: var(--erp-color-text-secondary);
+  background: var(--erp-color-surface);
+  font-size: var(--erp-font-small);
+}
+
+.app-shell .pagination > div {
+  display: flex;
+  align-items: center;
+  gap: var(--erp-space-2);
+}
+
+.app-shell .pagination-complete {
+  flex-wrap: wrap;
+}
+
+.app-shell .pagination-settings {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.app-shell .pagination-settings label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.app-shell .pagination-settings select {
+  width: 68px;
+}
+
+.app-shell .pagination-settings input {
+  width: 62px;
+}
+
+.app-shell .erp-filter-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  padding: 4px 8px;
+}
+
+.app-shell .erp-filter-row {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--erp-color-border);
+  color: var(--erp-color-text);
+  font-size: var(--erp-font-label);
+  font-weight: 500;
+}
+
+.app-shell .erp-filter-row:last-child {
+  border-bottom: 0;
+}
+
+.app-shell .erp-filter-label {
+  width: 90px;
+  flex: 0 0 90px;
+  color: var(--erp-color-text);
+  font-weight: var(--erp-font-weight-medium);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.app-shell .erp-filter-options {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.app-shell .erp-filter-options label {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.app-shell .erp-filter-options input {
+  width: 15px;
+  height: 15px;
+  min-height: 0;
+  margin: 0;
+}
+
+.app-shell .erp-filter-search-row > input {
+  width: min(320px, 24vw);
+  min-width: 180px;
+}
+
+.app-shell .erp-filter-row > select {
+  width: min(820px, calc(100% - 100px));
+}
+
+.app-shell .erp-filter-short-row > select {
+  width: 220px;
+}
+
+.app-shell .erp-filter-date-row > label {
+  display: block;
+}
+
+.app-shell .erp-filter-date-row input {
+  width: 182px;
+}
+
+.app-shell .erp-filter-range > label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.app-shell .erp-filter-range input {
+  width: 120px;
+}
+
+.app-shell .erp-filter-date-range input {
+  width: 150px;
+}
+
+.app-shell .erp-filter-range-context {
+  color: var(--erp-color-text-muted);
+  font-size: var(--erp-font-label);
+  white-space: nowrap;
+}
+
+.app-shell .main-content .shop-filter-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  gap: 0;
+  padding: 4px 8px;
+}
+
+.app-shell .main-content .shop-filter-panel > .erp-filter-row,
+.app-shell .main-content .shop-filter-panel > label.erp-filter-row {
+  display: flex;
+  grid-column: 1 / -1;
+  grid-template-columns: none;
+  align-items: center;
+}
+
+.app-shell .shop-filter-options-row .erp-filter-options {
+  flex-wrap: wrap;
+}
+
+.app-shell .shop-filter-panel .erp-filter-options > label {
+  display: inline-flex;
+  min-height: var(--erp-control-height);
+  align-items: center;
+  gap: 5px;
+}
+
+.app-shell .shop-filter-panel .shop-page-size select {
+  width: 84px;
+}
+
+.app-shell .shop-filter-panel > .toolbar-note {
+  padding: 6px 6px 5px 97px;
+}
+
+.app-shell .main-content .order-filter-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  gap: 0;
+  padding: 4px 8px;
+}
+
+.app-shell .main-content .order-filter-panel > .erp-filter-row {
+  display: flex;
+  grid-template-columns: none;
+  align-items: center;
+}
+
+.app-shell .order-quick-filter-options {
+  flex-wrap: wrap;
+}
+
+.app-shell .order-quick-filter-options > label {
+  display: inline-flex;
+  min-height: var(--erp-control-height);
+  align-items: center;
+  gap: 5px;
+}
+
+.app-shell .order-quick-filter-options :where(select, input) {
+  width: min(220px, 15vw);
+  min-width: 150px;
+}
+
+.app-shell .order-filter-panel > .toolbar-note {
+  padding: 5px 6px 5px 103px;
+}
+
+.app-shell .advanced-filter-panel {
+  width: 100%;
+  margin: 2px 0 0;
+  padding: 0;
+  border-top: 1px solid var(--erp-color-border);
+  color: var(--erp-color-text);
+  font-size: var(--erp-font-body);
+}
+
+.app-shell .advanced-filter-trigger {
+  display: flex;
+  width: 100%;
+  min-height: 38px;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border: 0;
+  color: var(--erp-color-primary);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+}
+
+.app-shell .advanced-filter-trigger:hover {
+  background: var(--erp-color-primary-soft);
+}
+
+.app-shell .advanced-filter-trigger:focus-visible {
+  outline: 2px solid var(--erp-color-primary);
+  outline-offset: -2px;
+}
+
+.app-shell .advanced-filter-summary-title,
+.app-shell .advanced-filter-summary-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: var(--erp-font-weight-medium);
+}
+
+.app-shell .advanced-filter-summary-state {
+  margin-left: auto;
+  color: var(--erp-color-text-muted);
+  font-size: var(--erp-font-small);
+}
+
+.app-shell .advanced-filter-count {
+  display: inline-flex;
+  min-height: 22px;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px solid var(--erp-color-border-strong);
+  border-radius: 999px;
+  color: var(--erp-color-primary);
+  background: var(--erp-color-primary-soft);
+  font-size: var(--erp-font-small);
+  font-weight: var(--erp-font-weight-medium);
+}
+
+.app-shell .advanced-filter-overlay {
+  position: fixed;
+  z-index: 1200;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 48px 24px 24px;
+  background: rgb(12 26 49 / 34%);
+}
+
+.app-shell .advanced-filter-overlay[hidden] {
+  display: none;
+}
+
+.app-shell .advanced-filter-dialog {
+  position: relative;
+  display: flex;
+  width: min(1080px, calc(100vw - 48px));
+  max-width: 100%;
+  max-height: calc(100vh - 72px);
+  max-height: calc(100dvh - 72px);
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--erp-color-border-strong);
+  border-radius: var(--erp-panel-radius);
+  color: var(--erp-color-text);
+  background: var(--erp-color-surface);
+  box-shadow: 0 20px 56px rgb(15 30 55 / 24%);
+  animation: advanced-filter-dialog-in 160ms ease-out;
+}
+
+@keyframes advanced-filter-dialog-in {
+  from {
+    transform: translateY(-8px);
+    opacity: .76;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.app-shell .advanced-filter-dialog-header {
+  display: flex;
+  min-height: 58px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--erp-color-border);
+  background: var(--erp-color-surface);
+}
+
+.app-shell .advanced-filter-dialog-header > div {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.app-shell .advanced-filter-dialog-header h2 {
+  margin: 0;
+  color: var(--erp-color-text);
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.app-shell .advanced-filter-dialog-header p {
+  margin: 2px 0 0;
+  color: var(--erp-color-text-muted);
+  font-size: var(--erp-font-small);
+  font-weight: 400;
+}
+
+.app-shell .advanced-filter-dialog-header > .advanced-filter-count {
+  flex: 0 0 auto;
+}
+
+.app-shell .advanced-filter-dialog-header .dialog-close-button {
+  position: static;
+  flex: 0 0 auto;
+}
+
+.app-shell .advanced-filter-body {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+  background: var(--erp-color-surface-muted);
+  overscroll-behavior: contain;
+}
+
+.app-shell .advanced-filter-sections {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 10px;
+}
+
+.app-shell .advanced-filter-section {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--erp-color-border);
+  border-radius: var(--erp-panel-radius);
+  background: var(--erp-color-surface);
+}
+
+.app-shell .advanced-filter-section > header {
+  margin-bottom: 9px;
+}
+
+.app-shell .advanced-filter-section > header h3 {
+  margin: 0;
+  color: var(--erp-color-text);
+  font-size: var(--erp-font-body);
+  line-height: 1.4;
+}
+
+.app-shell .advanced-filter-section > header p {
+  margin: 2px 0 0;
+  color: var(--erp-color-text-muted);
+  font-size: var(--erp-font-small);
+  font-weight: 400;
+}
+
+.app-shell .advanced-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+}
+
+.app-shell .advanced-filter-grid > label,
+.app-shell .advanced-filter-field {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  color: var(--erp-color-text);
+  font-size: var(--erp-font-label);
+  font-weight: var(--erp-font-weight-medium);
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.app-shell .advanced-filter-grid input,
+.app-shell .advanced-filter-grid select,
+.app-shell .advanced-filter-field input,
+.app-shell .advanced-filter-field select {
+  width: 100%;
+  min-width: 0;
+}
+
+.app-shell .advanced-filter-actions {
+  display: flex;
+  min-height: 54px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 9px 10px;
+  border-top: 1px solid var(--erp-color-border);
+  background: var(--erp-color-surface);
+  box-shadow: 0 -6px 18px rgb(15 30 55 / 5%);
+}
+
+.app-shell .advanced-filter-actions > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-shell .advanced-filter-actions .button {
+  min-width: 96px;
+}
+
+.app-shell .product-advanced-filter-field {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 92px minmax(150px, 1fr);
+  align-items: center;
+  gap: 7px;
+  color: var(--erp-color-text);
+  font-size: var(--erp-font-label);
+  font-weight: 500;
+}
+
+.app-shell .product-advanced-filter-field > span,
+.app-shell .product-advanced-filter-label {
+  font-weight: var(--erp-font-weight-medium);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.app-shell .product-advanced-filter-field > select {
+  width: 100%;
+  min-width: 0;
+}
+
+.app-shell .product-advanced-date-filter {
+  display: flex;
+  min-width: 0;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: var(--erp-color-text);
+  font-size: var(--erp-font-label);
+}
+
+.app-shell .product-advanced-filter-label {
+  width: 92px;
+  flex: 0 0 92px;
+}
+
+.app-shell .product-advanced-date-filter input {
+  width: 182px;
+}
+
+.app-shell .inventory-query-inline-filters {
+  padding: 2px 6px 4px;
+  border-top: 1px solid var(--erp-color-border);
+}
+
+.app-shell .inventory-query-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 12px;
+}
+
+.app-shell .inventory-query-filter-grid > .erp-filter-row {
+  min-width: 0;
+  border-bottom: 1px solid var(--erp-color-border);
+}
+
+.app-shell .inventory-query-filter-grid > .erp-filter-range,
+.app-shell .inventory-query-filter-grid > .inline-alert {
+  grid-column: 1 / -1;
+}
+
+.app-shell .advanced-filter-section-wide {
+  grid-column: 1 / -1;
+}
+
+.app-shell .advanced-filter-builder {
+  border: 1px solid var(--erp-color-border);
+  border-radius: var(--erp-control-radius);
+}
+
+.app-shell .advanced-filter-builder > summary {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  color: var(--erp-color-primary);
+  font-weight: var(--erp-font-weight-medium);
+  cursor: pointer;
+}
+
+.app-shell .advanced-filter-builder > div {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border-top: 1px solid var(--erp-color-border);
+}
+
+.app-shell .advanced-filter-condition-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(140px, .7fr) minmax(220px, 1.3fr);
+  gap: 8px;
+}
+
+.app-shell .advanced-filter-condition-row > label {
+  display: grid;
+  gap: 4px;
+  color: var(--erp-color-text);
+  font-size: var(--erp-font-label);
+  font-weight: var(--erp-font-weight-medium);
+}
+
+.app-shell .shop-detail-header {
+  margin: 0;
+  padding: 0 2px 4px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-shell .erp-operation-bar {
+  position: relative;
+  z-index: 4;
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
+  padding: 5px 0;
+  border: 0;
+  background: var(--erp-color-page);
+}
+
+.app-shell :where(.erp-operation-start, .erp-operation-end, .erp-pagination-selection) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-shell .erp-sort-controls,
+.app-shell .erp-sort-controls > label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.app-shell .erp-sort-controls > label {
+  color: var(--erp-color-text-secondary);
+  font-size: var(--erp-font-small);
+}
+
+.app-shell .erp-sort-controls select {
+  width: 112px;
+}
+
+.app-shell .erp-selection-count {
+  color: var(--erp-color-text-secondary);
+  font-size: var(--erp-font-small);
+}
+
+.app-shell .warehouse-context-status {
+  color: var(--erp-color-text-muted);
+  font-size: var(--erp-font-small);
+}
+
+.app-shell .location-scope-note {
+  margin: -2px 2px 4px;
+}
+
+.app-shell .shop-detail-operation-bar .status-chip {
+  min-height: 26px;
+  padding: 3px 8px;
+}
+
+.app-shell .erp-action-menu {
+  position: relative;
+}
+
+.app-shell .erp-action-menu > summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.app-shell .erp-action-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.app-shell .erp-action-menu > summary:focus-visible {
+  outline: 2px solid var(--erp-color-primary);
+  outline-offset: 2px;
+}
+
+.app-shell .erp-action-menu > summary::after {
+  margin-left: 6px;
+  content: "▾";
+  font-size: 10px;
+}
+
+.app-shell .erp-action-menu-popover {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 3px);
+  left: 0;
+  display: grid;
+  min-width: 170px;
+  overflow: hidden;
+  padding: 4px;
+  border: 1px solid var(--erp-color-border-strong);
+  border-radius: var(--erp-control-radius);
+  background: var(--erp-color-surface);
+  box-shadow: 0 8px 22px rgb(47 57 41 / 18%);
+}
+
+.app-shell .erp-add-menu .erp-action-menu-popover {
+  right: 0;
+  left: auto;
+}
+
+.app-shell .erp-action-menu-popover button {
+  min-height: 32px;
+  padding: 5px 9px;
+  border: 0;
+  border-radius: 2px;
+  color: var(--erp-color-text);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-shell .erp-action-menu-popover button:hover,
+.app-shell .erp-action-menu-popover button:focus-visible {
+  color: var(--erp-color-primary);
+  background: var(--erp-color-primary-soft);
+}
+
+.app-shell .erp-action-menu-popover button.danger {
+  color: var(--erp-color-danger);
+}
+
+.app-shell .erp-action-menu-popover button:disabled {
+  opacity: 0.46;
+  cursor: not-allowed;
+}
+
+.app-shell .erp-action-menu-popover.order-action-menu-popover {
+  width: max-content;
+  min-width: 220px;
+  max-width: min(320px, calc(100vw - 24px));
+  max-height: min(520px, 70vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.app-shell .order-row-actions {
+  align-items: flex-start;
+  white-space: nowrap;
+}
+
+.app-shell .order-row-action-menu > .erp-action-menu-popover {
+  position: static;
+  width: 240px;
+  max-width: min(280px, calc(100vw - 48px));
+  margin-top: 4px;
+  white-space: normal;
+}
+
+@media (max-width: 720px) {
+  .app-shell .order-filter-bar > .erp-action-menu {
+    width: 100%;
+  }
+
+  .app-shell
+    .order-filter-bar
+    > .erp-action-menu
+    > .erp-action-menu-popover.order-action-menu-popover {
+    position: static;
+    width: 100%;
+    max-width: none;
+    margin-top: 4px;
+  }
+}
+
+.app-shell .erp-data-workbench {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.app-shell .erp-data-workbench > .shop-table-scroll {
+  border: 1px solid var(--erp-color-border);
+  background: var(--erp-color-surface);
+}
+
+.app-shell .write-dialog,
+.app-shell .manual-modal,
+.app-shell .platform-dialog {
+  border: 1px solid var(--erp-color-border);
+  border-radius: 6px;
+  background: var(--erp-color-surface);
+  box-shadow: 0 18px 48px rgb(47 57 41 / 22%);
+}
+
+.app-shell .write-dialog {
+  --erp-dialog-inline-padding: 24px;
+  --erp-dialog-scrollbar-start: 64px;
+  padding-top: 0;
+  scrollbar-gutter: stable;
+}
+
+.app-shell .write-dialog > .table-heading {
+  position: sticky;
+  z-index: 4;
+  top: 0;
+  min-height: 52px;
+  margin-right: calc(0px - var(--erp-dialog-inline-padding));
+  margin-bottom: 16px;
+  margin-left: calc(0px - var(--erp-dialog-inline-padding));
+  padding: 10px 56px 10px 16px;
+  border-bottom: 1px solid var(--erp-color-border);
+  background: var(--erp-color-surface);
+}
+
+.app-shell .write-dialog::-webkit-scrollbar {
+  width: 10px;
+}
+
+.app-shell .write-dialog::-webkit-scrollbar-track {
+  margin-block: var(--erp-dialog-scrollbar-start) 6px;
+  background: transparent;
+}
+
+.app-shell .shopify-catalog-import-dialog {
+  --erp-dialog-inline-padding: 18px;
+  --erp-dialog-scrollbar-start: 76px;
+}
+
+.app-shell .shipping-configuration-dialog,
+.app-shell .product-package-editor {
+  display: flex;
+  max-height: calc(100dvh - 24px);
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+
+.app-shell .shipping-configuration-dialog > .table-heading,
+.app-shell .product-package-editor > .table-heading {
+  position: relative;
+  width: 100%;
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.app-shell .shipping-configuration-dialog > .dialog-scroll-region,
+.app-shell .product-package-editor > .dialog-scroll-region {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 24px 24px;
+  scrollbar-gutter: stable;
+}
+
+.app-shell .product-package-editor > .dialog-scroll-region {
+  padding-top: 0;
+}
+
+.app-shell .dialog-backdrop,
+.app-shell .manual-modal-backdrop,
+.app-shell .modal-backdrop {
+  padding: 12px;
+  background: rgb(47 57 41 / 46%);
+}
+
+.app-shell .write-dialog .form-actions,
+.app-shell .manual-modal .manual-modal-footer,
+.app-shell .platform-dialog .form-actions {
+  min-height: 44px;
+  margin-top: var(--erp-space-2);
+  padding: 6px 10px;
+  border-top: 1px solid var(--erp-color-border);
+  background: var(--erp-color-surface);
+}
+
+.app-shell .inline-alert {
+  border-radius: var(--erp-control-radius);
+}
+
+.app-shell :is(.inline-alert > button, .status-card button, .pagination button) {
+  min-height: var(--erp-control-height);
+  padding: 5px 11px;
+  border: 1px solid var(--erp-color-border-strong);
+  color: var(--erp-color-text);
+  background: var(--erp-color-surface);
+}
+
+.app-shell :is(.inline-alert > button, .status-card button, .pagination button):hover:not(:disabled) {
+  border-color: var(--erp-color-primary);
+  background: var(--erp-color-primary-soft);
+}
+
+/*
+ * Shared dense-operation patterns.
+ * WarehouseArchiveShells is used by most list, report, logistics and settings
+ * pages. These rules keep that shared structure aligned with the authoritative
+ * ERP visual contract instead of letting each feature create a roomier variant.
+ */
+.app-shell .section-block {
+  margin-top: 0;
+}
+
+.app-shell .warehouse-archive-page {
+  gap: 8px;
+}
+
+.app-shell .warehouse-archive-card {
+  border-color: var(--erp-color-border);
+  border-radius: var(--erp-panel-radius);
+  background: var(--erp-color-surface);
+  box-shadow: none;
+}
+
+.app-shell .warehouse-archive-filters {
+  gap: 7px 10px;
+  padding: 8px 10px;
+  border-color: var(--erp-color-border);
+  background: var(--erp-color-surface-muted);
+}
+
+.app-shell .warehouse-archive-filters :where(label, .warehouse-archive-filter-control) {
+  gap: 3px;
+  color: var(--erp-color-text-secondary);
+  font-size: var(--erp-font-small);
+  font-weight: var(--erp-font-weight-medium);
+}
+
+.app-shell .warehouse-archive-filters :where(input, select),
+.app-shell .warehouse-archive-filter-control button {
+  height: var(--erp-control-height);
+  min-height: var(--erp-control-height);
+  border-color: var(--erp-color-border-strong);
+  border-radius: var(--erp-control-radius);
+  font-size: 13px;
+}
+
+.app-shell :where(.warehouse-archive-filter-actions, .warehouse-archive-actions) {
+  gap: 6px;
+}
+
+.app-shell .warehouse-archive-filter-actions {
+  min-height: var(--erp-control-height);
+}
+
+.app-shell .main-content :is(.warehouse-archive-filter-actions, .warehouse-archive-actions) button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: var(--erp-control-height);
+  padding: 5px 10px;
+  border-color: var(--erp-color-border-strong);
+  border-radius: var(--erp-control-radius);
+  font-size: 13px;
+  line-height: 20px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  box-shadow: none;
+}
+
+.app-shell .warehouse-archive-actions {
+  min-height: 40px;
+  padding: 4px 8px;
+  border-color: var(--erp-color-border);
+}
+
+.app-shell .warehouse-archive-table-wrap table {
+  min-width: 880px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.app-shell .warehouse-archive-table-wrap :where(th, td:not([colspan])) {
+  height: 38px;
+  padding: 6px 9px;
+  border-color: var(--erp-color-border);
+  line-height: 1.35;
+}
+
+.app-shell .warehouse-archive-table-wrap th {
+  color: var(--erp-color-text-secondary);
+  background: var(--erp-color-surface-muted);
+  font-weight: 600;
+}
+
+.app-shell .warehouse-archive-table-wrap td:last-child {
+  white-space: nowrap;
+}
+
+.app-shell .procurement-plan-table-footer {
+  min-height: 40px;
+  gap: 6px 14px;
+  padding: 5px 10px;
+  border-color: var(--erp-color-border);
+  background: var(--erp-color-surface);
+}
+
+.app-shell .procurement-plan-table-footer > .pagination {
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.app-shell :is(.procurement-plan-table-footer, .pagination) > label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.app-shell .warehouse-processing-formula {
+  gap: 8px;
+  padding: 7px 10px;
+  border-color: var(--erp-color-border);
+  line-height: 1.45;
+}
+
+.app-shell .warehouse-archive-empty {
+  width: min(100%, 560px);
+  min-height: 76px;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: center;
+  justify-content: center;
+  justify-items: start;
+  gap: 2px 10px;
+  margin: 0 auto;
+  padding: 16px;
+  text-align: left;
+}
+
+.app-shell .warehouse-archive-empty strong,
+.app-shell .warehouse-archive-empty span {
+  grid-column: 1;
+}
+
+.app-shell .warehouse-archive-empty span {
+  margin-top: 1px;
+  line-height: 1.45;
+}
+
+.app-shell .erp-action-button {
+  display: inline-flex;
+  min-width: 0;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--erp-color-primary);
+  background: transparent;
+  box-shadow: none;
+  font-size: var(--erp-font-small);
+}
+
+.app-shell .erp-action-button:hover:not(:disabled) {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.app-shell .erp-action-button.is-danger {
+  color: var(--erp-color-danger);
+}
+
+.app-shell .erp-action-button:focus-visible {
+  outline: 2px solid var(--erp-color-focus);
+  outline-offset: 1px;
+}
+
+.app-shell .erp-action-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+}
+
+.app-shell table :where(.row-actions, .warehouse-row-actions, .platform-row-actions, .shop-row-actions) {
+  gap: 2px;
+}
+
+.app-shell .erp-empty-state {
+  display: flex;
+  min-height: 92px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  color: var(--erp-color-text-secondary);
+  text-align: left;
+}
+
+.app-shell .erp-empty-state-copy :where(strong, span) {
+  display: block;
+}
+
+.app-shell .erp-empty-state-copy strong {
+  color: var(--erp-color-text);
+  font-size: 14px;
+}
+
+.app-shell .erp-empty-state-copy span {
+  margin-top: 2px;
+  font-size: var(--erp-font-small);
+  line-height: 1.45;
+}
+
+.app-shell .erp-empty-state-action {
+  margin-left: 6px;
+}
+
+.app-shell .dashboard-page {
+  gap: 8px;
+}
+
+.app-shell .workbench-context {
+  border-color: var(--erp-color-border);
+  border-radius: var(--erp-panel-radius);
+}
+
+.app-shell .workbench-context > div {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-color: var(--erp-color-border);
+}
+
+.app-shell .workbench-context strong {
+  margin-top: 0;
+  font-size: 13px;
+}
+
+.app-shell .workbench-archive-section {
+  padding: 10px;
+  border: 1px solid var(--erp-color-border);
+  border-radius: var(--erp-panel-radius);
+  background: var(--erp-color-surface);
+  box-shadow: none;
+}
+
+.app-shell .compact-section-heading {
+  margin-bottom: 6px;
+}
+
+.app-shell .compact-section-heading h2 {
+  margin-bottom: 0;
+  font-size: var(--erp-font-section);
+}
+
+.app-shell .compact-section-heading p {
+  margin-top: 1px;
+  font-size: var(--erp-font-small);
+}
+
+.app-shell .workbench-todo-grid,
+.app-shell .workbench-shortcut-grid {
+  gap: 6px;
+}
+
+.app-shell .workbench-todo-card {
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  min-height: 68px;
+  gap: 2px 8px;
+  padding: 8px 10px;
+  border-radius: var(--erp-panel-radius);
+  background: var(--erp-color-surface-muted);
+}
+
+.app-shell .workbench-todo-icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  grid-row: 1 / span 2;
+  place-items: center;
+  border-radius: var(--erp-control-radius);
+  color: var(--erp-color-primary);
+  background: var(--erp-color-primary-soft);
+}
+
+.app-shell .workbench-todo-card > .workbench-todo-category {
+  grid-column: 2;
+}
+
+.app-shell .workbench-todo-card > strong {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+.app-shell .workbench-todo-card > small {
+  grid-column: 2;
+  margin-top: 0;
+}
+
+.app-shell .workbench-shortcut-card {
+  min-height: 54px;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: var(--erp-panel-radius);
+}
+
+.app-shell .workbench-shortcut-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--erp-control-radius);
+}
+
+.app-shell .workbench-shortcut-card small {
+  margin-top: 0;
+}
+
+.app-shell .workbench-contract-note {
+  margin-top: 6px;
+}
+
+.app-shell .order-advanced-filters > summary,
+.app-shell .erp-action-menu > summary.button {
+  gap: 5px;
+}
+
+/* The platform-admin console is a separate shell but follows the same density. */
+.platform-console {
+  gap: 8px;
+  color: var(--erp-color-text);
+  font-size: var(--erp-font-body);
+}
+
+.platform-console-header {
+  gap: 12px;
+  padding: 8px 10px;
+  border-color: var(--erp-color-border);
+  border-radius: var(--erp-panel-radius);
+  box-shadow: none;
+}
+
+.platform-console-heading h1 {
+  margin-bottom: 1px;
+  font-size: 18px;
+}
+
+.platform-console-heading p {
+  font-size: var(--erp-font-small);
+}
+
+.platform-console-utilities {
+  gap: 6px;
+}
+
+.platform-console-workspace {
+  grid-template-columns: 176px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.platform-console-menu {
+  top: 8px;
+  padding: 6px;
+  border-color: var(--erp-color-border);
+  border-radius: var(--erp-panel-radius);
+  box-shadow: none;
+}
+
+.platform-menu-label {
+  margin: 2px 7px 5px;
+}
+
+.platform-console-tabs {
+  gap: 2px;
+}
+
+.platform-console-tab {
+  min-height: 34px;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  gap: 7px;
+  padding: 0 8px;
+  border-radius: var(--erp-control-radius);
+}
+
+.platform-console-content {
+  gap: 8px;
+}
+
+.platform-console .platform-toolbar {
+  gap: 6px;
+  padding: 6px 8px;
+  border-color: var(--erp-color-border);
+  border-radius: var(--erp-panel-radius);
+  box-shadow: none;
+}
+
+.platform-console .platform-search-input {
+  min-height: var(--erp-control-height);
+  padding: 0 8px;
+  border-color: var(--erp-color-border-strong);
+  border-radius: var(--erp-control-radius);
+}
+
+.platform-console .platform-section {
+  border-radius: var(--erp-panel-radius);
+  box-shadow: none;
+}
+
+.platform-console .platform-section-heading {
+  gap: 10px;
+  padding: 8px 10px;
+}
+
+.platform-console .platform-section-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--erp-control-radius);
+}
+
+.platform-console .platform-section-title h2 {
+  margin-bottom: 0;
+  font-size: var(--erp-font-section);
+}
+
+.platform-console .platform-section-actions {
+  gap: 6px;
+}
+
+.platform-console .platform-table :where(th, td) {
+  height: 38px;
+  padding: 6px 9px;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.platform-console .platform-row-actions {
+  gap: 4px 8px;
+}
+
+.app-shell .sidebar-collapse-button {
+  width: auto;
+  height: 28px;
+  min-height: 28px;
+  border: 0;
+  padding: 2px 4px;
+  color: var(--erp-color-text-secondary);
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.app-shell .navigation-group-state {
+  color: var(--erp-color-text-muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.app-shell .nav-item {
+  display: flex;
+  grid-template-columns: none;
+}
+
+.app-shell .breadcrumb-separator {
+  color: var(--erp-color-text-muted);
+  font-size: 11px;
+}
+
+.app-shell .sidebar-collapsed .secondary-navigation {
+  display: none;
+}
+
+.app-shell .sidebar-collapsed .sidebar-collapse-button {
+  display: inline-flex;
+  width: 44px;
+  align-items: center;
+  justify-content: center;
+}
+
+@media (min-width: 901px) {
+  .app-shell {
+    --sidebar-width: 176px;
+  }
+
+  .topbar {
+    min-height: var(--erp-shell-height);
+    gap: 6px;
+    padding: 2px 10px;
+  }
+
+  .brand {
+    gap: 7px;
+    font-size: 16px;
+  }
+
+  .brand-mark {
+    width: 30px;
+    height: 30px;
+    border-radius: 4px;
+  }
+
+  .top-module-link {
+    min-height: 36px;
+    padding-inline: 9px;
+    font-size: var(--erp-font-body);
+  }
+
+  .topbar-context {
+    min-width: 0;
+    gap: 6px;
+  }
+
+  .language-switcher {
+    min-width: 50px;
+    min-height: 32px;
+    padding-inline: 8px;
+    border-radius: var(--erp-control-radius);
+  }
+
+  .topbar .icon-button {
+    width: 32px;
+    height: 32px;
+    min-height: 32px;
+  }
+
+  .mobile-menu-button {
+    width: auto;
+    min-width: 42px;
+    padding-inline: 6px;
+    color: #fff;
+    font-size: 12px;
+  }
+
+  .workspace {
+    min-height: calc(100dvh - var(--erp-shell-height));
+    grid-template-columns: var(--sidebar-width) 6px minmax(0, 1fr);
+  }
+
+  .workspace-without-sidebar {
+    display: block;
+  }
+
+  .sidebar {
+    min-height: calc(100dvh - var(--erp-shell-height));
+  }
+
+  .sidebar-heading {
+    min-height: 30px;
+    justify-content: flex-end;
+    padding: 0 8px;
+  }
+
+  .sidebar-heading > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    margin: -1px;
+    padding: 0;
+    border: 0;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .sidebar nav {
+    top: var(--erp-shell-height);
+    max-height: calc(100dvh - var(--erp-shell-height) - 30px);
+    gap: 2px;
+    padding: 4px 6px;
+  }
+
+  .navigation-group-toggle,
+  .nav-item {
+    min-height: 32px;
+    padding: 4px 7px;
+    border-radius: 4px;
+    font-size: var(--erp-font-body);
+  }
+
+  .breadcrumb {
+    min-height: var(--erp-breadcrumb-height);
+    padding: 0 14px;
+    font-size: var(--erp-font-label);
+  }
+
+  .main-content {
+    width: 100%;
+    max-width: none;
+    padding: 4px 10px 12px;
+  }
+
+  .page-heading,
+  .product-workbench-heading,
+  .product-master-header,
+  .manual-page-header,
+  .order-workbench-heading,
+  .shop-detail-header {
+    position: relative;
+    min-height: 0;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--erp-space-2);
+    margin: 0;
+  }
+
+  .page-heading > :first-child:not(.page-actions),
+  .product-workbench-heading > h1,
+  .manual-page-header > div:first-child,
+  .order-workbench-heading > :first-child,
+  .shop-detail-header > div:first-child,
+  .product-master-header h1,
+  .product-master-header p {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    margin: -1px;
+    padding: 0;
+    border: 0;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .workbench-page-heading,
+  .module-heading,
+  .product-workbench-heading,
+  .order-workbench-heading,
+  .shop-center-heading,
+  .shop-detail-header,
+  .warehouse-center-heading,
+  .warehouse-archive-heading:not(:has(> .warehouse-archive-actions)) {
+    display: none;
+  }
+
+  .warehouse-archive-heading,
+  .inbound-documents-heading {
+    min-height: 0;
+    justify-content: flex-end;
+    gap: var(--erp-space-2);
+    margin: 0;
+    padding: 0;
+  }
+
+  .warehouse-archive-heading > div:first-child:not(.warehouse-archive-actions),
+  .inbound-documents-heading > div:first-child {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    margin: -1px;
+    padding: 0;
+    border: 0;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .order-center-page {
+    gap: 6px;
+  }
+
+  .order-view-tabs {
+    min-height: 30px;
+    gap: 0;
+    margin: 0;
+  }
+
+  .order-view-tab {
+    min-height: 30px;
+    padding-inline: 10px;
+    font-size: 13px;
+  }
+
+  .order-overview-supporting-bar {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    border-top: 1px solid var(--erp-color-border);
+    background: var(--erp-color-surface-muted);
+  }
+
+  .order-overview-supporting {
+    min-height: 30px;
+    flex: 1 1 auto;
+    gap: 4px 18px;
+    padding: 4px 8px;
+    border: 0;
+  }
+
+  .order-overview-refresh {
+    min-height: 28px;
+    margin: 2px 4px;
+    padding: 3px 8px;
+  }
+
+  .order-action-bar {
+    min-height: 40px;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 8px;
+    border-radius: var(--erp-panel-radius);
+  }
+
+  .order-list-utilities {
+    min-height: 30px;
+    align-items: center;
+    gap: 4px 18px;
+    padding: 0 8px;
+    border-radius: var(--erp-panel-radius);
+  }
+
+  .order-list-utilities .order-advanced-filters summary {
+    min-height: 28px;
+  }
+
+  .product-master-header > div {
+    display: flex;
+    width: 100%;
+    align-items: center;
+  }
+
+  .product-master-header .text-button {
+    margin-right: auto;
+  }
+
+  .shop-create-panel {
+    grid-template-columns: 180px minmax(0, 1fr);
+    gap: var(--erp-space-4);
+  }
+
+  .shop-create-form {
+    grid-template-columns: 120px minmax(160px, 1fr) 120px minmax(160px, 1fr);
+    align-items: center;
+    gap: 6px 10px;
+  }
+
+  .product-filters,
+  .warehouse-filters,
+  .location-filters,
+  .order-filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+  }
+
+  .product-filters > label,
+  .warehouse-filters label,
+  .location-filters label,
+  .order-filter-bar > label {
+    display: grid;
+    flex: 0 1 auto;
+    grid-template-columns: max-content minmax(118px, 1fr);
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+  }
+
+  .warehouse-filters .filter-keyword,
+  .location-filters .filter-keyword {
+    flex-basis: 280px;
+  }
+
+  .app-shell .shop-toolbar {
+    display: grid;
+    grid-template-columns:
+      minmax(220px, 1.3fr)
+      repeat(3, minmax(160px, 1fr))
+      max-content
+      92px
+      max-content;
+    align-items: end;
+  }
+
+  .app-shell .shop-toolbar label,
+  .iam-filters label {
+    display: grid;
+    gap: 3px;
+  }
+
+  .app-shell .shop-toolbar .checkbox-label {
+    display: flex;
+    min-height: var(--erp-control-height);
+    align-items: center;
+    gap: 6px;
+    padding-bottom: 1px;
+    white-space: nowrap;
+  }
+
+  .app-shell .shop-toolbar .form-actions {
+    align-self: end;
+  }
+
+  .app-shell .shop-toolbar .toolbar-note {
+    grid-column: 1 / -1;
+  }
+
+  .manual-filter-panel {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(140px, 1fr));
+  }
+
+  .shop-table-scroll,
+  .warehouse-table-scroll,
+  .manual-table-scroll,
+  .order-table-scroll {
+    max-height: calc(100dvh - 224px);
+  }
+
+  .product-center-page .shop-table-scroll {
+    max-height: calc(100dvh - 246px);
+  }
+
+  .product-table-identity {
+    display: grid;
+    gap: 2px;
+    min-width: 120px;
+  }
+
+  .product-table-identity small {
+    overflow: hidden;
+    color: var(--erp-color-text-secondary);
+    font-size: var(--erp-font-label);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .product-master-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 118px;
+    align-items: start;
+    gap: 10px;
+  }
+
+  .product-master-sections {
+    position: sticky;
+    z-index: 2;
+    top: 6px;
+    grid-row: 1;
+    grid-column: 2;
+    display: grid;
+    gap: 1px;
+    padding: 4px;
+    border: 1px solid var(--erp-color-border);
+    border-radius: var(--erp-panel-radius);
+    background: var(--erp-color-surface);
+  }
+
+  .product-master-sections a {
+    padding: 6px 7px;
+    border-radius: 3px;
+    color: var(--erp-color-text-secondary);
+    font-size: var(--erp-font-label);
+    text-decoration: none;
+  }
+
+  .product-master-sections a:hover,
+  .product-master-sections a:focus-visible {
+    color: var(--erp-color-primary);
+    background: var(--erp-color-primary-soft);
+  }
+
+  .product-master-form {
+    min-width: 0;
+    grid-row: 1;
+    grid-column: 1;
+    display: grid;
+    gap: var(--erp-space-2);
+    padding-bottom: 44px;
+  }
+
+  .product-master-section {
+    scroll-margin-top: 6px;
+    padding: 10px 12px;
+  }
+
+  .product-master-section > h2 {
+    margin: 0 0 6px;
+    font-size: var(--erp-font-section);
+    line-height: 24px;
+  }
+
+  .product-master-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    align-items: start;
+    gap: 6px 10px;
+    margin-bottom: 6px;
+  }
+
+  .app-shell .product-master-grid > label,
+  .app-shell .product-master-grid > div,
+  .app-shell .product-master-grid > div > label,
+  .app-shell .product-master-form > form > section > label,
+  .app-shell .product-master-data-form label {
+    display: grid;
+    min-width: 0;
+    align-content: start;
+    gap: 3px;
+    margin: 0;
+    font-size: var(--erp-font-label);
+    font-weight: var(--erp-font-weight-medium);
+  }
+
+  .product-master-grid small,
+  .product-master-grid > div > .text-button,
+  .product-master-form fieldset > p {
+    font-size: var(--erp-font-small);
+    line-height: 17px;
+  }
+
+  .product-master-grid > div > .text-button {
+    width: max-content;
+    min-height: 22px;
+    padding: 1px 2px;
+  }
+
+  .product-master-form textarea {
+    min-height: 54px;
+    resize: vertical;
+  }
+
+  .product-master-form fieldset {
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .product-master-form fieldset + fieldset {
+    margin-top: 7px;
+    padding-top: 7px;
+    border-top: 1px solid var(--erp-color-border);
+  }
+
+  .product-master-form legend {
+    margin-bottom: 4px;
+    font-size: var(--erp-font-label);
+    font-weight: 600;
+  }
+
+  .product-master-checkboxes {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 3px 10px;
+    margin-top: 4px;
+  }
+
+  .product-master-checkboxes label {
+    display: flex;
+    min-height: 26px;
+    align-items: center;
+    gap: 5px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  .product-master-actions {
+    position: sticky;
+    z-index: 5;
+    bottom: 0;
+    display: flex;
+    min-height: 42px;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--erp-space-2);
+    margin: 0;
+    padding: 5px 0;
+    border-top: 1px solid var(--erp-color-border);
+    background: var(--erp-color-page);
+  }
+
+  .manual-movement-page,
+  .iam-page,
+  .platform-console {
+    gap: var(--erp-space-2);
+  }
+
+  .manual-filter-panel,
+  .manual-editor-grid,
+  .manual-line-builder,
+  .manual-box-builder,
+  .manual-settings-grid {
+    gap: 7px 10px;
+    padding: 8px;
+    border-radius: var(--erp-panel-radius);
+  }
+
+  .manual-modal-header,
+  .manual-modal-footer {
+    min-height: 44px;
+    padding: 7px 12px;
+  }
+
+  .manual-modal-body {
+    gap: var(--erp-space-2);
+    padding: 10px 12px;
+  }
+
+  .platform-console {
+    gap: var(--erp-space-2);
+  }
+
+  .platform-section-heading {
+    padding: 10px 12px;
+  }
+
+  .platform-dialog-heading,
+  .platform-dialog-form {
+    padding: 12px 14px;
+  }
+
+  .platform-dialog-form {
+    gap: var(--erp-space-3);
+  }
+
+  /* Desktop ERP forms use a shared horizontal label/control rhythm. */
+  .app-shell {
+    --erp-form-label-width: 96px;
+  }
+
+  .app-shell .main-content :where(
+    .product-master-grid > label,
+    .product-master-grid > div > label,
+    .product-master-form > form > section > label,
+    .product-master-data-form > label,
+    .warehouse-dialog-form > label,
+    .platform-form-grid > label,
+    .detail-form > label,
+    .manual-editor-grid > label,
+    .manual-line-builder > label,
+    .manual-box-builder > label,
+    .manual-type-builder > label,
+    .manual-quick-input > label
+  ):not(.checkbox-label) {
+    display: grid;
+    grid-template-columns: var(--erp-form-label-width) minmax(0, 1fr);
+    align-items: center;
+    align-content: center;
+    gap: 3px 8px;
+    min-width: 0;
+    margin: 0;
+    color: var(--erp-color-text-secondary);
+    font-size: var(--erp-font-label);
+    font-weight: var(--erp-font-weight-medium);
+    line-height: 18px;
+  }
+
+  .app-shell .main-content :where(
+    .product-master-grid > label,
+    .product-master-grid > div > label,
+    .product-master-form > form > section > label,
+    .product-master-data-form > label,
+    .warehouse-dialog-form > label,
+    .platform-form-grid > label,
+    .detail-form > label,
+    .manual-editor-grid > label,
+    .manual-line-builder > label,
+    .manual-box-builder > label,
+    .manual-type-builder > label,
+    .manual-quick-input > label
+  ):not(.checkbox-label) > :where(input, select, textarea, .field-control) {
+    grid-column: 2;
+    min-width: 0;
+  }
+
+  .app-shell .main-content :where(
+    .product-master-grid > label,
+    .product-master-grid > div > label,
+    .product-master-form > form > section > label,
+    .product-master-data-form > label,
+    .warehouse-dialog-form > label,
+    .platform-form-grid > label,
+    .detail-form > label,
+    .manual-editor-grid > label,
+    .manual-line-builder > label,
+    .manual-box-builder > label,
+    .manual-type-builder > label,
+    .manual-quick-input > label
+  ):not(.checkbox-label) > :where(small, .field-error, .field-hint) {
+    grid-column: 2;
+    margin: 0;
+    font-weight: 400;
+  }
+
+  .app-shell .main-content .product-master-grid > div {
+    display: grid;
+    align-content: start;
+    gap: 2px;
+  }
+
+  .app-shell .main-content .product-master-grid > div > :where(small, .text-button) {
+    margin-left: calc(var(--erp-form-label-width) + 8px);
+  }
+
+  .app-shell .main-content :where(
+    .product-filters,
+    .warehouse-filters,
+    .location-filters,
+    .iam-filters,
+    .shop-toolbar,
+    .manual-filter-panel
+  ) {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    align-items: center;
+    gap: 4px 8px;
+    padding: 6px 8px;
+  }
+
+  .app-shell .main-content :where(
+    .product-filters,
+    .warehouse-filters,
+    .location-filters,
+    .iam-filters,
+    .shop-toolbar,
+    .manual-filter-panel
+  ) > label:not(.checkbox-label) {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    align-items: center;
+    align-content: center;
+    gap: 4px 6px;
+    min-width: 0;
+    margin: 0;
+    font-size: var(--erp-font-label);
+    font-weight: var(--erp-font-weight-medium);
+    line-height: 18px;
+    white-space: nowrap;
+  }
+
+  .app-shell .main-content :where(
+    .product-filters,
+    .warehouse-filters,
+    .location-filters,
+    .iam-filters,
+    .shop-toolbar,
+    .manual-filter-panel
+  ) > label:not(.checkbox-label) > :where(input, select, textarea) {
+    grid-column: 2;
+    min-width: 0;
+  }
+
+  .app-shell .main-content :where(
+    .product-filters,
+    .warehouse-filters,
+    .location-filters,
+    .iam-filters,
+    .shop-toolbar,
+    .manual-filter-panel
+  ) > .checkbox-label {
+    display: flex;
+    min-height: var(--erp-control-height);
+    align-items: center;
+    gap: 5px;
+    margin: 0;
+    white-space: nowrap;
+  }
+
+  .app-shell .main-content :where(
+    .product-filters,
+    .warehouse-filters,
+    .location-filters,
+    .iam-filters,
+    .shop-toolbar,
+    .manual-filter-panel
+  ) > :where(button, .button, .form-actions, .manual-filter-actions) {
+    width: max-content;
+    align-self: center;
+    justify-self: start;
+  }
+
+  .app-shell .main-content :where(
+    .product-filters,
+    .warehouse-filters,
+    .location-filters,
+    .iam-filters,
+    .shop-toolbar,
+    .manual-filter-panel
+  ) :where(.field-error, .field-hint, small) {
+    grid-column: 2;
+    margin: 0;
+  }
+
+  .app-shell .main-content .erp-filter-panel {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+    padding: 4px 8px;
+  }
+
+  .app-shell .main-content .erp-filter-panel > .erp-filter-row {
+    display: flex;
+    grid-column: 1 / -1;
+    align-items: center;
+  }
+
+  .app-shell .main-content .erp-filter-panel > label.erp-filter-row {
+    grid-template-columns: none;
+  }
+
+  .app-shell .main-content .platform-search-field {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    align-items: center;
+    gap: 6px;
+  }
+
+  .app-shell .main-content .platform-search-field > .platform-search-input {
+    grid-column: 2;
+  }
+
+  /*
+   * Product master data is a long, focused authoring task. Keep the shell
+   * compact, but use a vertical field rhythm here so labels, help text and
+   * controls stay together instead of competing for a narrow row.
+   */
+  .product-master-layout {
+    grid-template-columns: minmax(0, 1fr) 132px;
+    gap: var(--erp-space-3);
+  }
+
+  .product-master-sections {
+    top: var(--erp-space-2);
+    gap: 2px;
+    padding: 6px;
+  }
+
+  .product-master-sections a {
+    min-height: 30px;
+    padding: 5px 7px;
+    line-height: 20px;
+  }
+
+  .product-master-form {
+    gap: var(--erp-space-3);
+  }
+
+  .product-master-section {
+    padding: var(--erp-space-4) 20px;
+  }
+
+  .product-master-section > h2 {
+    margin-bottom: var(--erp-space-3);
+    font-size: 18px;
+    line-height: 26px;
+  }
+
+  .product-master-grid {
+    gap: 14px 18px;
+    margin-bottom: var(--erp-space-3);
+  }
+
+  .app-shell .main-content :where(
+    .product-master-grid > label,
+    .product-master-grid > div > label,
+    .product-master-form > form > section > label
+  ):not(.checkbox-label) {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+    align-content: start;
+    gap: 5px;
+    color: var(--erp-color-text);
+    line-height: 20px;
+  }
+
+  .app-shell .main-content :where(
+    .product-master-grid > label,
+    .product-master-grid > div > label,
+    .product-master-form > form > section > label
+  ):not(.checkbox-label) > :where(input, select, textarea, .field-control, small, .field-error, .field-hint) {
+    grid-column: 1;
+  }
+
+  .app-shell .main-content .product-master-grid > div {
+    gap: 5px;
+  }
+
+  .app-shell .main-content .product-master-grid > div > :where(small, .text-button) {
+    margin-left: 0;
+  }
+
+  .product-master-grid small,
+  .product-master-form fieldset > p {
+    color: var(--erp-color-text-secondary);
+    line-height: 18px;
+  }
+
+  .product-master-form textarea {
+    min-height: 72px;
+  }
+
+  .product-master-form fieldset + fieldset {
+    margin-top: var(--erp-space-4);
+    padding-top: var(--erp-space-4);
+  }
+
+  .product-master-form legend {
+    margin-bottom: var(--erp-space-2);
+    color: var(--erp-color-text);
+    font-size: 15px;
+    line-height: 22px;
+  }
+
+  .product-master-form fieldset > p {
+    margin: 0 0 var(--erp-space-3);
+  }
+
+  .product-dimensional-weight {
+    margin-top: var(--erp-space-3) !important;
+    padding: var(--erp-space-2) 10px;
+    border-left: 3px solid var(--erp-color-primary);
+    background: var(--erp-color-primary-soft);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .product-master-page :where(
+    input[name="lengthMm"],
+    input[name="widthMm"],
+    input[name="heightMm"],
+    input[name="actualWeightGrams"],
+    input[name="packageableCount"]
+  ) {
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+
+  .product-master-checkboxes {
+    gap: var(--erp-space-2) var(--erp-space-4);
+    margin-top: var(--erp-space-2);
+  }
+
+  .product-master-checkboxes label {
+    min-height: 30px;
+    gap: 6px;
+  }
+}
+
+@media (min-width: 901px) and (max-width: 1100px) {
+  .product-master-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .product-master-checkboxes {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .main-content {
+    padding: 10px;
+  }
+
+  .app-shell :where(.page-actions, .form-actions) {
+    flex-wrap: wrap;
+  }
+
+  .product-master-layout {
+    display: grid;
+    gap: var(--erp-space-2);
+  }
+
+  .product-master-sections {
+    position: static;
+    display: flex;
+    overflow-x: auto;
+    gap: 2px;
+    padding: 4px;
+    border: 1px solid var(--erp-color-border);
+    background: var(--erp-color-surface);
+  }
+
+  .product-master-sections a {
+    padding: 6px 8px;
+    white-space: nowrap;
+  }
+
+  .product-master-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .product-master-checkboxes {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .app-shell .main-content :where(
+    .product-master-grid > label,
+    .product-master-grid > div > label,
+    .product-master-form > form > section > label,
+    .product-master-data-form > label,
+    .warehouse-dialog-form > label,
+    .platform-form-grid > label,
+    .detail-form > label,
+    .manual-editor-grid > label,
+    .manual-line-builder > label,
+    .manual-box-builder > label,
+    .manual-type-builder > label,
+    .manual-quick-input > label
+  ):not(.checkbox-label),
+  .app-shell .main-content :where(
+    .product-filters,
+    .warehouse-filters,
+    .location-filters,
+    .iam-filters,
+    .shop-toolbar,
+    .manual-filter-panel
+  ) > label:not(.checkbox-label) {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .app-shell .main-content :where(
+    .product-master-grid > label,
+    .product-master-grid > div > label,
+    .product-master-form > form > section > label,
+    .product-master-data-form > label,
+    .warehouse-dialog-form > label,
+    .platform-form-grid > label,
+    .detail-form > label,
+    .manual-editor-grid > label,
+    .manual-line-builder > label,
+    .manual-box-builder > label,
+    .manual-type-builder > label,
+    .manual-quick-input > label,
+    .product-filters > label,
+    .warehouse-filters > label,
+    .location-filters > label,
+    .iam-filters > label,
+    .shop-toolbar > label,
+    .manual-filter-panel > label
+  ) > :where(input, select, textarea, small, .field-control, .field-error, .field-hint) {
+    grid-column: 1;
+  }
+
+  .app-shell .main-content .platform-search-field {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .app-shell .main-content .platform-search-field > .platform-search-input {
+    grid-column: 1;
+  }
+
+  .app-shell .main-content .product-master-grid > div > :where(small, .text-button) {
+    margin-left: 0;
+  }
+
+  .app-shell .erp-filter-row {
+    flex-wrap: wrap;
+  }
+
+  .app-shell .erp-filter-label {
+    width: 84px;
+    flex-basis: 84px;
+  }
+
+  .app-shell .erp-filter-search-row > input,
+  .app-shell .erp-filter-row > select {
+    width: min(100%, 360px);
+  }
+}
+
+@media (max-width: 900px) {
+  .app-shell .advanced-filter-overlay {
+    padding: 24px 16px 16px;
+  }
+
+  .app-shell .inventory-query-filter-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-shell .advanced-filter-dialog {
+    width: 100%;
+    max-height: calc(100vh - 40px);
+    max-height: calc(100dvh - 40px);
+  }
+}
+
+@media (max-width: 600px) {
+  .product-master-grid,
+  .product-master-checkboxes {
+    grid-template-columns: 1fr;
+  }
+
+  .app-shell :where(.button, .primary-button, .secondary-button) {
+    min-height: 40px;
+  }
+
+  .app-shell :where(.pagination, .manual-pagination, .supplier-pagination) {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .app-shell .pagination-settings {
+    margin-left: 0;
+    flex-wrap: wrap;
+  }
+
+  .app-shell .erp-filter-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .app-shell .erp-filter-label {
+    width: auto;
+    flex-basis: auto;
+    text-align: left;
+  }
+
+  .app-shell .erp-filter-options {
+    align-items: center;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 6px 12px;
+  }
+
+  .app-shell .erp-filter-search-row > input,
+  .app-shell .erp-filter-row > select,
+  .app-shell .erp-filter-date-row input,
+  .app-shell .erp-filter-range > label,
+  .app-shell .erp-filter-range input,
+  .app-shell .erp-filter-range-context {
+    width: 100%;
+  }
+
+  .app-shell .shop-filter-panel > .toolbar-note {
+    padding-left: 6px;
+  }
+
+  .app-shell .order-filter-panel > .toolbar-note {
+    padding-left: 6px;
+  }
+
+  .app-shell .order-quick-filter-options,
+  .app-shell .order-quick-filter-options > label,
+  .app-shell .order-quick-filter-options :where(select, input) {
+    width: 100%;
+  }
+
+  .app-shell .advanced-filter-trigger {
+    min-height: 44px;
+    flex-wrap: wrap;
+  }
+
+  .app-shell .advanced-filter-grid,
+  .app-shell .advanced-filter-condition-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-shell .advanced-filter-summary-state {
+    margin-left: auto;
+  }
+
+  .app-shell .advanced-filter-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .app-shell .advanced-filter-actions > div {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .app-shell .advanced-filter-actions .button,
+  .app-shell .advanced-filter-actions > div .button {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  .app-shell .product-advanced-filter-field {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-shell .product-advanced-filter-field > span,
+  .app-shell .product-advanced-filter-label {
+    width: auto;
+    flex-basis: auto;
+    text-align: left;
+  }
+
+  .app-shell .product-advanced-date-filter {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .app-shell .product-advanced-date-filter input {
+    width: 100%;
+  }
+
+  .app-shell .erp-operation-bar {
+    align-items: center;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .app-shell .erp-operation-end {
+    margin-left: auto;
+    justify-content: flex-end;
+  }
+
+  .app-shell .advanced-filter-overlay {
+    padding: 0;
+    background: rgb(12 26 49 / 34%);
+  }
+
+  .app-shell .advanced-filter-dialog {
+    width: 100%;
+    height: 100vh;
+    height: 100dvh;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .app-shell .advanced-filter-dialog-header {
+    min-height: 64px;
+    padding: 10px 12px;
+  }
+
+  .app-shell .advanced-filter-dialog-header > .advanced-filter-count {
+    display: none;
+  }
+
+  .app-shell .advanced-filter-sections {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Order workspace source-order safeguards for shared shell primitives. */
+.app-shell .order-search-toolbar > .order-advanced-filter-panel {
+  width: auto;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.app-shell .main-content .order-filter-panel > .toolbar-note {
+  padding: 5px 6px;
+}
+
+.app-shell .order-global-actions-end .erp-action-menu-popover {
+  right: 0;
+  left: auto;
+}
+
+.app-shell .order-column-settings > .order-column-settings-menu {
+  right: 0;
+  left: auto;
+  width: min(460px, calc(100vw - 32px));
+  max-width: min(460px, calc(100vw - 32px));
+}
+
+.app-shell .order-create-dialog > .table-heading {
+  position: relative;
+  top: auto;
+  margin: 0;
+}
+
+@media (max-width: 720px) {
+  .app-shell .order-global-actions-end .erp-action-menu-popover,
+  .app-shell .order-column-settings > .order-column-settings-menu {
+    position: static;
+    width: 100%;
+    max-width: none;
+    margin-top: 4px;
+  }
+
+  .app-shell .order-create-backdrop.modal-backdrop {
+    padding: 0;
+  }
+}
+
+/*
+ * 2026 enterprise workspace theme.
+ *
+ * Keep the Mabang-aligned information architecture and compact operating
+ * density, while giving Xinzhi ERP one calm visual language. This layer is
+ * deliberately last: feature CSS owns structure, this contract owns colour,
+ * hierarchy and interaction states.
+ */
+.app-shell {
+  color: var(--erp-color-text);
+  background: var(--erp-color-page);
+  -webkit-font-smoothing: antialiased;
+}
+
+.app-shell .topbar {
+  min-height: var(--erp-shell-height);
+  gap: 8px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--erp-color-navigation-border);
+  color: var(--erp-color-text);
+  background: var(--erp-color-surface);
+  box-shadow: none;
+}
+
+.app-shell .topbar-leading {
+  min-width: max-content;
+}
+
+.app-shell .brand {
+  gap: 8px;
+  color: var(--erp-color-text);
+}
+
+.app-shell .brand-mark.has-product-logo {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--erp-color-border);
+  border-radius: 7px;
+  background: var(--erp-color-surface);
+  box-shadow: 0 1px 2px rgb(47 57 41 / 7%);
+}
+
+.app-shell .brand strong {
+  color: var(--erp-color-text);
+  font-size: 15px;
+  font-weight: var(--erp-font-weight-semibold);
+  letter-spacing: 0;
+}
+
+.app-shell .top-module-nav {
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.app-shell .top-module-link {
+  min-height: 36px;
+  padding-inline: 13px;
+  border-radius: var(--erp-control-radius);
+  color: var(--erp-color-text-secondary);
+  background: transparent;
+  font-size: 14px;
+  font-weight: var(--erp-font-weight-medium);
+  box-shadow: none;
+}
+
+.app-shell .top-module-link:hover,
+.app-shell .top-module-link:focus-visible {
+  color: var(--erp-color-primary-hover);
+  background: var(--erp-color-surface-muted);
+  box-shadow: none;
+}
+
+.app-shell .top-module-link:focus-visible {
+  outline: 2px solid var(--erp-color-focus);
+  outline-offset: 1px;
+}
+
+.app-shell .top-module-link.active {
+  color: var(--erp-color-primary-hover);
+  background: var(--erp-color-primary-soft);
+  font-weight: var(--erp-font-weight-semibold);
+  box-shadow: inset 0 -2px var(--erp-color-primary);
+}
+
+.app-shell .topbar-context {
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  color: var(--erp-color-text-secondary);
+}
+
+.app-shell .account-menu {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.app-shell .account-menu-trigger {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 240px;
+  min-height: 36px;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 8px;
+  border: 1px solid var(--erp-color-navigation-border);
+  border-radius: var(--erp-control-radius);
+  color: var(--erp-color-text-secondary);
+  background: var(--erp-color-surface);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-shell .account-menu-trigger:hover,
+.app-shell .account-menu-trigger:focus-visible,
+.app-shell .account-menu.open .account-menu-trigger {
+  border-color: var(--erp-color-border-strong);
+  color: var(--erp-color-text);
+  background: var(--erp-color-surface-muted);
+}
+
+.app-shell .account-menu-trigger:focus-visible {
+  outline: 2px solid var(--erp-color-focus);
+  outline-offset: 1px;
+}
+
+.app-shell .account-menu-trigger-copy {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+}
+
+.app-shell .account-menu-trigger-copy :where(small, strong) {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.2;
+}
+
+.app-shell .account-menu-trigger-copy small {
+  max-width: 88px;
+  color: var(--erp-color-text-muted);
+  font-size: 12px;
+  font-weight: var(--erp-font-weight-medium);
+}
+
+.app-shell .account-menu-trigger-copy strong {
+  max-width: 112px;
+  padding-left: 7px;
+  border-left: 1px solid var(--erp-color-navigation-border);
+  color: var(--erp-color-text);
+  font-size: 13px;
+  font-weight: var(--erp-font-weight-semibold);
+}
+
+.app-shell .account-menu-chevron {
+  flex: 0 0 auto;
+  transition: transform 140ms ease;
+}
+
+.app-shell .account-menu.open .account-menu-chevron {
+  transform: rotate(180deg);
+}
+
+.app-shell .account-menu-panel {
+  position: absolute;
+  z-index: 2;
+  top: calc(100% + 7px);
+  right: 0;
+  width: 280px;
+  max-width: calc(100vw - 20px);
+  padding: 8px;
+  border: 1px solid var(--erp-color-border);
+  border-radius: 9px;
+  background: var(--erp-color-surface);
+  box-shadow: 0 14px 38px rgb(47 57 41 / 18%);
+}
+
+.app-shell .account-menu-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+}
+
+.app-shell .account-menu-avatar {
+  display: inline-grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--erp-color-primary);
+  background: var(--erp-color-primary-soft);
+}
+
+.app-shell .account-menu-header > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.app-shell .account-menu-header > div > :where(small, strong, span) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-shell .account-menu-header small {
+  color: var(--erp-color-text-muted);
+  font-size: 11px;
+}
+
+.app-shell .account-menu-header strong {
+  color: var(--erp-color-text);
+  font-size: 14px;
+  font-weight: var(--erp-font-weight-semibold);
+}
+
+.app-shell .account-menu-header > div > span {
+  color: var(--erp-color-text-secondary);
+  font-size: 12px;
+}
+
+.app-shell .account-menu-section {
+  display: grid;
+  gap: 2px;
+  padding-top: 6px;
+  border-top: 1px solid var(--erp-color-border);
+}
+
+.app-shell .account-menu-preference,
+.app-shell .account-menu-action {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--erp-color-text-secondary);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+}
+
+.app-shell .account-menu-preference {
+  justify-content: space-between;
+}
+
+.app-shell .account-menu-preference > span,
+.app-shell .account-menu-action {
+  align-items: center;
+}
+
+.app-shell .account-menu-preference > span {
+  display: inline-flex;
+  gap: 9px;
+}
+
+.app-shell .account-menu-action {
+  width: 100%;
+  cursor: pointer;
+}
+
+.app-shell .account-menu-action:hover:not(:disabled),
+.app-shell .account-menu-action:focus-visible {
+  color: var(--erp-color-primary);
+  background: var(--erp-color-primary-soft);
+}
+
+.app-shell .account-menu-action:focus-visible {
+  outline: 2px solid var(--erp-color-focus);
+  outline-offset: -1px;
+}
+
+.app-shell .account-menu-action:disabled {
+  cursor: wait;
+  opacity: .6;
+}
+
+.app-shell .account-menu-language-switcher {
+  min-width: 54px;
+  min-height: 30px;
+  border-color: var(--erp-color-border-strong);
+  border-radius: 5px;
+  color: var(--erp-color-text-secondary);
+  background: var(--erp-color-surface);
+}
+
+.app-shell .account-menu-language-switcher:hover {
+  color: var(--erp-color-text);
+  background: var(--erp-color-surface-muted);
+}
+
+.app-shell .account-menu-language-switcher:focus-visible {
+  outline: 2px solid var(--erp-color-focus);
+  outline-offset: 1px;
+}
+
+.app-shell .account-menu-signout-section {
+  margin-top: 6px;
+}
+
+.app-shell .account-menu-signout {
+  color: #b42318;
+}
+
+.app-shell .account-menu-signout:hover:not(:disabled),
+.app-shell .account-menu-signout:focus-visible {
+  color: #9f1c13;
+  background: #fef3f2;
+}
+
+.app-shell .mobile-menu-button {
+  color: var(--erp-color-text-secondary);
+}
+
+.app-shell .workspace,
+.app-shell .content-column {
+  background: var(--erp-color-page);
+}
+
+.app-shell .enterprise-watermark-layer {
+  inset: var(--erp-shell-height) 0 0 var(--sidebar-width);
+}
+
+.app-shell .sidebar {
+  border-right-color: var(--erp-color-border);
+  background: var(--erp-color-surface);
+}
+
+.app-shell .sidebar-heading {
+  min-height: 42px;
+  justify-content: space-between;
+  padding: 4px 12px;
+  border-bottom-color: var(--erp-color-border);
+  color: var(--erp-color-text-muted);
+  background: var(--erp-color-surface);
+}
+
+.app-shell .sidebar-heading > span {
+  position: static;
+  width: auto;
+  height: auto;
+  overflow: visible;
+  margin: 0;
+  clip: auto;
+  font-size: 13px;
+  font-weight: var(--erp-font-weight-semibold);
+}
+
+.app-shell .sidebar-collapsed .sidebar-heading > span { display: none; }
+
+.app-shell .sidebar-collapse-button {
+  display: inline-grid;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  place-items: center;
+  padding: 0;
+  border-radius: var(--erp-control-radius);
+}
+
+.app-shell .sidebar-collapse-button:hover {
+  color: var(--erp-color-primary);
+  background: var(--erp-color-primary-soft);
+}
+
+.app-shell .secondary-navigation {
+  gap: 7px;
+}
+
+.app-shell .navigation-group {
+  gap: 3px;
+}
+
+.app-shell .navigation-group-toggle {
+  border-color: transparent;
+  color: var(--erp-color-text-muted);
+  background: transparent;
+  font-weight: var(--erp-font-weight-semibold);
+}
+
+.app-shell .navigation-group-toggle:hover,
+.app-shell .navigation-group-toggle:focus-visible {
+  border-color: transparent;
+  color: var(--erp-color-text);
+  background: var(--erp-color-surface-muted);
+}
+
+.app-shell .navigation-group-toggle[aria-expanded="true"] {
+  color: var(--erp-color-text);
+}
+
+.app-shell .navigation-group-toggle svg {
+  color: var(--erp-color-text-muted);
+}
+
+.app-shell .navigation-group-items {
+  margin-left: 0;
+  padding-left: 0;
+  border-left-color: transparent;
+}
+
+.app-shell .navigation-group-items .nav-item {
+  min-height: 36px;
+  padding-inline: 10px;
+  color: var(--erp-color-text-secondary);
+}
+
+.app-shell .navigation-group-items .nav-item:hover {
+  color: var(--erp-color-text);
+  background: var(--erp-color-surface-muted);
+}
+
+.app-shell .navigation-group-items .nav-item.active {
+  color: var(--erp-color-primary);
+  background: var(--erp-color-primary-soft);
+  box-shadow: inset 3px 0 var(--erp-color-primary);
+}
+
+.app-shell .nav-item-count {
+  display: inline-flex;
+  min-width: 22px;
+  min-height: 20px;
+  align-items: center;
+  justify-content: center;
+  padding-inline: 6px;
+  border-radius: 999px;
+  color: var(--erp-color-text-muted);
+  background: var(--erp-color-border);
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.app-shell .nav-item.active .nav-item-count {
+  color: var(--erp-color-primary);
+  background: #dce8ff;
+}
+
+.app-shell .sidebar-resize-handle::after {
+  background: transparent;
+}
+
+.app-shell .sidebar-resize-handle:hover::after,
+.app-shell .sidebar-resize-handle:focus-visible::after {
+  background: var(--erp-color-border-strong);
+}
+
+.app-shell .breadcrumb {
+  min-height: var(--erp-breadcrumb-height);
+  border-bottom-color: transparent;
+  color: var(--erp-color-text-muted);
+  background: var(--erp-color-page);
+}
+
+.app-shell .breadcrumb a {
+  color: var(--erp-color-text-secondary);
+}
+
+.app-shell .breadcrumb a:hover {
+  color: var(--erp-color-primary);
+}
+
+.app-shell .breadcrumb [aria-current="page"] {
+  color: var(--erp-color-text);
+  font-weight: var(--erp-font-weight-medium);
+}
+
+.app-shell .main-content {
+  background: var(--erp-color-page);
+}
+
+/*
+ * Customer directory uses the same compact filter rhythm as the order list,
+ * but it has two filter fields followed by three short actions. Keep these in
+ * one usable toolbar instead of inheriting the generic one-column form stack.
+ */
+.app-shell .main-content .customer-directory-filter {
+  grid-template-columns: minmax(180px, 230px) minmax(320px, 1fr) repeat(3, max-content);
+  align-items: end;
+  gap: 8px;
+  padding: 8px;
+}
+
+.app-shell .main-content .customer-directory-filter > button {
+  width: max-content;
+  align-self: end;
+}
+
+@media (max-width: 720px) {
+  .app-shell .main-content .customer-directory-filter {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .app-shell .main-content .customer-directory-filter > :where(
+    .customer-directory-shop-filter,
+    .order-keyword-filter
+  ) {
+    grid-column: 1 / -1;
+  }
+
+  .app-shell .main-content .customer-directory-filter > button {
+    width: 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  .app-shell .main-content .customer-directory-filter {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-shell .main-content .customer-directory-filter > button {
+    grid-column: 1;
+  }
+}
+
+.app-shell :where(
+  .detail-card,
+  .detail-action-panel,
+  .confirmation-panel,
+  .shop-create-panel,
+  .shop-list-section,
+  .warehouse-card,
+  .warehouse-archive-card,
+  .manual-table-section,
+  .order-overview-panel,
+  .order-list-panel,
+  .order-table-shell,
+  .platform-section,
+  .status-card,
+  .workbench-context,
+  .erp-filter-panel,
+  .order-action-bar,
+  .order-list-utilities
+) {
+  border-color: var(--erp-color-border);
+  border-radius: var(--erp-panel-radius);
+  background: var(--erp-color-surface);
+  box-shadow: var(--erp-shadow-panel);
+}
+
+.app-shell :where(
+  .product-filters,
+  .warehouse-filters,
+  .location-filters,
+  .order-filter-bar,
+  .shop-toolbar,
+  .iam-filters,
+  .platform-toolbar,
+  .toolbar-row,
+  .manual-filter-panel,
+  .warehouse-archive-filters
+) {
+  border-color: var(--erp-color-border);
+  background: var(--erp-color-surface);
+  box-shadow: var(--erp-shadow-panel);
+}
+
+.app-shell :where(
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+  select,
+  textarea
+) {
+  border-color: var(--erp-color-border-strong);
+  color: var(--erp-color-text);
+  background: var(--erp-color-surface);
+}
+
+.app-shell :where(
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+  select,
+  textarea
+):hover:not(:disabled) {
+  border-color: var(--erp-color-border-strong);
+}
+
+.app-shell :where(input, select, textarea):focus {
+  border-color: var(--erp-color-primary);
+  outline: 2px solid var(--erp-color-focus);
+  outline-offset: 1px;
+  box-shadow: none;
+}
+
+.app-shell :where(input, textarea)::placeholder {
+  color: var(--erp-color-text-muted);
+}
+
+.app-shell :where(.button-secondary, .secondary-button) {
+  border-color: var(--erp-color-border-strong);
+  color: var(--erp-color-text-secondary);
+  background: var(--erp-color-surface);
+}
+
+.app-shell :where(.button-secondary, .secondary-button):hover:not(:disabled) {
+  border-color: var(--erp-color-border-strong);
+  color: var(--erp-color-text);
+  background: var(--erp-color-surface-muted);
+}
+
+.app-shell :where(.button-primary, .primary-button) {
+  box-shadow: none;
+}
+
+.app-shell :where(.button-primary, .primary-button):hover:not(:disabled) {
+  box-shadow: none;
+}
+
+.app-shell .text-button:hover:not(:disabled) {
+  border-radius: var(--erp-control-radius);
+  text-decoration: none;
+}
+
+.app-shell .table-heading {
+  border-bottom-color: var(--erp-color-border);
+}
+
+.app-shell th {
+  border-color: var(--erp-color-border);
+  color: var(--erp-color-text-secondary);
+  background: var(--erp-color-surface-muted);
+  font-weight: var(--erp-font-weight-semibold);
+}
+
+.app-shell td {
+  border-color: var(--erp-color-border);
+}
+
+.app-shell :where(.pagination, .manual-pagination, .supplier-pagination) {
+  border-color: var(--erp-color-border);
+  background: var(--erp-color-surface);
+}
+
+.app-shell .order-overview-supporting,
+.app-shell .action-bar {
+  border-color: var(--erp-color-border);
+  background: var(--erp-color-surface-muted);
+}
+
+.app-shell .advanced-filter-overlay,
+.app-shell .dialog-backdrop,
+.app-shell .warehouse-dialog-backdrop,
+.app-shell .manual-modal-backdrop,
+.app-shell .modal-backdrop {
+  background: var(--erp-overlay);
+}
+
+.app-shell .advanced-filter-dialog,
+.write-dialog,
+.warehouse-dialog,
+.manual-modal,
+.platform-dialog,
+.credential-dialog {
+  border-color: var(--erp-color-border);
+  border-radius: 10px;
+  box-shadow: var(--erp-shadow-dialog);
+}
+
+@media (min-width: 901px) {
+  .app-shell .workspace {
+    min-height: calc(100dvh - var(--erp-shell-height));
+  }
+
+  .app-shell .sidebar {
+    min-height: calc(100dvh - var(--erp-shell-height));
+  }
+
+  .app-shell .sidebar nav {
+    top: var(--erp-shell-height);
+  }
+
+  .app-shell .main-content {
+    padding: 4px 16px 20px;
+  }
+}
+
+@media (max-width: 820px) {
+  .app-shell {
+    --mobile-shell-height: 100px;
+  }
+
+  .app-shell .topbar {
+    min-height: var(--mobile-shell-height);
+    padding: 4px 10px 0;
+  }
+
+  .app-shell .topbar-context {
+    gap: 4px;
+  }
+
+  .app-shell .account-menu-trigger-copy small {
+    display: none;
+  }
+
+  .app-shell .account-menu-trigger-copy strong {
+    max-width: 96px;
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .app-shell .top-module-nav {
+    border-top-color: var(--erp-color-border);
+  }
+
+  .app-shell .top-module-link {
+    min-height: 44px;
+  }
+
+  .app-shell .mobile-menu-button {
+    min-width: 44px;
+    min-height: 44px;
+    color: var(--erp-color-text-secondary);
+  }
+
+  .app-shell .sidebar {
+    top: var(--mobile-shell-height);
+  }
+
+  .app-shell .sidebar-collapse-button { display: none; }
+
+  .app-shell .warehouse-archive-empty {
+    position: sticky;
+    left: 12px;
+    width: min(560px, calc(100vw - 64px));
+    margin-inline: 0;
+  }
+
+  .app-shell .procurement-plan-table-footer > .pagination {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .app-shell .sidebar-collapsed .secondary-navigation { display: flex; }
+
+  .app-shell .sidebar-collapsed .navigation-group-toggle { display: flex; }
+
+  .app-shell .sidebar-collapsed .sidebar-heading > span { display: block; }
+
+  .app-shell .sidebar :where(.nav-item, .navigation-group-toggle, .sidebar-close) { min-height: 44px; }
+
+  .app-shell .enterprise-watermark-layer {
+    inset: var(--mobile-shell-height) 0 0;
+  }
+
+  .app-shell .navigation-scrim {
+    inset: var(--mobile-shell-height) 0 0;
+    background: rgb(47 57 41 / 38%);
+  }
+}
+
+@media (max-width: 520px) {
+  .app-shell .account-menu-trigger-copy {
+    display: none;
+  }
+
+  .app-shell .account-menu-trigger {
+    width: 44px;
+    min-height: 44px;
+    justify-content: center;
+    padding-inline: 0;
+  }
+
+  .app-shell .account-menu-trigger > .account-menu-chevron {
+    display: none;
+  }
+}

@@ -1,0 +1,2 @@
+ALTER TABLE users
+  ALTER COLUMN reception_limit SET DEFAULT 50;

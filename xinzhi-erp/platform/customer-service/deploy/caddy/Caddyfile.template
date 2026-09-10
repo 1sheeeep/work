@@ -1,0 +1,111 @@
+{$XZDESK_DOMAIN} {
+	encode zstd gzip
+
+	@backend path /api/* /healthz /auth* /outlook/* /gmail/* /shopify/* /webhooks/* /chat/* /ws/*
+	handle @backend {
+		reverse_proxy __XZDESK_API_UPSTREAM__
+	}
+
+	handle {
+		root * /srv/frontend
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+erp.xzkj.ai {
+	encode zstd gzip
+
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		X-Content-Type-Options "nosniff"
+	}
+
+	# Shopify HTML owns its framing policy; never replace its verified shop with a wildcard.
+	@notShopifyOwnedPages not path /shopify/app /shopify/session/exchange /shopify/session/products /shopify/session/orders /shopify/session/chat-setup /shopify/session/link-grant /shopify/oauth/authorize /shopify/oauth/callback /shopify/privacy /shopify/terms /shopify/data-processing-terms /shopify/support /shopify/data-deletion /shopify/guide
+	header @notShopifyOwnedPages {
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "SAMEORIGIN"
+	}
+	@shopifyOwnedPages path /shopify/app /shopify/session/exchange /shopify/session/products /shopify/session/orders /shopify/session/chat-setup /shopify/session/link-grant /shopify/oauth/authorize /shopify/oauth/callback /shopify/privacy /shopify/terms /shopify/data-processing-terms /shopify/support /shopify/data-deletion /shopify/guide
+	header @shopifyOwnedPages {
+		?Content-Security-Policy "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+		?Referrer-Policy "no-referrer"
+	}
+
+	@shopifyReviewIdentityBoundary path /platform-admin /platform-admin/* /auth/one/* /api/v1/one/* /api/v1/platform-admin/* /api/v1/auth/one/* /api/v1/auth/application-entry-grants/identity/redeem
+	handle @shopifyReviewIdentityBoundary {
+		respond 404
+	}
+
+	@shopifyOAuth path /shopify/oauth/authorize /shopify/oauth/callback
+	handle @shopifyOAuth {
+		reverse_proxy shopify-oauth:8790
+	}
+
+	@shopifyUninstall path /webhooks/shopify/app/uninstalled
+	handle @shopifyUninstall {
+		reverse_proxy shopify-oauth:8790
+	}
+
+	@shopifyEmbedded path /shopify/app /shopify/session/exchange /shopify/session/products /shopify/session/orders /shopify/session/chat-setup /shopify/session/link-grant
+	handle @shopifyEmbedded {
+		reverse_proxy shopify-oauth:8790
+	}
+
+	@shopifyPublic path /shopify/privacy /shopify/terms /shopify/data-processing-terms /shopify/support /shopify/data-deletion /shopify/guide /shopify/proxy/chat/session /webhooks/shopify/compliance
+	handle @shopifyPublic {
+		reverse_proxy shopify-oauth:8790
+	}
+
+	@shopifyXzErpPublic path /shopify/xz-erp /shopify/xz-erp/*
+	handle @shopifyXzErpPublic {
+		reverse_proxy erp-customer-service-uat-web:8080
+	}
+
+	handle_path /asset-registry/* {
+		reverse_proxy asset-registry-web:8080
+	}
+
+	handle {
+		reverse_proxy erp-test-web:8080
+	}
+}
+
+kf-uat.xzkj.ai {
+	encode zstd gzip
+	reverse_proxy erp-customer-service-uat-web:8080
+}
+
+risk.xzkj.ai {
+	encode zstd gzip
+
+	header {
+		-Server
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+	}
+
+	reverse_proxy infringement-check-web:80
+	log
+}
+
+xzkj.ai {
+	redir https://www.xzkj.ai{uri} permanent
+}
+
+www.xzkj.ai {
+	encode zstd gzip
+
+	header {
+		-Server
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Content-Type-Options "nosniff"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+	}
+
+	reverse_proxy xzkj-site:8080
+}

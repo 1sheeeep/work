@@ -1,0 +1,117 @@
+package platform
+
+import (
+	"context"
+	"reflect"
+	"strings"
+	"sync"
+	"testing"
+)
+
+func verifyNativeLedgerRestart(t *testing.T, ctx context.Context, store *PostgresStore, dsn string) {
+	t.Helper()
+	// All callers first verify the owned synthetic database marker. Simulate an
+	// existing legacy database by removing only its newly created ledger.
+	var owned bool
+	if err := store.db.QueryRowContext(ctx, `SELECT current_database()='native_cs_identity_rehearsal' AND current_user='synthetic_native_identity' AND coalesce(shobj_description(oid,'pg_database'),'')='xz-owned-native-cs-identity-v1' FROM pg_database WHERE datname=current_database()`).Scan(&owned); err != nil || !owned {
+		t.Fatal("owned ledger rehearsal required")
+	}
+	snapshot := func() string {
+		var raw string
+		if err := store.db.QueryRowContext(ctx, `SELECT jsonb_build_object('users',(SELECT jsonb_agg(to_jsonb(u) ORDER BY id) FROM public.users u),'sessions',(SELECT jsonb_agg(to_jsonb(s) ORDER BY id) FROM public.sessions s))::text`).Scan(&raw); err != nil {
+			t.Fatal("protected snapshot failed")
+		}
+		return raw
+	}
+	before := snapshot()
+	if _, err := store.db.ExecContext(ctx, `DROP SCHEMA erp_native_preparation CASCADE`); err != nil {
+		t.Fatal("synthetic legacy setup failed")
+	}
+	if unexpected, err := OpenPostgresStore(ctx, dsn); err == nil {
+		unexpected.Close()
+		t.Fatal("unreviewed legacy startup allowed")
+	}
+	if snapshot() != before {
+		t.Fatal("rejected startup mutated protected data")
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, err := nativeSchemaDigest(ctx, tx)
+	tx.Rollback()
+	if err != nil {
+		t.Fatal(err)
+	}
+	migrations, err := nativeMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	review := nativeBaselineReview{nativeBaselineCommit, nativeMigrationDigest(migrations), digest}
+	for _, bad := range []nativeBaselineReview{{}, {"wrong", review.migrationDigest, digest}, {nativeBaselineCommit, strings.Repeat("0", 64), digest}, {nativeBaselineCommit, review.migrationDigest, strings.Repeat("0", 64)}} {
+		if store.adoptReviewedNativeBaseline(ctx, bad) == nil {
+			t.Fatal("invalid baseline review accepted")
+		}
+	}
+	if err = store.adoptReviewedNativeBaseline(ctx, review); err != nil {
+		t.Fatal(err)
+	}
+	if store.adoptReviewedNativeBaseline(ctx, review) == nil {
+		t.Fatal("duplicate baseline accepted")
+	}
+	if snapshot() != before {
+		t.Fatal("baseline adoption mutated protected data")
+	}
+	// Actual constructors, not bare connections: serialize migration validation
+	// across simultaneously starting processes using PostgreSQL advisory locking.
+	var wg sync.WaitGroup
+	errors := make(chan error, 4)
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			replica, err := OpenPostgresStore(ctx, dsn)
+			if err == nil {
+				err = replica.Close()
+			}
+			errors <- err
+		}()
+	}
+	wg.Wait()
+	close(errors)
+	for err := range errors {
+		if err != nil {
+			t.Fatal("concurrent startup failed", err)
+		}
+	}
+	if snapshot() != before {
+		t.Fatal("restart mutated protected data")
+	}
+	// A corrupted checksum or a database ahead of this binary is fail-closed.
+	first := migrations[0]
+	if _, err = store.db.ExecContext(ctx, `UPDATE erp_native_preparation.migration_ledger SET checksum=$1 WHERE name=$2`, strings.Repeat("0", 64), first.name); err != nil {
+		t.Fatal(err)
+	}
+	if store.Migrate(ctx) == nil {
+		t.Fatal("checksum drift accepted")
+	}
+	if _, err = store.db.ExecContext(ctx, `UPDATE erp_native_preparation.migration_ledger SET checksum=$1 WHERE name=$2`, first.checksum, first.name); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.db.ExecContext(ctx, `INSERT INTO erp_native_preparation.migration_ledger(name,checksum,origin,source_commit) VALUES('999_future.sql',$1,'EXECUTED',$2)`, strings.Repeat("0", 64), nativeBaselineCommit); err != nil {
+		t.Fatal(err)
+	}
+	if store.Migrate(ctx) == nil {
+		t.Fatal("older binary accepted newer history")
+	}
+	if _, err = store.db.ExecContext(ctx, `DELETE FROM erp_native_preparation.migration_ledger WHERE name='999_future.sql'`); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before, snapshot()) {
+		t.Fatal("history validation changed protected rows")
+	}
+	t.Log("NATIVE_LEDGER_RESTART_VERIFIED: explicit baseline, concurrent constructors, checksum drift, future history, original users and sessions preserved")
+}

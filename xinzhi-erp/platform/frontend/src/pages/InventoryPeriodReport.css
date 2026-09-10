@@ -1,0 +1,168 @@
+.inventory-period-report {
+  display: grid;
+  gap: 10px;
+}
+
+.inventory-period-filters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(140px, 180px)) minmax(220px, 1fr) auto;
+  align-items: end;
+  gap: 8px 10px;
+  padding: 8px;
+  border-bottom: 1px solid var(--erp-color-border, var(--color-border));
+}
+
+.inventory-period-filters label {
+  display: grid;
+  gap: 4px;
+  color: var(--erp-color-text-secondary, var(--color-text-muted));
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.inventory-period-filters input {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 6px;
+  padding: 6px 9px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+}
+
+.inventory-period-filter-actions,
+.inventory-period-pagination > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inventory-period-note {
+  margin: 0 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface-subtle);
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.inventory-period-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 8px;
+}
+
+.inventory-period-feedback {
+  margin: 0 8px;
+  color: var(--color-success);
+  font-size: 12px;
+}
+
+.inventory-period-feedback.is-error {
+  color: var(--color-error);
+}
+
+.inventory-period-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 8px;
+}
+
+.inventory-period-summary > div {
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+}
+
+.inventory-period-summary dt {
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.inventory-period-summary dd {
+  margin: 3px 0 0;
+  color: var(--color-text);
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.inventory-period-table-wrap {
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.inventory-period-table-wrap table {
+  min-width: 820px;
+}
+
+.inventory-period-table-wrap th,
+.inventory-period-table-wrap td {
+  white-space: nowrap;
+}
+
+.inventory-period-table-wrap td:nth-child(2) {
+  min-width: 180px;
+  white-space: normal;
+}
+
+.inventory-period-number {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.inventory-period-subtext {
+  display: block;
+  margin-top: 2px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.inventory-period-pagination {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 10px;
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+@media (max-width: 900px) {
+  .inventory-period-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .inventory-period-keyword,
+  .inventory-period-filter-actions {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 560px) {
+  .inventory-period-filters,
+  .inventory-period-summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .inventory-period-keyword,
+  .inventory-period-filter-actions {
+    grid-column: auto;
+  }
+
+  .inventory-period-pagination {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .inventory-period-pagination button {
+    flex: 1;
+  }
+}

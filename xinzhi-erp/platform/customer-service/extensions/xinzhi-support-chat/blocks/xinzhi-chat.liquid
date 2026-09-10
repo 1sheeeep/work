@@ -1,0 +1,187 @@
+{% liquid
+  assign platform_url = app.metafields.xinzhi_support.service_origin.value | default: 'https://kf.xzkj.ai'
+  assign tenant_id = app.metafields.xinzhi_support.tenant_id.value
+  assign shop_reference = shop.permanent_domain
+  assign featured_products_id = 'xinzhi-featured-products-' | append: block.id
+  assign storefront_login_url = routes.storefront_login_url | default: routes.account_login_url
+%}
+
+<script id="{{ featured_products_id }}" type="application/json">
+[
+  {% for product in block.settings.featured_products %}
+    {
+      "title": {{ product.title | json }},
+      "url": {{ product.url | json }},
+      "price": {{ product.price | money_with_currency | json }},
+      "imageUrl": {% if product.featured_image %}{{ product.featured_image | image_url: width: 320 | json }}{% else %}""{% endif %}
+    }{% unless forloop.last %},{% endunless %}
+  {% endfor %}
+]
+</script>
+
+<script
+  async
+  src="{{ platform_url }}/chat/widget.js"
+  data-shop="{{ shop_reference | escape }}"
+  data-tenant-id="{{ tenant_id | escape }}"
+  data-storefront-login-url="{{ storefront_login_url | escape }}"
+  data-featured-products-enabled="{{ block.settings.show_featured_products }}"
+  data-featured-products-id="{{ featured_products_id }}"
+  data-greeting-message="{{ block.settings.greeting_message | escape }}"
+  data-chat-background-color="{{ block.settings.chat_background_color }}"
+  data-chat-font-color="{{ block.settings.chat_font_color }}"
+  data-launcher-background-color="{{ block.settings.launcher_background_color }}"
+  data-launcher-text-color="{{ block.settings.launcher_text_color }}"
+  data-launcher-icon="{{ block.settings.launcher_icon }}"
+  data-launcher-label="{{ block.settings.launcher_label }}"
+  data-horizontal-position="{{ block.settings.horizontal_position }}"
+  data-vertical-position="{{ block.settings.vertical_position }}"
+  data-inherit-font="{{ block.settings.inherit_font }}"
+  data-border-radius="{{ block.settings.border_radius }}"
+></script>
+
+{% schema %}
+{
+  "name": "Support Chat",
+  "target": "body",
+  "settings": [
+    {
+      "type": "textarea",
+      "id": "greeting_message",
+      "label": "t:settings.greeting_message.label",
+      "default": "Hi, message us with any questions. We're happy to help!"
+    },
+    {
+      "type": "checkbox",
+      "id": "show_featured_products",
+      "label": "t:settings.show_featured_products.label",
+      "default": false
+    },
+    {
+      "type": "product_list",
+      "id": "featured_products",
+      "label": "t:settings.featured_products.label",
+      "limit": 3
+    },
+    {
+      "type": "header",
+      "content": "t:settings.chat_colors.content"
+    },
+    {
+      "type": "color",
+      "id": "chat_background_color",
+      "label": "t:settings.chat_background_color.label",
+      "default": "#FFFFFF"
+    },
+    {
+      "type": "color",
+      "id": "chat_font_color",
+      "label": "t:settings.chat_font_color.label",
+      "default": "#000000"
+    },
+    {
+      "type": "header",
+      "content": "t:settings.launcher_colors.content"
+    },
+    {
+      "type": "color",
+      "id": "launcher_background_color",
+      "label": "t:settings.launcher_background_color.label",
+      "default": "#000000"
+    },
+    {
+      "type": "color",
+      "id": "launcher_text_color",
+      "label": "t:settings.launcher_text_color.label",
+      "default": "#FFFFFF"
+    },
+    {
+      "type": "header",
+      "content": "t:settings.launcher.content"
+    },
+    {
+      "type": "select",
+      "id": "launcher_icon",
+      "label": "t:settings.launcher_icon.label",
+      "default": "chat_bubble",
+      "options": [
+        { "value": "chat_bubble", "label": "t:settings.launcher_icon.options.chat_bubble.label" },
+        { "value": "email", "label": "t:settings.launcher_icon.options.email.label" },
+        { "value": "question", "label": "t:settings.launcher_icon.options.question.label" },
+        { "value": "smile", "label": "t:settings.launcher_icon.options.smile.label" },
+        { "value": "team", "label": "t:settings.launcher_icon.options.team.label" },
+        { "value": "wave", "label": "t:settings.launcher_icon.options.wave.label" },
+        { "value": "none", "label": "t:settings.launcher_icon.options.none.label" }
+      ]
+    },
+    {
+      "type": "select",
+      "id": "launcher_label",
+      "label": "t:settings.launcher_label.label",
+      "default": "chat",
+      "options": [
+        { "value": "chat", "label": "t:settings.launcher_label.options.chat.label" },
+        { "value": "ask_anything", "label": "t:settings.launcher_label.options.ask_anything.label" },
+        { "value": "assistance", "label": "t:settings.launcher_label.options.assistance.label" },
+        { "value": "contact", "label": "t:settings.launcher_label.options.contact.label" },
+        { "value": "help", "label": "t:settings.launcher_label.options.help.label" },
+        { "value": "support", "label": "t:settings.launcher_label.options.support.label" },
+        { "value": "live_chat", "label": "t:settings.launcher_label.options.live_chat.label" },
+        { "value": "message_us", "label": "t:settings.launcher_label.options.message_us.label" },
+        { "value": "need_help", "label": "t:settings.launcher_label.options.need_help.label" },
+        { "value": "none", "label": "t:settings.launcher_label.options.none.label" }
+      ]
+    },
+    {
+      "type": "radio",
+      "id": "horizontal_position",
+      "label": "t:settings.horizontal_position.label",
+      "default": "right",
+      "options": [
+        { "value": "left", "label": "t:settings.horizontal_position.options.left.label" },
+        { "value": "center", "label": "t:settings.horizontal_position.options.center.label" },
+        { "value": "right", "label": "t:settings.horizontal_position.options.right.label" }
+      ]
+    },
+    {
+      "type": "radio",
+      "id": "vertical_position",
+      "label": "t:settings.vertical_position.label",
+      "default": "lowest",
+      "options": [
+        { "value": "lowest", "label": "t:settings.vertical_position.options.lowest.label" },
+        { "value": "higher", "label": "t:settings.vertical_position.options.higher.label" },
+        { "value": "highest", "label": "t:settings.vertical_position.options.highest.label" }
+      ]
+    },
+    {
+      "type": "header",
+      "content": "t:settings.typography.content"
+    },
+    {
+      "type": "checkbox",
+      "id": "inherit_font",
+      "label": "t:settings.inherit_font.label",
+      "default": true
+    },
+    {
+      "type": "header",
+      "content": "t:settings.border.content"
+    },
+    {
+      "type": "range",
+      "id": "border_radius",
+      "label": "t:settings.border_radius.label",
+      "min": 0,
+      "max": 28,
+      "step": 1,
+      "unit": "px",
+      "default": 16
+    },
+    {
+      "type": "paragraph",
+      "content": "t:settings.behavior_note.content"
+    }
+  ]
+}
+{% endschema %}

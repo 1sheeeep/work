@@ -1,0 +1,21 @@
+body:has(.erp-login-layout) { min-width: 320px; min-height: 0; overflow: auto; }
+.native-auth-shell:has(.erp-login-layout) { min-height: 100dvh; height: auto; grid-template-columns: minmax(0, 1fr); overflow: visible; }
+.native-auth-shell:has(.erp-login-layout) .platform-sidebar { display: none; }
+.native-auth-shell:has(.erp-login-layout) .platform-main { min-height: 100dvh; display: flex; flex-direction: column; overflow: visible; }
+.native-auth-shell:has(.erp-login-layout) .platform-topbar { flex-shrink: 0; }
+.native-auth-shell:has(.erp-login-layout) .toast { display: none; }
+.erp-login-layout { flex: 1; display: grid; place-items: center; padding: 40px 20px 72px; }
+.auth-card.erp-login-card { width: min(420px, 100%); align-self: center; gap: 28px; padding: 32px; }
+.erp-login-heading { display: grid; justify-items: center; gap: 12px; text-align: center; }
+.erp-login-heading h1 { margin: 0; font-size: 22px; line-height: 1.4; color: var(--text); }
+.erp-login-heading p { margin: 0; color: var(--muted); line-height: 1.6; }
+.erp-login-card .form-grid { gap: 12px; }
+.erp-login-card label { color: var(--text); }
+.erp-login-card input { width: 100%; min-height: 44px; font-size: 16px; }
+.erp-login-password { position: relative; margin-top: -6px; }
+.erp-login-password input { padding-right: 48px; }
+.erp-login-password button { position: absolute; right: 0; top: 0; height: 100%; min-width: 44px; border: 0; background: transparent; color: var(--muted); display: grid; place-items: center; }
+.erp-login-card .erp-login-submit { min-height: 44px; width: 100%; margin-top: 8px; justify-content: center; }
+.erp-login-card :is(input, button):focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+.erp-login-error { color: #b42318; margin: 0; line-height: 1.6; }
+@media (max-width: 480px) { .erp-login-layout { padding: 24px 16px; } .auth-card.erp-login-card { padding: 24px; } }

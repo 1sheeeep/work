@@ -1,0 +1,34 @@
+name = "Xinzhi ERP"
+client_id = "6cef3dfc6b0d74e7c2709232f2938696"
+application_url = "https://erp.xzkj.ai/shopify/app"
+embedded = true
+
+[build]
+automatically_update_urls_on_dev = false
+
+[access_scopes]
+# Current reviewable release scope set. Restricted Shopify Payments evidence
+# access is not eligible yet, so evidence stays in Shopify Admin.
+scopes = "read_all_orders,read_customers,read_locations,read_products,read_shopify_payments_disputes,write_inventory,write_merchant_managed_fulfillment_orders,write_order_edits,write_orders,write_returns"
+use_legacy_install_flow = false
+
+[auth]
+redirect_urls = [
+  "https://erp.xzkj.ai/shopify/oauth/callback"
+]
+
+[app_proxy]
+url = "https://erp.xzkj.ai/shopify/proxy"
+prefix = "apps"
+subpath = "xzdesk"
+
+[webhooks]
+api_version = "2026-07"
+
+[[webhooks.subscriptions]]
+topics = ["app/uninstalled"]
+uri = "https://erp.xzkj.ai/webhooks/shopify/app/uninstalled"
+
+[[webhooks.subscriptions]]
+compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
+uri = "https://erp.xzkj.ai/webhooks/shopify/compliance"

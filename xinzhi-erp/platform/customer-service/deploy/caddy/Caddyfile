@@ -1,0 +1,60 @@
+{$XZDESK_DOMAIN} {
+	encode zstd gzip
+
+	handle /api/* {
+		reverse_proxy api:8787
+	}
+
+	handle /healthz {
+		reverse_proxy api:8787
+	}
+
+	handle /auth* {
+		reverse_proxy api:8787
+	}
+
+	handle /outlook/* {
+		reverse_proxy api:8787
+	}
+
+	handle /gmail/* {
+		reverse_proxy api:8787
+	}
+
+	handle /shopify/* {
+		reverse_proxy api:8787
+	}
+
+	handle /webhooks/* {
+		reverse_proxy api:8787
+	}
+
+	handle /chat/* {
+		reverse_proxy api:8787
+	}
+
+	handle /ws/* {
+		reverse_proxy api:8787
+	}
+
+	handle {
+		root * /srv/frontend
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+kf-uat.xzkj.ai {
+	encode zstd gzip
+
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+	}
+
+	reverse_proxy erp-customer-service-uat-web:8080
+}
