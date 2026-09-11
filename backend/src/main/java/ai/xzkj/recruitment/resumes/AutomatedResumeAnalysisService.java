@@ -40,7 +40,7 @@ public class AutomatedResumeAnalysisService {
         }
         if (!configurationReady()) {
             intake.analysisUnavailable("NOT_CONFIGURED", "OPENAI_CONFIGURATION_REQUIRED",
-                    "OpenAI 尚未完成可用配置", now);
+                    "大模型尚未完成可用配置", now);
             return;
         }
 

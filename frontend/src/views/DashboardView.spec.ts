@@ -4,6 +4,10 @@ import DashboardView from './DashboardView.vue'
 
 enableAutoUnmount(afterEach)
 
+vi.mock('vue-router', () => ({
+  useRouter: () => ({ push: vi.fn() }),
+}))
+
 vi.mock('../services/api', () => ({
   api: { get: vi.fn(), put: vi.fn() },
   ensureCsrf: vi.fn(),
@@ -14,6 +18,7 @@ describe('DashboardView', () => {
   beforeEach(() => {
     vi.mocked(api.get).mockReset()
     vi.mocked(api.put).mockReset()
+    vi.mocked(api.get).mockResolvedValue({ data: [] })
   })
   it('combines hang-up duty and unread messages in one workspace', async () => {
     vi.mocked(api.get)
@@ -77,7 +82,7 @@ describe('DashboardView', () => {
 
     const wrapper = mount(DashboardView)
     await flushPromises()
-    await wrapper.get('.message-list article').trigger('click')
+    await wrapper.get('.message-grid button.message-card').trigger('click')
 
     expect(wrapper.text()).toContain('已填入未发送')
     expect(wrapper.text()).not.toContain('已发送')
@@ -91,10 +96,10 @@ describe('DashboardView', () => {
     ] }).mockResolvedValueOnce({ data: [] }).mockResolvedValueOnce({ data: [] }).mockResolvedValueOnce({ data: [] })
     const wrapper = mount(DashboardView)
     await flushPromises()
-    const rows = wrapper.findAll('.message-list article')
+    const rows = wrapper.findAll('.message-grid button.message-card')
     expect(rows[0].text()).toContain('当前岗位')
     expect(rows[0].text()).toContain('当前浏览器会话')
-    expect(rows[0].text()).toContain('匿名求职者')
+    expect(rows[0].find('.message-card__avatar').text()).toBe('求')
     vi.useRealTimers()
   })
 
@@ -118,7 +123,7 @@ describe('DashboardView', () => {
 
     const wrapper = mount(DashboardView)
     await flushPromises()
-    await wrapper.get('.message-list article').trigger('click')
+    await wrapper.get('.message-grid button.message-card').trigger('click')
 
     expect(wrapper.text()).toContain('关联真实岗位')
     expect(wrapper.text()).toContain('选择同账号已就绪岗位')

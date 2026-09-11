@@ -118,3 +118,5 @@ app:
       batch-size: ${APP_RESUME_ANALYSIS_RETENTION_BATCH_SIZE:50}
       cleanup-interval: ${APP_RESUME_ANALYSIS_RETENTION_CLEANUP_INTERVAL:1h}
       initial-delay: ${APP_RESUME_ANALYSIS_RETENTION_INITIAL_DELAY:5m}
+      source-pdf-cleanup-interval: ${APP_RESUME_SOURCE_PDF_CLEANUP_INTERVAL:7d}
+      source-pdf-cleanup-initial-delay: ${APP_RESUME_SOURCE_PDF_CLEANUP_INITIAL_DELAY:1h}

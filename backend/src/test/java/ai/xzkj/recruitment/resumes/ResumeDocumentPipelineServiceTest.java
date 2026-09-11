@@ -50,6 +50,29 @@ class ResumeDocumentPipelineServiceTest {
     }
 
     @Test
+    void retriesAiForDuplicateWhenPreviousAnalysisWasNotSuccessful() {
+        Fixture f = new Fixture();
+        byte[] content = "same-resume".getBytes();
+        when(f.documents.readBytes(f.file)).thenReturn(content);
+        ResumeIntake existing = new ResumeIntake(f.contact, ResumeIntakeSource.BOSS_VISIBLE,
+                sha256(content), "existing", java.time.Instant.now());
+        existing.processing();
+        existing.readyForAi("PDF", "a".repeat(64), true, java.time.Instant.now());
+        existing.analysisUnavailable("FAILED", "AI_REQUEST_FAILED", "AI 请求失败", java.time.Instant.now());
+        when(f.intakes.findByContactIdAndResumeDigest(eq(f.contactId), any())).thenReturn(Optional.of(existing));
+        when(f.malware.scan(any())).thenReturn(ResumeMalwareScanner.ScanResult.clean());
+        when(f.ocr.supports(any())).thenReturn(false);
+        when(f.documents.extract(any())).thenReturn(new ResumeDocumentTextExtractor.ExtractedResumeDocument(
+                "PDF", "候选人姓名 林嘉明 工作经历 Java 开发".repeat(10), "a".repeat(64)));
+
+        ResumeDocumentProcessingResponse result = f.service.processVisibleResume(f.job, "b".repeat(64), "c".repeat(64), null, f.file);
+
+        assertThat(result.duplicate()).isTrue();
+        verify(f.automatedAnalysis).analyzeInMemory(eq(existing), contains("林嘉明"));
+        verify(f.documents, times(2)).extract(any());
+    }
+
+    @Test
     void ingestsRenderedBossResumeTextAndStartsAutomaticAnalysisWithoutPersistingRawText() {
         Fixture f = new Fixture();
         String visibleText = "候选人姓名 林嘉明\n工作经历 跨境电商客服主管五年\n技能 客诉处理 团队管理 英语沟通".repeat(4);

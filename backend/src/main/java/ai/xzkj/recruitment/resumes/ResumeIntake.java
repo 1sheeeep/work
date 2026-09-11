@@ -23,6 +23,7 @@ import java.util.UUID;
  public void attachSourceActionTask(UUID id){sourceActionTaskId=id;}
  void readyForAi(String type,String textDigest,boolean scanned,Instant now){processingStatus="READY_FOR_AI";documentType=type;extractedTextDigest=textDigest;malwareScanned=scanned;failureCode=null;failureReason=null;processedAt=now;}
  void storeSourcePdf(byte[] content){sourcePdf=content == null ? null : content.clone();}
+ void clearSourcePdf(){sourcePdf=null;updatedAt=Instant.now();}
  public byte[] getSourcePdf(){return sourcePdf == null ? null : sourcePdf.clone();}
  void processingFailed(String code,String reason,Instant now){processingStatus="FAILED";failureCode=code;failureReason=reason;processedAt=now;}
  void analysisStarted(){analysisStatus="ANALYZING";analysisFailureCode=null;analysisFailureReason=null;analysisCompletedAt=null;}

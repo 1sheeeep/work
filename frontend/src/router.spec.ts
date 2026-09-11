@@ -11,7 +11,7 @@ vi.mock('./stores/auth', () => ({
 }))
 
 describe('router contract', () => {
-  it('keeps only the five current pages as component routes', () => {
+  it('keeps the current component routes', () => {
     const componentPaths = router.getRoutes()
       .filter(route => !['/', '/login', '/hr-login'].includes(route.path) && Boolean(route.components?.default))
       .map(route => route.path)
@@ -20,6 +20,7 @@ describe('router contract', () => {
     expect(componentPaths).toEqual([
       '/boss-accounts',
       '/dashboard',
+      '/hr-users',
       '/job-positions',
       '/resume-intakes',
       '/system-logs',
@@ -37,7 +38,6 @@ describe('router contract', () => {
     ['/organization', '/job-positions'],
     ['/candidates', '/dashboard#attention-panel'],
     ['/auto-replies', '/dashboard'],
-    ['/hr-users', '/dashboard'],
     ['/audit-logs', '/system-logs'],
     ['/operations', '/system-logs'],
   ])('redirects the retired URL %s to %s', (source, destination) => {

@@ -71,14 +71,23 @@ public class AiAssistanceRun {
         run.resumeIntake = intake;
         run.candidateContact = intake.getContact();
         run.jobPosition = intake.getContact().getJobPosition();
-        run.provider = "OPENAI";
         run.modelVersion = model == null || model.isBlank() ? "UNCONFIGURED" : model;
+        run.provider = providerName(run.modelVersion);
         run.promptVersion = "resume-analysis-v1";
         run.inputHash = inputHash;
         run.createdBy = user;
         run.origin = origin;
         run.createdAt = Instant.now();
         return run;
+    }
+
+    private static String providerName(String model) {
+        String normalized = model.toLowerCase(java.util.Locale.ROOT);
+        if (normalized.contains("qwen") || normalized.contains("通义")) return "通义千问";
+        if (normalized.contains("deepseek")) return "DeepSeek";
+        if (normalized.contains("glm") || normalized.contains("chatglm")) return "智谱 GLM";
+        if (normalized.contains("kimi") || normalized.contains("moonshot")) return "Kimi";
+        return "AI 兼容服务";
     }
 
     public UUID getId() { return id; }

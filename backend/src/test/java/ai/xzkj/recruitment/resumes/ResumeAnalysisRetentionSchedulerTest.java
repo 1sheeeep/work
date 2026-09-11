@@ -20,12 +20,13 @@ class ResumeAnalysisRetentionSchedulerTest {
     @Test void purgesExpiredContentAndFeedbackButKeepsTheRunForAudit() {
         Instant now = Instant.parse("2026-08-30T08:00:00Z");
         AiAssistanceRunRepository runs = mock(AiAssistanceRunRepository.class);
+        ResumeIntakeRepository intakes = mock(ResumeIntakeRepository.class);
         ResumeAnalysisFeedbackRepository feedback = mock(ResumeAnalysisFeedbackRepository.class);
         AuditService audit = mock(AuditService.class);
         ResumeAnalysisRetentionProperties properties = new ResumeAnalysisRetentionProperties();
         AiAssistanceRun run = expiredRun(now.minusSeconds(1));
         when(runs.findExpiredResumeAnalysisRuns(any(Instant.class), any(Pageable.class))).thenReturn(List.of(run));
-        ResumeAnalysisRetentionScheduler scheduler = new ResumeAnalysisRetentionScheduler(runs, feedback, properties, audit,
+        ResumeAnalysisRetentionScheduler scheduler = new ResumeAnalysisRetentionScheduler(runs, intakes, feedback, properties, audit,
                 Clock.fixed(now, ZoneOffset.UTC));
 
         scheduler.purgeExpired();
@@ -41,14 +42,33 @@ class ResumeAnalysisRetentionSchedulerTest {
 
     @Test void doesNothingWhenRetentionIsDisabled() {
         AiAssistanceRunRepository runs = mock(AiAssistanceRunRepository.class);
+        ResumeIntakeRepository intakes = mock(ResumeIntakeRepository.class);
         ResumeAnalysisRetentionProperties properties = new ResumeAnalysisRetentionProperties();
         properties.setEnabled(false);
-        ResumeAnalysisRetentionScheduler scheduler = new ResumeAnalysisRetentionScheduler(runs,
+        ResumeAnalysisRetentionScheduler scheduler = new ResumeAnalysisRetentionScheduler(runs, intakes,
                 mock(ResumeAnalysisFeedbackRepository.class), properties, mock(AuditService.class), Clock.systemUTC());
 
         scheduler.purgeExpired();
 
-        verifyNoInteractions(runs);
+        verifyNoInteractions(runs, intakes);
+    }
+
+    @Test void purgesSourcePdfsOnTheWeeklyCleanupPass() {
+        Instant now = Instant.parse("2026-08-30T08:00:00Z");
+        AiAssistanceRunRepository runs = mock(AiAssistanceRunRepository.class);
+        ResumeIntakeRepository intakes = mock(ResumeIntakeRepository.class);
+        ResumeIntake intake = mock(ResumeIntake.class);
+        when(intake.getId()).thenReturn(java.util.UUID.randomUUID());
+        when(intake.getDisplayLabel()).thenReturn("BOSS 简历");
+        when(intakes.findSourcePdfsDueForPurge(any(Instant.class), any(Pageable.class))).thenReturn(List.of(intake));
+        ResumeAnalysisRetentionScheduler scheduler = new ResumeAnalysisRetentionScheduler(runs, intakes,
+                mock(ResumeAnalysisFeedbackRepository.class), new ResumeAnalysisRetentionProperties(),
+                mock(AuditService.class), Clock.fixed(now, ZoneOffset.UTC));
+
+        scheduler.purgeExpiredSourcePdfs();
+
+        verify(intake).clearSourcePdf();
+        verify(intakes).findSourcePdfsDueForPurge(eq(now.minusSeconds(90 * 24 * 60 * 60)), any(Pageable.class));
     }
 
     private AiAssistanceRun expiredRun(Instant expiresAt) {

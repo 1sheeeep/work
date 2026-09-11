@@ -44,7 +44,7 @@ function navigationLabels(wrapper: ReturnType<typeof mount>) {
 }
 
 describe('AppLayout navigation contract', () => {
-  it('shows the five current entries to a system administrator', async () => {
+  it('shows the admin-only HR management entry to a system administrator', async () => {
     const wrapper = await mountLayout('SYSTEM_ADMIN')
 
     expect(navigationLabels(wrapper)).toEqual([
@@ -52,6 +52,7 @@ describe('AppLayout navigation contract', () => {
       '招聘账号',
       '岗位资料',
       '简历分析',
+      'HR 用户管理',
       '项目运行日志',
     ])
     wrapper.unmount()

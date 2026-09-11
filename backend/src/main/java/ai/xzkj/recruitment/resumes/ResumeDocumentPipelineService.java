@@ -66,8 +66,12 @@ public class ResumeDocumentPipelineService {
         if (existing != null) {
             if (existing.getSourcePdf() == null) existing.storeSourcePdf(content);
             refreshRecognizedNameFromPdf(candidate, existing.getSourcePdf());
+            if ("READY_FOR_AI".equals(existing.getProcessingStatus())
+                    && !"SUCCEEDED".equals(existing.getAnalysisStatus())) {
+                retryExistingAnalysis(existing, candidate, content, documentDigest);
+            }
             audit.systemSuccess("DEDUPLICATE_VISIBLE_RESUME", "RESUME_INTAKE", existing.getId(),
-                    "简历摘要 " + documentDigest.substring(0, 12), "同一候选人和岗位已处理相同文件，未重复扫描、提取或调用 AI");
+                    "简历摘要 " + documentDigest.substring(0, 12), "同一候选人和岗位已处理相同文件；分析不可用时已尝试重新提取并调用 AI");
             return ResumeDocumentProcessingResponse.from(existing, true);
         }
         // 同一聊天事件可能包含不同的附件。只有文件摘要相同才算重复，
@@ -112,6 +116,34 @@ public class ResumeDocumentPipelineService {
                     "简历摘要 " + documentDigest.substring(0, 12), "简历处理出现非预期错误，已转入 HR 异常队列；审计不包含原文");
         }
         return ResumeDocumentProcessingResponse.from(intake, false);
+    }
+
+    private void retryExistingAnalysis(ResumeIntake intake, CandidateProfile candidate, byte[] content,
+                                       String documentDigest) {
+        try {
+            ResumeMalwareScanner.ScanResult scan = malware.scan(content);
+            String type;
+            String text;
+            if (ocr.supports(content)) {
+                type = "IMAGE_OCR";
+                text = ocr.extract(content).text();
+            } else {
+                ResumeDocumentTextExtractor.ExtractedResumeDocument extracted = documents.extract(content);
+                type = extracted.type();
+                text = extracted.text();
+            }
+            intake.processing();
+            intake.readyForAi(type, hash(text), scan.scanned(), Instant.now());
+            intake.autoApproveForAi(Instant.now());
+            updateRecognizedName(candidate, text);
+            intake.storeSourcePdf(content);
+            automatedAnalysis.analyzeInMemory(intake, text);
+            audit.systemSuccess("RETRY_RESUME_ANALYSIS", "RESUME_INTAKE", intake.getId(),
+                    "简历摘要 " + documentDigest.substring(0, 12), "重复简历原分析不可用，已重新提取并提交 AI 分析");
+        } catch (RuntimeException exception) {
+            audit.systemSuccess("RETRY_RESUME_ANALYSIS_FAILED", "RESUME_INTAKE", intake.getId(),
+                    "简历摘要 " + documentDigest.substring(0, 12), "重复简历重新分析失败，已保留原处理状态供 HR 重试");
+        }
     }
 
     @Transactional

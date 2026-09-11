@@ -16,7 +16,7 @@ import java.util.UUID;
 
 record ResumeAnalysisRequest(
         @NotBlank @Size(max = 30000) String resumeText,
-        @AssertTrue(message = "请确认已获授权将该简历内容发送给 OpenAI 分析") boolean externalProcessingConfirmed
+        @AssertTrue(message = "请确认已获授权将该简历内容发送给配置的大模型分析") boolean externalProcessingConfirmed
 ) {}
 
 record ResumeDocumentPreviewResponse(
@@ -100,11 +100,11 @@ record ResumeAnalysisResult(
                     .log(System.Logger.Level.WARNING, "简历分析 JSON 校验失败: " + exception.getMessage()
                             + "\n原始 JSON 前500字符: " + (json != null ? json.substring(0, Math.min(500, json.length())) : "null"));
             throw new ApiException(HttpStatus.BAD_GATEWAY, "OPENAI_RESPONSE_INVALID",
-                    "OpenAI 返回的简历分析格式无效: " + exception.getMessage());
+                    "大模型返回的简历分析格式无效: " + exception.getMessage());
         } catch (RuntimeException exception) {
             System.getLogger(ResumeAnalysisResult.class.getName())
                     .log(System.Logger.Level.WARNING, "简历分析 JSON 解析异常: " + exception.getMessage());
-            throw new ApiException(HttpStatus.BAD_GATEWAY, "OPENAI_RESPONSE_INVALID", "OpenAI 返回的简历分析格式无效，未生成可用结论");
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "OPENAI_RESPONSE_INVALID", "大模型返回的简历分析格式无效，未生成可用结论");
         }
     }
 

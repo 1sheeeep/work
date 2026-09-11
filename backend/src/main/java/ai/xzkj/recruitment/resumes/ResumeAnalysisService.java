@@ -104,7 +104,7 @@ public class ResumeAnalysisService {
         String scanText = scan.scanned() ? "已通过病毒扫描" : "病毒扫描门禁未启用";
         audit.success("EXTRACT_RESUME_DOCUMENT", "RESUME_INTAKE", intake.getId(), intake.getDisplayLabel(),
                 "HR 请求本机临时提取 " + type + " 简历文本（文件摘要 " + documentHashPrefix + "，" + scanText + "）；仅返回当前浏览器人工校验，未发送外部服务");
-        String review = "已在本机临时提取 " + type + " 文本（" + scanText + "）。请逐项核对、修正后，再单独确认是否发送给 OpenAI。";
+        String review = "已在本机临时提取 " + type + " 文本（" + scanText + "）。请逐项核对、修正后，再单独确认是否发送给配置的大模型。";
         return new ResumeDocumentPreviewResponse(type, text, documentHashPrefix, scan.scanned(), review);
     }
 
@@ -118,7 +118,7 @@ public class ResumeAnalysisService {
             ));
             intake.analysisSucceeded(Instant.now());
             audit.success("REQUEST_OPENAI_RESUME_ANALYSIS", "RESUME_INTAKE", intake.getId(), intake.getDisplayLabel(),
-                    "HR 已确认外部 OpenAI 分析（" + source + "）；仅保存输入摘要和结构化结果，不保存简历原文");
+                    "HR 已确认外部大模型分析（" + source + "）；仅保存输入摘要和结构化结果，不保存简历原文");
             return response(run);
         } catch (ApiException exception) {
             recordFailure(intake, user, inputHash, exception.getCode());
@@ -157,15 +157,15 @@ public class ResumeAnalysisService {
 
     private void recordFailure(ResumeIntake intake, SystemUser user, String inputHash, String code) {
         runs.save(AiAssistanceRun.failed(intake, user, properties.getModel(), inputHash, code));
-        intake.analysisUnavailable("FAILED", code, "OpenAI 分析未完成，请检查配置或稍后重试", Instant.now());
+        intake.analysisUnavailable("FAILED", code, "大模型分析未完成，请检查配置或稍后重试", Instant.now());
         audit.failure("REQUEST_OPENAI_RESUME_ANALYSIS", "RESUME_INTAKE", intake.getId(), intake.getDisplayLabel(),
-                "OpenAI 简历分析未完成，原因代码：" + code + "；简历原文未写入审计");
+                "大模型简历分析未完成，原因代码：" + code + "；简历原文未写入审计");
     }
 
     private ResumeIntake requireApprovedIntake(UUID id, SystemUser user) {
         ResumeIntake intake = requireIntake(id, user);
         if (intake.getStatus() != ResumeIntakeStatus.APPROVED_FOR_AI) {
-            throw new ApiException(HttpStatus.CONFLICT, "RESUME_AI_NOT_APPROVED", "该简历尚未获 HR 授权，不能发送给 OpenAI 分析");
+            throw new ApiException(HttpStatus.CONFLICT, "RESUME_AI_NOT_APPROVED", "该简历尚未获 HR 授权，不能发送给配置的大模型分析");
         }
         return intake;
     }

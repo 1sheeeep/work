@@ -135,7 +135,7 @@ public class OrganizationService {
         auditService.success(request.enabled() ? "ENABLE_COMPANY_AI_AUTO_ANALYSIS" : "DISABLE_COMPANY_AI_AUTO_ANALYSIS",
                 "COMPANY", company.getId(), company.getName(),
                 request.enabled()
-                        ? "公司级简历自动分析已授权；正文仅在提取到 OpenAI 请求的同一内存链路中处理"
+                        ? "公司级简历自动分析已授权；正文仅在提取到大模型请求的同一内存链路中处理"
                         : "公司级简历自动分析已关闭；新收到简历不再自动提交外部 AI");
         return CompanyResponse.from(company);
     }
