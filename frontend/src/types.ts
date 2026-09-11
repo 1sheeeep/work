@@ -55,7 +55,9 @@ export type ResumeIntakeStatus='PENDING_REVIEW'|'APPROVED_FOR_AI'|'REJECTED'
 export interface ResumeIntake {id:string;contactId:string;candidateName:string;jobTitle:string;accountName:string;source:ResumeIntakeSource;anonymousKey:string;displayLabel:string;status:ResumeIntakeStatus;receivedAt:string;reviewedBy?:string;reviewedAt?:string;reviewNote?:string;companyId?:string;documentType?:string;processingStatus?:'PROCESSING'|'READY_FOR_AI'|'FAILED';analysisStatus?:'PENDING'|'ANALYZING'|'SUCCEEDED'|'FAILED'|'NOT_AUTHORIZED'|'NOT_CONFIGURED'|'NOT_REQUESTED';analysisFailureCode?:string;analysisFailureReason?:string;failureCode?:string;failureReason?:string;createdAt:string}
 export type ResumeAnalysisRecommendation='PRIORITY_VIEW'|'NORMAL_VIEW'|'INFORMATION_NEEDED'
 export interface ResumeAnalysisEvidence {criterion:string;finding:string;status:'FOUND'|'NOT_FOUND'|'UNCLEAR'}
-export interface ResumeAnalysisResult {recommendation:ResumeAnalysisRecommendation;summary:string;evidence:ResumeAnalysisEvidence[];gaps:string[];risks:string[];followUpQuestions:string[]}
+export interface ResumeResponsibilityMatch {responsibility:string;resumeEvidence:string;status:'FOUND'|'NOT_FOUND'|'UNCLEAR'}
+export interface ResumeJobComparison {jobId?:string;jobTitle:string;summary:string;responsibilities:ResumeResponsibilityMatch[];gaps:string[];risks:string[]}
+export interface ResumeAnalysisResult {recommendation:ResumeAnalysisRecommendation;summary:string;evidence:ResumeAnalysisEvidence[];gaps:string[];risks:string[];followUpQuestions:string[];jobComparisons?:ResumeJobComparison[]}
 export type ResumeAnalysisFeedbackType='ADOPTED'|'AMENDED'|'NOT_USED'
 export interface ResumeAnalysisFeedback {id:string;feedbackType:ResumeAnalysisFeedbackType;note:string;createdBy:string;createdAt:string}
 export interface ResumeAnalysisRun {id:string;resumeIntakeId:string;candidateName:string;jobTitle:string;provider:string;modelVersion:string;status:'SUCCEEDED'|'FAILED';result?:ResumeAnalysisResult;errorMessage?:string;feedback:ResumeAnalysisFeedback[];createdBy:string;createdAt:string;resultExpiresAt?:string;resultPurgedAt?:string}

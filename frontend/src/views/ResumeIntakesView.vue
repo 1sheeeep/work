@@ -625,6 +625,23 @@ function showAnalysisHelp() {
                   <span v-for="risk in selectedAnalysis.result.risks" :key="`risk-${risk}`" class="flag flag--danger">关注 · {{ risk }}</span>
                 </div>
               </div>
+              <section v-if="selectedAnalysis.result.jobComparisons?.length" class="job-comparison-section" aria-label="逐岗位职责匹配">
+                <div class="comparison-heading"><div><span>逐岗位职责匹配</span><p>逐项对照岗位职责与简历中的可见证据，未发现不等于候选人不具备。</p></div><strong>{{ selectedAnalysis.result.jobComparisons.length }} 个岗位</strong></div>
+                <details v-for="(comparison, index) in selectedAnalysis.result.jobComparisons" :key="`${comparison.jobId || comparison.jobTitle}-${index}`" class="job-comparison-card" :open="index === 0">
+                  <summary><span class="comparison-summary-title">{{ comparison.jobTitle }}</span><span class="comparison-summary-count">{{ comparison.responsibilities.length }} 项职责</span></summary>
+                  <p class="comparison-summary">{{ comparison.summary }}</p>
+                  <ul class="responsibility-list">
+                    <li v-for="(item, itemIndex) in comparison.responsibilities" :key="`${item.responsibility}-${itemIndex}`" :class="`responsibility--${item.status.toLowerCase()}`">
+                      <div><strong>{{ item.responsibility }}</strong><p>{{ item.resumeEvidence }}</p></div>
+                      <el-tag size="small" :type="item.status === 'FOUND' ? 'success' : item.status === 'NOT_FOUND' ? 'danger' : 'info'">{{ item.status === 'FOUND' ? '符合' : item.status === 'NOT_FOUND' ? '未发现' : '待确认' }}</el-tag>
+                    </li>
+                  </ul>
+                  <div v-if="comparison.gaps.length || comparison.risks.length" class="comparison-flags">
+                    <span v-for="gap in comparison.gaps" :key="`comparison-gap-${gap}`" class="flag flag--warning">差距 · {{ gap }}</span>
+                    <span v-for="risk in comparison.risks" :key="`comparison-risk-${risk}`" class="flag flag--danger">风险 · {{ risk }}</span>
+                  </div>
+                </details>
+              </section>
               <div class="insight-grid">
                 <article class="insight-card">
                   <header><span>匹配证据</span><strong>{{ selectedAnalysis.result.evidence.length }}</strong></header>
@@ -880,6 +897,27 @@ function showAnalysisHelp() {
 .summary-card, .insight-card, .feedback-section { padding:18px 0 0; border-top:1px solid var(--border); }
 .summary-card { padding:0; }
 .summary-card p { margin: 8px 0 0; line-height: 1.75; overflow-wrap: anywhere; }
+.job-comparison-section { margin-top:20px; padding-top:18px; border-top:1px solid var(--border); }
+.comparison-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:12px; }
+.comparison-heading span { color:var(--text); font-size:14px; font-weight:800; }
+.comparison-heading p { margin:5px 0 0; color:var(--text-secondary); font-size:12px; line-height:1.5; }
+.comparison-heading > strong { flex:none; color:var(--primary); font-size:12px; }
+.job-comparison-card { border:1px solid var(--border); border-radius:12px; background:color-mix(in srgb, var(--surface) 92%, var(--primary) 8%); margin-top:10px; overflow:hidden; transition:border-color .2s ease, box-shadow .2s ease; }
+.job-comparison-card[open] { border-color:color-mix(in srgb, var(--primary) 40%, var(--border)); box-shadow:0 8px 24px rgb(24 74 80 / 8%); }
+.job-comparison-card summary { display:flex; align-items:center; gap:10px; cursor:pointer; list-style:none; padding:14px 16px; font-size:13px; font-weight:800; }
+.job-comparison-card summary::-webkit-details-marker { display:none; }
+.job-comparison-card summary::before { content:'›'; color:var(--primary); font-size:20px; line-height:1; transition:transform .2s ease; }
+.job-comparison-card[open] summary::before { transform:rotate(90deg); }
+.comparison-summary-title { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.comparison-summary-count { color:var(--text-secondary); font-size:11px; font-weight:600; }
+.comparison-summary { margin:0; padding:0 16px 12px 44px; color:var(--text-secondary); font-size:12px; line-height:1.6; }
+.responsibility-list { margin:0; padding:0 16px 8px 44px; list-style:none; }
+.responsibility-list li { display:flex; align-items:flex-start; gap:12px; justify-content:space-between; padding:11px 0; border-top:1px dashed var(--border); }
+.responsibility-list li > div { min-width:0; }
+.responsibility-list strong { font-size:12px; }
+.responsibility-list p { margin:4px 0 0; color:var(--text-secondary); font-size:12px; line-height:1.5; overflow-wrap:anywhere; }
+.responsibility-list .el-tag { flex:none; margin-top:1px; }
+.comparison-flags { display:flex; flex-wrap:wrap; gap:6px; padding:2px 16px 14px 44px; }
 .summary-flags { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 13px; }
 .flag { display: inline-flex; max-width: 100%; padding: 4px 8px; border-radius: 6px; font-size: 11px; overflow-wrap: anywhere; line-height:1.45; }
 .flag--warning { background: var(--flag-warning-bg); color: var(--flag-warning-text); }

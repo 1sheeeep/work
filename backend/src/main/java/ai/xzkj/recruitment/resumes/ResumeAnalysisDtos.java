@@ -88,9 +88,16 @@ record ResumeAnalysisResult(
         List<ResumeAnalysisEvidence> evidence,
         List<String> gaps,
         List<String> risks,
-        List<String> followUpQuestions
+        List<String> followUpQuestions,
+        List<ResumeJobComparison> jobComparisons
 ) {
     private static final List<String> RECOMMENDATIONS = List.of("PRIORITY_VIEW", "NORMAL_VIEW", "INFORMATION_NEEDED");
+
+    ResumeAnalysisResult(String candidateName, String recommendation, String summary,
+                         List<ResumeAnalysisEvidence> evidence, List<String> gaps,
+                         List<String> risks, List<String> followUpQuestions) {
+        this(candidateName, recommendation, summary, evidence, gaps, risks, followUpQuestions, new ArrayList<>());
+    }
 
     static ResumeAnalysisResult parseExternal(String json, ObjectMapper mapper) {
         try {
@@ -145,8 +152,17 @@ record ResumeAnalysisResult(
             if (followUpQuestions.size() >= 3) break;
             if (!followUpQuestions.contains(question)) followUpQuestions.add(question);
         }
+        List<ResumeJobComparison> comparisons = value.jobComparisons() == null ? new ArrayList<>() : value.jobComparisons().stream()
+                .filter(item -> item != null && meaningful(item.jobTitle()))
+                .map(item -> new ResumeJobComparison(trim(item.jobId()), item.jobTitle().trim(), item.summary() == null || item.summary().isBlank() ? "未生成该岗位摘要" : item.summary().trim(),
+                        item.responsibilities() == null ? new ArrayList<>() : item.responsibilities().stream()
+                                .filter(detail -> detail != null && meaningful(detail.responsibility()))
+                                .map(detail -> new ResumeResponsibilityMatch(detail.responsibility().trim(), detail.resumeEvidence() == null || detail.resumeEvidence().isBlank() ? "未在简历中找到明确证据" : detail.resumeEvidence().trim(), safeEvidenceStatus(detail.status())))
+                                .toList(), cleanTextList(item.gaps()), cleanTextList(item.risks())))
+                .limit(20)
+                .toList();
         return new ResumeAnalysisResult(trim(value.candidateName()), normalizeRecommendation(value.recommendation()), trim(value.summary()), evidence,
-                cleanTextList(value.gaps()), cleanTextList(value.risks()), followUpQuestions);
+                cleanTextList(value.gaps()), cleanTextList(value.risks()), followUpQuestions, comparisons);
     }
 
     private static String normalizeRecommendation(String value) {
@@ -168,6 +184,11 @@ record ResumeAnalysisResult(
             case "UNCLEAR", "UNKNOWN", "UNDETERMINED", "UNCERTAIN", "NOT_SURE", "UNSURE", "不明确", "未知", "无法判断" -> "UNCLEAR";
             default -> normalized;
         };
+    }
+
+    private static String safeEvidenceStatus(String value) {
+        String normalized = normalizeEvidenceStatus(value);
+        return List.of("FOUND", "NOT_FOUND", "UNCLEAR").contains(normalized) ? normalized : "UNCLEAR";
     }
 
     private static List<String> cleanTextList(List<String> values) {
@@ -227,3 +248,14 @@ record ResumeAnalysisResult(
 }
 
 record ResumeAnalysisEvidence(String criterion, String finding, String status) {}
+
+record ResumeJobComparison(
+        String jobId,
+        String jobTitle,
+        String summary,
+        List<ResumeResponsibilityMatch> responsibilities,
+        List<String> gaps,
+        List<String> risks
+) {}
+
+record ResumeResponsibilityMatch(String responsibility, String resumeEvidence, String status) {}

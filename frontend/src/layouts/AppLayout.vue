@@ -18,9 +18,9 @@ const user = computed(() => authStore.state.user)
 const navigationGroups = computed(() => [
   { label: '日常工作', items: [
     { path: '/dashboard', label: '今日值守', icon: Grid },
+    { path: '/resume-intakes', label: '简历分析', icon: DocumentChecked },
     { path: '/boss-accounts', label: '招聘账号', icon: Connection },
     { path: '/job-positions', label: '岗位资料', icon: Briefcase },
-    { path: '/resume-intakes', label: '简历分析', icon: DocumentChecked },
   ] },
 ])
 const systemItems = computed(() => user.value?.role === 'SYSTEM_ADMIN'

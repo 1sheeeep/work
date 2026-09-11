@@ -76,6 +76,8 @@ public class ExternalResumeAiClient {
                 + "如果没有任何岗位匹配，matchedJobId 必须返回字符串 NONE，但仍然必须完成全部岗位对比分析。"
                 + "如果有一个最匹配岗位，matchedJobId 必须使用岗位列表中的 ID。"
                 + "JSON 顶层必须包含 candidateName、matchedJobId、analysis；analysis 必须包含 recommendation、summary、evidence、gaps、risks、followUpQuestions。"
+                + "analysis.jobComparisons 用于逐岗位详细对比；对输入的每个岗位最多输出一条，必须使用原始岗位 ID 和名称，并逐项比较岗位职责与简历证据。"
+                + "jobComparisons 不是录用结论；没有证据时使用 UNCLEAR 或 NOT_FOUND，不得猜测。"
                 + "recommendation 必须严格使用 PRIORITY_VIEW、NORMAL_VIEW 或 INFORMATION_NEEDED。"
                 + "analysis.evidence[].status 必须严格使用 FOUND、NOT_FOUND 或 UNCLEAR，不要使用 MISS、MATCHED、UNKNOWN 等别名。"
                 + "示例：{\"candidateName\":\"候选人姓名\",\"matchedJobId\":\"NONE\",\"analysis\":{\"recommendation\":\"INFORMATION_NEEDED\",\"summary\":\"总体对比摘要\",\"evidence\":[{\"criterion\":\"岗位：示例岗位\",\"finding\":\"存在或缺少相关经验\",\"status\":\"UNCLEAR\"}],\"gaps\":[],\"risks\":[],\"followUpQuestions\":[\"问题一\",\"问题二\",\"问题三\"]}}"
@@ -128,6 +130,18 @@ public class ExternalResumeAiClient {
         string(ep.putObject("criterion"), 1, 160); string(ep.putObject("finding"), 1, 600);
         ep.putObject("status").put("type", "string").putArray("enum").add("FOUND").add("NOT_FOUND").add("UNCLEAR");
         array(p, "gaps", 0, 8); array(p, "risks", 0, 8); array(p, "followUpQuestions", 3, 5);
+        ObjectNode comparisons = p.putObject("jobComparisons");
+        comparisons.put("type", "array"); comparisons.put("maxItems", 20);
+        ObjectNode comparison = comparisons.putObject("items"); comparison.put("type", "object"); comparison.put("additionalProperties", false);
+        comparison.putArray("required").add("jobId").add("jobTitle").add("summary").add("responsibilities").add("gaps").add("risks");
+        ObjectNode cp = comparison.putObject("properties");
+        string(cp.putObject("jobId"), 1, 80); string(cp.putObject("jobTitle"), 1, 160); string(cp.putObject("summary"), 1, 600);
+        ObjectNode responsibilities = cp.putObject("responsibilities"); responsibilities.put("type", "array"); responsibilities.put("minItems", 1); responsibilities.put("maxItems", 12);
+        ObjectNode responsibility = responsibilities.putObject("items"); responsibility.put("type", "object"); responsibility.put("additionalProperties", false);
+        responsibility.putArray("required").add("responsibility").add("resumeEvidence").add("status");
+        ObjectNode rp = responsibility.putObject("properties"); string(rp.putObject("responsibility"), 1, 400); string(rp.putObject("resumeEvidence"), 1, 600);
+        rp.putObject("status").put("type", "string").putArray("enum").add("FOUND").add("NOT_FOUND").add("UNCLEAR");
+        array(cp, "gaps", 0, 8); array(cp, "risks", 0, 8);
         return schema;
     }
 
