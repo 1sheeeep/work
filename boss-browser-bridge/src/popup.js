@@ -1,4 +1,4 @@
-const elements = Object.fromEntries(['stateBadge','summary','pairForm','accountName','totalCount','currentUnreadCount','trackedUnreadCount','reason','continuousReplyState','continuousReplyBadge','lastContinuousReply','detailState','lastSync','copyCurrentTranscript','jobState','lastJobSync','collectJobs','readinessState','lastReadiness','checkReadiness','controlDiagnosticState','lastControlDiagnostic','inspectControls','controlDiagnosticReport','copyControlDiagnostic','visibleResumeState','lastVisibleResume','recognizeCurrentResume','resumeStageBadge','resumeStepDetected','resumeStepImported','resumeStepAnalyzing','resumeStepCompleted','resumeRecovery','pluginVersion','actionTestState','lastActionTest','testRequestResume','testExchangePhone','testExchangeWechat','testInterview','exchangeConfirmState','lastExchangeConfirm','confirmExchangePhone','confirmExchangeWechat','productionActionState','lastProductionAction','draftTestState','lastDraftTest','fillTestDraft','sendTestState','lastSendTest','prepareCurrentSendTest','sendCurrentTestDraft','autoReplyTestResult','autoReplyTestState','autoReplyTestExpiry','autoReplyDiagnosticState','lastAutoReplyDiagnostic','diagnoseCurrentAutoReply','armCurrentAutoReplyTest','cancelCurrentAutoReplyTest','approvedDraftFillState','lastApprovedDraftFill','fillApprovedDraft','enabled','collect','forget','message','backendUrl','deviceName','pairingToken','pageContext','openConsole'].map((id) => [id, document.getElementById(id)]));
+const elements = Object.fromEntries(['stateBadge','summary','pairForm','accountName','totalCount','currentUnreadCount','trackedUnreadCount','reason','continuousReplyState','continuousReplyBadge','lastContinuousReply','detailState','lastSync','copyCurrentTranscript','jobState','lastJobSync','collectJobs','readinessState','lastReadiness','checkReadiness','controlDiagnosticState','lastControlDiagnostic','inspectControls','controlDiagnosticReport','copyControlDiagnostic','visibleResumeState','lastVisibleResume','recognizeCurrentResume','resumeStageBadge','resumeStepDetected','resumeStepImported','resumeStepAnalyzing','resumeStepCompleted','resumeRecovery','pluginVersion','actionTestState','lastActionTest','testRequestResume','testExchangePhone','testExchangeWechat','testInterview','exchangeConfirmState','lastExchangeConfirm','confirmExchangePhone','confirmExchangeWechat','productionActionState','lastProductionAction','draftTestState','lastDraftTest','fillTestDraft','sendTestState','lastSendTest','prepareCurrentSendTest','sendCurrentTestDraft','autoReplyTestResult','autoReplyTestState','autoReplyTestExpiry','autoReplyDiagnosticState','lastAutoReplyDiagnostic','diagnoseCurrentAutoReply','armCurrentAutoReplyTest','cancelCurrentAutoReplyTest','approvedDraftFillState','lastApprovedDraftFill','fillApprovedDraft','enabled','collect','forget','message','saveBackendUrl','backendUrl','deviceName','pairingToken','pageContext','openConsole'].map((id) => [id, document.getElementById(id)]));
 
 elements.pluginVersion.textContent = chrome.runtime.getManifest().version;
 
@@ -12,6 +12,12 @@ elements.pairForm.addEventListener('submit', async (event) => {
     show('配对成功，请打开 BOSS 沟通页并手动刷新一次。');
   });
 });
+elements.saveBackendUrl.addEventListener('click', () => void busy(elements.saveBackendUrl, async () => {
+  const result = await send({ type: 'BRIDGE_SAVE_BACKEND_URL', payload: { backendUrl: elements.backendUrl.value } });
+  if (!result.ok) throw new Error(result.error);
+  render(result.status);
+  show('后台地址已保存；如切换环境，请使用对应后台的一次性接入码重新配对。');
+}));
 elements.enabled.addEventListener('change', () => void act({ type: 'BRIDGE_SET_ENABLED', enabled: elements.enabled.checked }));
 elements.collect.addEventListener('click', () => void busy(elements.collect, async () => { const result = await send({ type: 'BRIDGE_COLLECT_NOW' }); if (!result.ok) throw new Error(result.error); render(result.status); }));
 elements.copyCurrentTranscript.addEventListener('click', () => void busy(elements.copyCurrentTranscript, async () => {
@@ -148,7 +154,12 @@ async function send(message) { return chrome.runtime.sendMessage(message); }
 async function busy(button, operation, busyText = '') { const original = button.textContent; button.disabled = true; if (busyText) button.textContent = busyText; try { await operation(); } catch (error) { show(error.message, true); } finally { button.disabled = button.dataset.locked === 'true'; button.textContent = original; } }
 function render(status) {
   elements.summary.hidden = !status.paired; elements.pairForm.hidden = status.paired;
-  if (!status.paired && status.backendUrl && !elements.backendUrl.value) elements.backendUrl.value = status.backendUrl;
+  // The HTML input has a production URL fallback, but the persisted setting
+  // must always win when the bridge is unpaired. Avoid overwriting a URL while
+  // the user is actively editing the field during the 1s status refresh.
+  if (!status.paired && status.backendUrl && document.activeElement !== elements.backendUrl) {
+    elements.backendUrl.value = status.backendUrl;
+  }
   elements.accountName.textContent = status.accountName || '-'; elements.totalCount.textContent = status.total; elements.currentUnreadCount.textContent = status.currentUnread; elements.trackedUnreadCount.textContent = status.trackedUnread;
   elements.reason.textContent = status.reason; elements.detailState.textContent = `详情复核：${status.detailState}`; elements.lastSync.textContent = status.lastSyncAt ? `最近同步：${new Date(status.lastSyncAt).toLocaleString('zh-CN')}` : '尚未同步真实快照'; elements.enabled.checked = status.enabled;
   elements.continuousReplyState.textContent = status.singleAccountAutoReplyState;

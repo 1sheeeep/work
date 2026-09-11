@@ -375,9 +375,17 @@
 
   async function unreadRowSignature(item) {
     const preview = textOf(item, SELECTORS.preview);
+    const job = textOf(item, SELECTORS.job);
+    const time = textOf(item, SELECTORS.time);
     const unreadNode = findUnreadNode(item);
     const unreadCount = unreadNode ? Math.max(1, Number(String(unreadNode.textContent || '').match(/\d+/)?.[0]) || 1) : 0;
-    return digest(`${preview}|${unreadCount}`);
+    return digest(`${preview}|${job}|${time}|${unreadCount}`);
+  }
+
+  function sameConversationMessage(left, right) {
+    if (!left?.ok || !right?.ok) return false;
+    return [left.chatDigest, left.messageDigest, left.direction, left.messageAt, left.messageText || ''].join('|')
+      === [right.chatDigest, right.messageDigest, right.direction, right.messageAt, right.messageText || ''].join('|');
   }
 
   async function findNewOrChangedUnreadConversation() {
@@ -601,13 +609,14 @@
       if (!target && !queuedTask) {
         singleAccountPendingChatDigest = null;
         await refillSingleAccountConversationQueue();
-        const queuedCandidate = singleAccountConversationQueue.shift();
+        const queuedCandidate = singleAccountConversationQueue[0];
         if (queuedCandidate) {
           target = await findConversationByDigest(queuedCandidate.chatDigest);
           if (!target && Date.now() - lastDeepConversationScanAt >= 15_000) {
             lastDeepConversationScanAt = Date.now();
             target = await findConversationByDigestDeep(queuedCandidate.chatDigest);
           }
+          if (target) singleAccountConversationQueue.shift();
         }
         if (!target) {
           const candidate = await findNewOrChangedUnreadConversation();
@@ -631,7 +640,7 @@
       const first = await collectSelectedConversation();
       await delay(350);
       const second = await collectSelectedConversation();
-      if (!first.ok || !second.ok || first.chatDigest !== expectedChatDigest || second.chatDigest !== expectedChatDigest || first.signature !== second.signature) {
+      if (!first.ok || !second.ok || first.chatDigest !== expectedChatDigest || second.chatDigest !== expectedChatDigest || !sameConversationMessage(first, second)) {
         return scheduleSingleAccountAutoReply(1_500);
       }
       if (queuedTask && second.messageDigest !== queuedTask.messageDigest) {
@@ -827,6 +836,17 @@
       singleAccountPendingChatDigest = null;
       if (queuedTask) singleAccountPendingReplies.delete(queuedTask.taskId);
       scheduleSingleAccountAutoReply(2_000);
+    } catch (error) {
+      singleAccountPendingChatDigest = null;
+      try {
+        await send({ type: 'BRIDGE_SINGLE_ACCOUNT_AUTO_REPLY_STATE', payload: {
+          state: `持续回复本轮出现可恢复异常：${compact(error?.message || error || '未知错误').slice(0, 220)}，稍后继续扫描。`,
+          disable: false, observedAt: new Date().toISOString(),
+        } });
+      } catch (_stateError) {
+        // Keep the page loop alive even if the diagnostic state cannot be sent.
+      }
+      scheduleSingleAccountAutoReply(3_000);
     } finally {
       singleAccountAutoReplyBusy = false;
       autoReplyBusy = false;

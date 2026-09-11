@@ -47,6 +47,13 @@ async function initialise() {
   const stored = await chrome.storage.local.get(SETTINGS_KEY);
   if (!stored[SETTINGS_KEY]) {
     await chrome.storage.local.set({ [SETTINGS_KEY]: { backendUrl: DEFAULT_BACKEND_URL, enabled: true } });
+  } else if (['http://localhost:8088', 'http://127.0.0.1:8088'].includes(String(stored[SETTINGS_KEY].backendUrl || '').replace(/\/+$/, ''))
+      && stored[SETTINGS_KEY].backendUrlMigration !== 'production-v1') {
+    const { deviceId: _deviceId, deviceToken: _deviceToken, accountId: _accountId, accountName: _accountName, ...safeSettings } = stored[SETTINGS_KEY];
+    await chrome.storage.local.set({ [SETTINGS_KEY]: {
+      ...safeSettings, backendUrl: DEFAULT_BACKEND_URL, backendUrlMigration: 'production-v1',
+    } });
+    await chrome.storage.local.remove(RUNTIME_KEY);
   }
   await recoverVerifiedInterviewEntryLock();
   await chrome.alarms.create(ALARM_NAME, { delayInMinutes: 0.1, periodInMinutes: 1 });
@@ -102,6 +109,8 @@ async function handleMessage(message, sender) {
       return { ok: true, status: await getPublicStatus() };
     case 'BRIDGE_PAIR':
       return pair(message.payload);
+    case 'BRIDGE_SAVE_BACKEND_URL':
+      return saveBackendUrl(message.payload?.backendUrl);
     case 'BRIDGE_SET_ENABLED':
       return setEnabled(Boolean(message.enabled));
     case 'BRIDGE_SET_SINGLE_ACCOUNT_AUTO_REPLY':
@@ -1023,6 +1032,19 @@ async function pair(payload) {
   await chrome.storage.local.set({ [SETTINGS_KEY]: settings });
   await setRuntime({ state: 'PAIRED', reason: '已配对，等待 BOSS 沟通页的稳定只读快照。' });
   void runObservationCycle();
+  return { ok: true, status: await getPublicStatus() };
+}
+
+async function saveBackendUrl(rawBackendUrl) {
+  const backendUrl = validateBackendUrl(rawBackendUrl);
+  const settings = await getSettings();
+  const changed = settings.backendUrl !== backendUrl;
+  const next = changed ? { backendUrl, enabled: true } : { ...settings, backendUrl };
+  await chrome.storage.local.set({ [SETTINGS_KEY]: next });
+  await setRuntime({
+    state: changed ? 'UNPAIRED' : 'PAIRED',
+    reason: changed ? '后台地址已保存，请使用该环境的一次性接入码重新配对。' : '后台地址已保存。',
+  });
   return { ok: true, status: await getPublicStatus() };
 }
 

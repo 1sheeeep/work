@@ -42,6 +42,6 @@
       <label class="toggle"><input id="enabled" type="checkbox"><span>开启页面观测</span></label><div class="button-grid"><button id="openConsole" class="secondary">打开招聘值守台</button><button id="forget" class="text-button">解除本机绑定</button></div>
     </div></details>
   </section>
-  <form id="pairForm" hidden><h1>连接招聘值守台</h1><p>在招聘账号页面生成一次性接入码后完成配对。</p><label>后台地址<input id="backendUrl" maxlength="120" value="http://13.215.3.189:8088" placeholder="http://localhost:8088" required></label><label>设备名称<input id="deviceName" maxlength="80" value="HR 电脑" required></label><label>一次性接入码<textarea id="pairingToken" maxlength="200" rows="3" required></textarea></label><button class="primary primary-action" type="submit">完成配对</button></form>
+<form id="pairForm" hidden><h1>连接招聘值守台</h1><p>在招聘账号页面生成一次性接入码后完成配对。</p><label>后台地址<input id="backendUrl" maxlength="120" value="http://13.215.3.189:8088" placeholder="http://13.215.3.189:8088" required></label><label>设备名称<input id="deviceName" maxlength="80" value="HR 电脑" required></label><label>一次性接入码<textarea id="pairingToken" maxlength="200" rows="3" required></textarea></label><div class="button-grid"><button id="saveBackendUrl" class="secondary" type="button">保存后台地址</button><button class="primary primary-action" type="submit">完成配对</button></div></form>
   <div id="message" class="message" hidden></div><footer>版本 <span id="pluginVersion">-</span> · 默认只读，不读取 Cookie 或密码</footer>
 </main><script type="module" src="popup.js"></script></body></html>
