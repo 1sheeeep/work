@@ -76,6 +76,7 @@ public class ExternalResumeAiClient {
                 + "如果没有任何岗位匹配，matchedJobId 必须返回字符串 NONE，但仍然必须完成全部岗位对比分析。"
                 + "如果有一个最匹配岗位，matchedJobId 必须使用岗位列表中的 ID。"
                 + "JSON 顶层必须包含 candidateName、matchedJobId、analysis；analysis 必须包含 recommendation、summary、evidence、gaps、risks、followUpQuestions。"
+                + "recommendation 必须严格使用 PRIORITY_VIEW、NORMAL_VIEW 或 INFORMATION_NEEDED。"
                 + "示例：{\"candidateName\":\"候选人姓名\",\"matchedJobId\":\"NONE\",\"analysis\":{\"recommendation\":\"INFORMATION_NEEDED\",\"summary\":\"总体对比摘要\",\"evidence\":[{\"criterion\":\"岗位：示例岗位\",\"finding\":\"存在或缺少相关经验\",\"status\":\"UNCLEAR\"}],\"gaps\":[],\"risks\":[],\"followUpQuestions\":[\"问题一\",\"问题二\",\"问题三\"]}}"
                 + "只输出一个合法 JSON 对象，不要输出 Markdown、代码围栏或额外说明。");
         messages.addObject().put("role", "user").put("content", input(jobs, resumeText));

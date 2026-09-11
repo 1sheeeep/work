@@ -46,4 +46,22 @@ class ResumeAnalysisResultTest {
 
         assertThat(result.followUpQuestions()).containsExactly("请说明主要职责？", "请说明项目成果？", "何时可以到岗？");
     }
+
+    @Test
+    void normalizesCompatibleRecommendationAliases() {
+        String response = """
+                {
+                  "recommendation":"INTERVIEW_RECOMMENDED",
+                  "summary":"经历与岗位基本匹配。",
+                  "evidence":[{"criterion":"相关经验","finding":"有相关经历。","status":"FOUND"}],
+                  "gaps":[],
+                  "risks":[],
+                  "followUpQuestions":["请说明主要职责？","请说明项目成果？","何时可以到岗？"]
+                }
+                """;
+
+        ResumeAnalysisResult result = ResumeAnalysisResult.parseExternal(response, mapper);
+
+        assertThat(result.recommendation()).isEqualTo("PRIORITY_VIEW");
+    }
 }

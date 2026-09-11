@@ -145,8 +145,18 @@ record ResumeAnalysisResult(
             if (followUpQuestions.size() >= 3) break;
             if (!followUpQuestions.contains(question)) followUpQuestions.add(question);
         }
-        return new ResumeAnalysisResult(trim(value.candidateName()), value.recommendation() == null ? null : value.recommendation().trim().toUpperCase(Locale.ROOT), trim(value.summary()), evidence,
+        return new ResumeAnalysisResult(trim(value.candidateName()), normalizeRecommendation(value.recommendation()), trim(value.summary()), evidence,
                 cleanTextList(value.gaps()), cleanTextList(value.risks()), followUpQuestions);
+    }
+
+    private static String normalizeRecommendation(String value) {
+        if (value == null) return null;
+        return switch (value.trim().toUpperCase(Locale.ROOT)) {
+            case "INTERVIEW_RECOMMENDED", "STRONG_MATCH", "HIGH_MATCH", "RECOMMENDED", "PRIORITY" -> "PRIORITY_VIEW";
+            case "MATCHED", "PARTIAL_MATCH", "NORMAL", "REVIEW" -> "NORMAL_VIEW";
+            case "NEEDS_MORE_INFO", "INSUFFICIENT_INFO", "UNCERTAIN", "UNKNOWN" -> "INFORMATION_NEEDED";
+            default -> value.trim().toUpperCase(Locale.ROOT);
+        };
     }
 
     private static List<String> cleanTextList(List<String> values) {
