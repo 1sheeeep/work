@@ -36,6 +36,7 @@
   let singleAccountBacklogMode = false;
   let singleAccountBacklogSeen = new Map();
   let lastDeepConversationScanAt = 0;
+  const DEEP_SCAN_COOLDOWN_MS = 3_000;
   let jobConfirmationTimer = null;
   let pendingJobConfirmationSignature = '';
   let resumeCaptureStatusBar = null;
@@ -555,10 +556,8 @@
     }
     const matchingItem = [...document.querySelectorAll(SELECTORS.conversation)].filter(visible)
       .find((item) => stableIdentity(item) && item.matches(SELECTORS.selectedConversation));
-    if (matchingItem && await digest(stableIdentity(matchingItem)) === selected.chatDigest && hasUnread(matchingItem)) {
+    if (matchingItem && await digest(stableIdentity(matchingItem)) === selected.chatDigest) {
       singleAccountUnreadBaseline.set(selected.chatDigest, await unreadRowSignature(matchingItem));
-    } else {
-      singleAccountUnreadBaseline.delete(selected.chatDigest);
     }
     singleAccountSelectedMessageBaseline.set(selected.chatDigest, selected.messageDigest);
     await persistSingleAccountBaseline();
@@ -612,7 +611,7 @@
         const queuedCandidate = singleAccountConversationQueue[0];
         if (queuedCandidate) {
           target = await findConversationByDigest(queuedCandidate.chatDigest);
-          if (!target && Date.now() - lastDeepConversationScanAt >= 15_000) {
+          if (!target && Date.now() - lastDeepConversationScanAt >= DEEP_SCAN_COOLDOWN_MS) {
             lastDeepConversationScanAt = Date.now();
             target = await findConversationByDigestDeep(queuedCandidate.chatDigest);
           }
@@ -623,7 +622,7 @@
           if (candidate.error) return void await haltSingleAccountAutoReply(`持续回复已停止：${candidate.error}`);
           target = candidate.item;
         }
-        if (!target && Date.now() - lastDeepConversationScanAt >= 15_000) {
+        if (!target && Date.now() - lastDeepConversationScanAt >= DEEP_SCAN_COOLDOWN_MS) {
           lastDeepConversationScanAt = Date.now();
           const deepCandidate = await findNewOrChangedUnreadConversationDeep();
           target = deepCandidate?.item || null;
