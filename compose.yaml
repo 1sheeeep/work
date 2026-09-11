@@ -126,8 +126,10 @@ services:
       - /config
       - /data
     networks:
-      - default
-      - public-ingress
+      default:
+      public-ingress:
+        aliases:
+          - recruitment-console-web
 
   prometheus:
     image: prom/prometheus:v3.5.0
