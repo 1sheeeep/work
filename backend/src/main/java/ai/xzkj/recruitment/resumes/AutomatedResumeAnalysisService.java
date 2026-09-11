@@ -2,6 +2,9 @@ package ai.xzkj.recruitment.resumes;
 
 import ai.xzkj.recruitment.audit.AuditService;
 import ai.xzkj.recruitment.common.ApiException;
+import ai.xzkj.recruitment.jobs.JobPosition;
+import ai.xzkj.recruitment.jobs.JobPositionRepository;
+import ai.xzkj.recruitment.jobs.JobPositionStatus;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.ObjectMapper;
 
@@ -9,21 +12,24 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.HexFormat;
+import java.util.List;
 
 @Service
 public class AutomatedResumeAnalysisService {
     private final AiAssistanceRunRepository runs;
-    private final OpenAiResumeClient client;
+    private final ExternalResumeAiClient client;
+    private final JobPositionRepository jobs;
     private final OpenAiProperties properties;
     private final ResumeAnalysisRetentionProperties retention;
     private final ObjectMapper mapper;
     private final AuditService audit;
 
-    public AutomatedResumeAnalysisService(AiAssistanceRunRepository runs, OpenAiResumeClient client,
+    public AutomatedResumeAnalysisService(AiAssistanceRunRepository runs, ExternalResumeAiClient client, JobPositionRepository jobs,
                                           OpenAiProperties properties, ResumeAnalysisRetentionProperties retention,
                                           ObjectMapper mapper, AuditService audit) {
         this.runs = runs;
         this.client = client;
+        this.jobs = jobs;
         this.properties = properties;
         this.retention = retention;
         this.mapper = mapper;
@@ -47,9 +53,15 @@ public class AutomatedResumeAnalysisService {
         String inputHash = hash(extractedText);
         intake.analysisStarted();
         try {
-            ResumeAnalysisResult result = client.analyze(intake.getContact().getJobPosition(), extractedText,
+            List<JobPosition> activeJobs = jobs.findAllByStatusOrderByUpdatedAtDesc(JobPositionStatus.ACTIVE).stream()
+                    .filter(job -> job.getCompany().getId().equals(intake.getContact().getCandidate().getCompany().getId()))
+                    .toList();
+            if (activeJobs.isEmpty()) throw new ApiException(org.springframework.http.HttpStatus.CONFLICT, "ACTIVE_JOB_REQUIRED",
+                    "所属企业没有已启用岗位，无法进行简历对比");
+            ExternalResumeAiClient.ExternalResumeMatch match = client.match(activeJobs, extractedText,
                     hash("unattended-company:" + intake.getContact().getCandidate().getCompany().getId()));
-            updateVerifiedCandidateName(intake, result.candidateName(), extractedText);
+            ResumeAnalysisResult result = match.analysis();
+            updateVerifiedCandidateName(intake, match.candidateName(), extractedText);
             runs.save(AiAssistanceRun.unattendedSucceeded(intake, properties.getModel(), inputHash,
                     result.summary(), mapper.writeValueAsString(result), retention.expiresFrom(now)));
             intake.analysisSucceeded(Instant.now());

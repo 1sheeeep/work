@@ -8,7 +8,6 @@ import jakarta.validation.constraints.Size;
 import org.springframework.http.HttpStatus;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.node.ObjectNode;
 
 import java.time.Instant;
 import java.util.List;
@@ -105,21 +104,10 @@ record ResumeAnalysisResult(
         try {
             JsonNode root = mapper.readTree(extractJsonObject(json));
             JsonNode analysis = analysisNode(root, mapper);
-            try {
-                return validate(normalize(mapper.readValue(mapper.writeValueAsString(analysis), ResumeAnalysisResult.class)));
-            } catch (RuntimeException optionalFieldFailure) {
-                // jobComparisons 是增强字段；某些兼容模型会把它返回成错误类型。
-                // 保留核心分析结果，丢弃无法安全解析的增强字段，避免整份简历失败。
-                if (analysis instanceof ObjectNode object && object.has("jobComparisons")) {
-                    object.remove("jobComparisons");
-                    return validate(normalize(mapper.readValue(mapper.writeValueAsString(object), ResumeAnalysisResult.class)));
-                }
-                throw optionalFieldFailure;
-            }
+            return validate(normalize(readLenientAnalysis(analysis)));
         } catch (IllegalArgumentException exception) {
             System.getLogger(ResumeAnalysisResult.class.getName())
-                    .log(System.Logger.Level.WARNING, "简历分析 JSON 校验失败: " + exception.getMessage()
-                            + "\n原始 JSON 前500字符: " + (json != null ? json.substring(0, Math.min(500, json.length())) : "null"));
+                    .log(System.Logger.Level.WARNING, "简历分析 JSON 校验失败: " + exception.getMessage());
             throw new ApiException(HttpStatus.BAD_GATEWAY, "OPENAI_RESPONSE_INVALID",
                     "大模型返回的简历分析格式无效: " + exception.getMessage());
         } catch (RuntimeException exception) {
@@ -127,6 +115,91 @@ record ResumeAnalysisResult(
                     .log(System.Logger.Level.WARNING, "简历分析 JSON 解析异常: " + exception.getMessage());
             throw new ApiException(HttpStatus.BAD_GATEWAY, "OPENAI_RESPONSE_INVALID", "大模型返回的简历分析格式无效，未生成可用结论");
         }
+    }
+
+    /**
+     * Compatible providers may satisfy json_object while returning an optional field with a
+     * wrong type. Read fields independently so one malformed comparison cannot discard a
+     * valid core result or the other job comparisons.
+     */
+    private static ResumeAnalysisResult readLenientAnalysis(JsonNode analysis) {
+        if (analysis == null || !analysis.isObject()) throw new IllegalArgumentException("analysis 不是 JSON 对象");
+        List<ResumeAnalysisEvidence> evidence = new ArrayList<>();
+        JsonNode evidenceNode = analysis.path("evidence");
+        if (evidenceNode.isArray()) for (JsonNode item : evidenceNode) {
+            String criterion = boundedText(text(item.path("criterion")), 160, null);
+            String finding = boundedText(text(item.path("finding")), 600, null);
+            if (meaningful(criterion) && meaningful(finding)) {
+                evidence.add(new ResumeAnalysisEvidence(criterion, finding, normalizeEvidenceStatus(text(item.path("status")))));
+            }
+            if (evidence.size() == 8) break;
+        }
+        List<ResumeJobComparison> comparisons = new ArrayList<>();
+        JsonNode comparisonsNode = analysis.path("jobComparisons");
+        if (comparisonsNode.isArray()) for (JsonNode item : comparisonsNode) {
+            String title = boundedText(text(item.path("jobTitle")), 160, null);
+            if (!meaningful(title)) continue;
+            comparisons.add(new ResumeJobComparison(
+                    boundedText(text(item.path("jobId")), 80, null), title,
+                    boundedText(text(item.path("summary")), 600, "未生成该岗位摘要"),
+                    responsibilityMatches(item.path("responsibilities")), skillMatches(item.path("skillMatches")),
+                    textList(item.path("gaps"), 8, 400), textList(item.path("risks"), 8, 400)));
+            if (comparisons.size() == 20) break;
+        }
+        return new ResumeAnalysisResult(
+                boundedText(text(analysis.path("candidateName")), 100, null),
+                text(analysis.path("recommendation")),
+                boundedText(text(analysis.path("summary")), 1200, "大模型未返回明确摘要，请结合岗位要求和简历原文由 HR 复核。"),
+                evidence, textList(analysis.path("gaps"), 8, 400), textList(analysis.path("risks"), 8, 400),
+                textList(analysis.path("followUpQuestions"), 5, 400), comparisons);
+    }
+
+    private static List<ResumeResponsibilityMatch> responsibilityMatches(JsonNode node) {
+        List<ResumeResponsibilityMatch> matches = new ArrayList<>();
+        if (!node.isArray()) return matches;
+        for (JsonNode item : node) {
+            String responsibility = boundedText(text(item.path("responsibility")), 400, null);
+            if (!meaningful(responsibility)) continue;
+            matches.add(new ResumeResponsibilityMatch(responsibility,
+                    boundedText(text(item.path("resumeEvidence")), 600, "未在简历中找到明确证据"),
+                    safeEvidenceStatus(text(item.path("status")))));
+            if (matches.size() == 12) break;
+        }
+        return matches;
+    }
+
+    private static List<ResumeSkillMatch> skillMatches(JsonNode node) {
+        List<ResumeSkillMatch> matches = new ArrayList<>();
+        if (!node.isArray()) return matches;
+        for (JsonNode item : node) {
+            String skill = boundedText(text(item.path("skill")), 160, null);
+            if (!meaningful(skill)) continue;
+            matches.add(new ResumeSkillMatch(skill,
+                    boundedText(text(item.path("requirement")), 400, "岗位未明确提供该技能要求"),
+                    boundedText(text(item.path("resumeEvidence")), 600, "未在简历中找到明确证据"),
+                    safeEvidenceStatus(text(item.path("status")))));
+            if (matches.size() == 12) break;
+        }
+        return matches;
+    }
+
+    private static List<String> textList(JsonNode node, int maxItems, int maxLength) {
+        List<String> values = new ArrayList<>();
+        if (!node.isArray()) return values;
+        for (JsonNode item : node) {
+            String value = boundedText(text(item), maxLength, null);
+            if (meaningful(value)) values.add(value);
+            if (values.size() == maxItems) break;
+        }
+        return values;
+    }
+
+    private static String text(JsonNode node) { return node == null ? null : node.stringValueOpt().orElse(null); }
+
+    private static String boundedText(String value, int maxLength, String fallback) {
+        if (value == null || value.isBlank()) return fallback;
+        String clean = value.trim();
+        return clean.length() <= maxLength ? clean : clean.substring(0, maxLength);
     }
 
     private static String extractJsonObject(String value) {

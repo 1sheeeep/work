@@ -102,4 +102,33 @@ class ResumeAnalysisResultTest {
         assertThat(result.gaps()).hasSize(8);
         assertThat(result.followUpQuestions()).hasSize(3);
     }
+
+    @Test
+    void preservesValidJobComparisonsWhenAnotherComparisonIsMalformed() {
+        String response = """
+                {"recommendation":"NORMAL_VIEW","summary":"总体对比完成。","evidence":[{"criterion":"岗位：开发","finding":"有 Java 经验。","status":"FOUND"}],"gaps":[],"risks":[],"followUpQuestions":["请说明职责？","请说明成果？","何时到岗？"],"jobComparisons":["错误项",{"jobId":"job-1","jobTitle":"Java 开发","summary":"经验相关。","responsibilities":[{"responsibility":"接口开发","resumeEvidence":"简历写明 Java 项目。","status":"MATCHED"},"错误职责"],"skillMatches":[{"skill":"Java","requirement":"熟悉 Java","resumeEvidence":"列出 Java","status":"FOUND"}],"gaps":[],"risks":[]}]}
+                """;
+
+        ResumeAnalysisResult result = ResumeAnalysisResult.parseExternal(response, mapper);
+
+        assertThat(result.jobComparisons()).singleElement().satisfies(comparison -> {
+            assertThat(comparison.jobTitle()).isEqualTo("Java 开发");
+            assertThat(comparison.responsibilities()).singleElement()
+                    .extracting(ResumeResponsibilityMatch::status).isEqualTo("FOUND");
+        });
+    }
+
+    @Test
+    void repairsWrongOptionalFieldTypesInsteadOfRejectingTheWholeAnalysis() {
+        String response = """
+                {"recommendation":12,"summary":null,"evidence":"wrong-type","gaps":"wrong-type","risks":null,"followUpQuestions":"wrong-type","jobComparisons":{"wrong":true}}
+                """;
+
+        ResumeAnalysisResult result = ResumeAnalysisResult.parseExternal(response, mapper);
+
+        assertThat(result.recommendation()).isEqualTo("INFORMATION_NEEDED");
+        assertThat(result.evidence()).isNotEmpty();
+        assertThat(result.followUpQuestions()).hasSize(3);
+        assertThat(result.jobComparisons()).isEmpty();
+    }
 }

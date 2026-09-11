@@ -5,6 +5,9 @@ import ai.xzkj.recruitment.auth.CurrentUserService;
 import ai.xzkj.recruitment.auth.SystemUser;
 import ai.xzkj.recruitment.auth.UserRole;
 import ai.xzkj.recruitment.common.ApiException;
+import ai.xzkj.recruitment.jobs.JobPosition;
+import ai.xzkj.recruitment.jobs.JobPositionRepository;
+import ai.xzkj.recruitment.jobs.JobPositionStatus;
 import ai.xzkj.recruitment.organization.Company;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -26,6 +29,8 @@ public class ResumeAnalysisService {
     private final ResumeAnalysisFeedbackRepository feedback;
     private final CurrentUserService users;
     private final OpenAiResumeClient client;
+    private final ExternalResumeAiClient externalClient;
+    private final JobPositionRepository jobs;
     private final OpenAiProperties properties;
     private final ResumeAnalysisRetentionProperties retention;
     private final ResumeDocumentTextExtractor documents;
@@ -36,12 +41,14 @@ public class ResumeAnalysisService {
 
     public ResumeAnalysisService(ResumeIntakeRepository intakes, AiAssistanceRunRepository runs, ResumeAnalysisFeedbackRepository feedback,
                                  CurrentUserService users, OpenAiResumeClient client, OpenAiProperties properties, ResumeAnalysisRetentionProperties retention, ResumeDocumentTextExtractor documents, ResumeMalwareScanner malwareScanner, ResumeImageOcrClient imageOcr,
-                                 ObjectMapper mapper, AuditService audit) {
+                                 ObjectMapper mapper, AuditService audit, ExternalResumeAiClient externalClient, JobPositionRepository jobs) {
         this.intakes = intakes;
         this.runs = runs;
         this.feedback = feedback;
         this.users = users;
         this.client = client;
+        this.externalClient = externalClient;
+        this.jobs = jobs;
         this.properties = properties;
         this.retention = retention;
         this.documents = documents;
@@ -64,7 +71,7 @@ public class ResumeAnalysisService {
         ResumeIntake intake = requireApprovedIntake(intakeId, user);
         String storedText = intake.getExtractedText();
         if (storedText != null && !storedText.isBlank()) {
-            return analyzeText(intake, user, cleanResumeText(storedText), "后端已保存的提取文本（未重新提取文件）");
+            return analyzeAcrossActiveJobs(intake, user, cleanResumeText(storedText), "后端已保存的提取文本（未重新提取文件）");
         }
         byte[] content = intake.getSourcePdf();
         if (content == null || content.length < 5) throw new ApiException(HttpStatus.CONFLICT, "RESUME_SOURCE_PDF_NOT_AVAILABLE", "该简历未保存可重新分析的 PDF 文件");
@@ -72,7 +79,7 @@ public class ResumeAnalysisService {
             malwareScanner.scan(content);
             String text = imageOcr.supports(content) ? imageOcr.extract(content).text() : documents.extract(content).text();
             intake.storeExtractedText(text);
-            return analyzeText(intake, user, cleanResumeText(text), "后端已保存的 PDF 文件");
+            return analyzeAcrossActiveJobs(intake, user, cleanResumeText(text), "后端已保存的 PDF 文件");
         } catch (ApiException exception) { throw exception; }
         catch (RuntimeException exception) { throw new ApiException(HttpStatus.BAD_REQUEST, "RESUME_PDF_REEXTRACT_FAILED", "已保存 PDF 无法重新提取文本"); }
     }
@@ -124,6 +131,32 @@ public class ResumeAnalysisService {
             intake.analysisSucceeded(Instant.now());
             audit.success("REQUEST_OPENAI_RESUME_ANALYSIS", "RESUME_INTAKE", intake.getId(), intake.getDisplayLabel(),
                     "HR 已确认外部大模型分析（" + source + "）；仅保存输入摘要和结构化结果，不保存简历原文");
+            return response(run);
+        } catch (ApiException exception) {
+            recordFailure(intake, user, inputHash, exception.getCode());
+            throw exception;
+        } catch (Exception exception) {
+            recordFailure(intake, user, inputHash, "OPENAI_RESULT_PERSIST_FAILED");
+            throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "RESUME_ANALYSIS_SAVE_FAILED", "简历分析结果保存失败，未生成可用结论");
+        }
+    }
+
+    private ResumeAnalysisResponse analyzeAcrossActiveJobs(ResumeIntake intake, SystemUser user, String resumeText, String source) {
+        List<JobPosition> accessibleJobs = jobs.findAllByStatusOrderByUpdatedAtDesc(JobPositionStatus.ACTIVE).stream()
+                .filter(job -> user.getRole() == UserRole.SYSTEM_ADMIN || user.getCompanyScopes().stream()
+                        .map(Company::getId).anyMatch(job.getCompany().getId()::equals))
+                .toList();
+        if (accessibleJobs.isEmpty()) throw new ApiException(HttpStatus.CONFLICT, "ACTIVE_JOB_REQUIRED", "当前权限范围内没有已启用岗位，无法重新分析");
+        String inputHash = hash(resumeText);
+        intake.analysisStarted();
+        try {
+            ResumeAnalysisResult result = externalClient.match(accessibleJobs, resumeText, actorHash(user)).analysis();
+            AiAssistanceRun run = runs.save(AiAssistanceRun.succeeded(
+                    intake, user, properties.getModel(), inputHash, result.summary(), mapper.writeValueAsString(result), retention.expiresFrom(Instant.now())
+            ));
+            intake.analysisSucceeded(Instant.now());
+            audit.success("REQUEST_OPENAI_RESUME_ANALYSIS", "RESUME_INTAKE", intake.getId(), intake.getDisplayLabel(),
+                    "HR 请求跨岗位重新分析（" + source + "）；仅保存输入摘要和结构化结果，不保存简历原文");
             return response(run);
         } catch (ApiException exception) {
             recordFailure(intake, user, inputHash, exception.getCode());
