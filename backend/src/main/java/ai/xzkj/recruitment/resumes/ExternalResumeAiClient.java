@@ -67,7 +67,7 @@ public class ExternalResumeAiClient {
     private ObjectNode payload(List<JobPosition> jobs, String resumeText) {
         ObjectNode payload = mapper.createObjectNode();
         payload.put("model", properties.getModel());
-        payload.put("max_tokens", 1600);
+        payload.put("max_tokens", 3000);
         if (properties.isDeepSeekEndpoint()) payload.putObject("thinking").put("type", "disabled");
         ArrayNode messages = payload.putArray("messages");
         messages.addObject().put("role", "system").put("content", "你是公司内部简历辅助阅读工具。从简历识别姓名，并对比给定的全部真实岗位。"
@@ -75,6 +75,8 @@ public class ExternalResumeAiClient {
                 + "不给出录用或淘汰结论。必须逐个覆盖全部岗位，每个岗位至少写一条 analysis.evidence；把岗位名称写入 evidence.criterion，并在 finding 中说明匹配点或不匹配点。"
                 + "如果没有任何岗位匹配，matchedJobId 必须返回字符串 NONE，但仍然必须完成全部岗位对比分析。"
                 + "如果有一个最匹配岗位，matchedJobId 必须使用岗位列表中的 ID。"
+                + "JSON 顶层必须包含 candidateName、matchedJobId、analysis；analysis 必须包含 recommendation、summary、evidence、gaps、risks、followUpQuestions。"
+                + "示例：{\"candidateName\":\"候选人姓名\",\"matchedJobId\":\"NONE\",\"analysis\":{\"recommendation\":\"INFORMATION_NEEDED\",\"summary\":\"总体对比摘要\",\"evidence\":[{\"criterion\":\"岗位：示例岗位\",\"finding\":\"存在或缺少相关经验\",\"status\":\"UNCLEAR\"}],\"gaps\":[],\"risks\":[],\"followUpQuestions\":[\"问题一\",\"问题二\",\"问题三\"]}}"
                 + "只输出一个合法 JSON 对象，不要输出 Markdown、代码围栏或额外说明。");
         messages.addObject().put("role", "user").put("content", input(jobs, resumeText));
         payload.set("response_format", responseFormat(jobs));
@@ -133,7 +135,23 @@ public class ExternalResumeAiClient {
     private String limit(String value, int max) { return value.length() <= max ? value : value.substring(0, max); }
     private URI responseUri() { return URI.create(properties.getBaseUrl().replaceAll("/+$", "") + "/chat/completions"); }
     private ApiException responseError(int status) { return new ApiException(HttpStatus.BAD_GATEWAY, status == 429 ? "OPENAI_LIMIT_REACHED" : "OPENAI_REQUEST_FAILED", status == 429 ? "AI 服务受到额度或速率限制" : "AI 岗位匹配请求未完成"); }
-    private String outputText(JsonNode response) { String value=response.path("choices").path(0).path("message").path("content").stringValueOpt().orElse(null); if(value==null||value.isBlank()) throw new ApiException(HttpStatus.BAD_GATEWAY,"OPENAI_OUTPUT_MISSING","AI 服务未返回可解析结果"); return value; }
+    private String outputText(JsonNode response) {
+        JsonNode choice = response.path("choices").path(0);
+        String finishReason = choice.path("finish_reason").stringValueOpt().orElse("");
+        if ("length".equalsIgnoreCase(finishReason)) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "OPENAI_OUTPUT_TRUNCATED", "AI 输出超过长度限制，请稍后重试");
+        }
+        JsonNode content = choice.path("message").path("content");
+        String value = content.stringValueOpt().orElse(null);
+        if (value != null && !value.isBlank()) return value;
+        StringBuilder combined = new StringBuilder();
+        if (content.isArray()) for (JsonNode part : content) {
+            String text = part.path("text").stringValueOpt().orElse(null);
+            if (text != null && !text.isBlank()) combined.append(text);
+        }
+        if (!combined.isEmpty()) return combined.toString();
+        throw new ApiException(HttpStatus.BAD_GATEWAY, "OPENAI_OUTPUT_MISSING", "AI 服务未返回可解析结果");
+    }
     private UUID parseMatchedJobId(String value) {
         if (value == null || value.isBlank() || "NONE".equalsIgnoreCase(value.trim())) return null;
         try { return UUID.fromString(value.trim()); }

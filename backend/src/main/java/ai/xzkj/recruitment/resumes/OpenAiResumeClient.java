@@ -102,7 +102,7 @@ public class OpenAiResumeClient {
     ObjectNode createPayload(JobPosition job, String resumeText, String safetyIdentifier) {
         ObjectNode payload = mapper.createObjectNode();
         payload.put("model", properties.getModel());
-        payload.put("max_tokens", 1200);
+        payload.put("max_tokens", 2000);
         if (properties.isDeepSeekEndpoint()) payload.putObject("thinking").put("type", "disabled");
         ArrayNode messages = payload.putArray("messages");
         messages.addObject().put("role", "system").put("content", "你是公司内部的简历辅助阅读工具。仅根据岗位资料和简历中可见事实给出中文结构化建议。"
@@ -243,6 +243,10 @@ public class OpenAiResumeClient {
     }
 
     private String outputText(JsonNode response) {
+        String finishReason = response.path("choices").path(0).path("finish_reason").stringValueOpt().orElse("");
+        if ("length".equalsIgnoreCase(finishReason)) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "OPENAI_OUTPUT_TRUNCATED", "AI 输出超过长度限制，请稍后重试");
+        }
         JsonNode content = response.path("choices").path(0).path("message").path("content");
         String textValue = content.stringValueOpt().orElse(null);
         if (textValue != null && !textValue.isBlank()) return textValue;
