@@ -347,27 +347,42 @@
 
   async function collectUnreadBaseline() {
     const baseline = new Map();
-    const items = [...document.querySelectorAll(SELECTORS.conversation)]
-      .filter((item) => visible(item) && item.querySelector(SELECTORS.unread));
-    for (const item of items) {
-      const identity = stableIdentity(item);
-      if (!identity) continue;
-      const chatDigest = await digest(identity);
+    const items = await collectUnreadItemsAcrossPages(500);
+    for (const { item, chatDigest } of items) {
       baseline.set(chatDigest, await unreadRowSignature(item));
     }
     return baseline;
   }
 
+  async function collectUnreadItemsAcrossPages(limit = 500) {
+    const found = new Map();
+    const add = async (item) => {
+      if (found.size >= limit || !visible(item) || !hasUnread(item)) return;
+      const identity = stableIdentity(item);
+      if (!identity) return;
+      const chatDigest = await digest(identity);
+      if (!found.has(chatDigest)) found.set(chatDigest, { item, chatDigest });
+    };
+    for (const item of [...document.querySelectorAll(SELECTORS.conversation)]) await add(item);
+    if (found.size < limit) {
+      await scanConversationPages(async (item) => {
+        await add(item);
+        return null;
+      });
+    }
+    return [...found.values()];
+  }
+
   async function unreadRowSignature(item) {
     const preview = textOf(item, SELECTORS.preview);
-    const unreadNode = item.querySelector(SELECTORS.unread);
+    const unreadNode = findUnreadNode(item);
     const unreadCount = unreadNode ? Math.max(1, Number(String(unreadNode.textContent || '').match(/\d+/)?.[0]) || 1) : 0;
     return digest(`${preview}|${unreadCount}`);
   }
 
   async function findNewOrChangedUnreadConversation() {
     const items = [...document.querySelectorAll(SELECTORS.conversation)]
-      .filter((item) => visible(item) && item.querySelector(SELECTORS.unread));
+      .filter((item) => visible(item) && hasUnread(item));
     for (const item of items) {
       const identity = stableIdentity(item);
       if (!identity) return { error: '未读会话没有稳定 DOM 身份，禁止猜测目标。' };
@@ -383,13 +398,9 @@
   async function refillSingleAccountConversationQueue() {
     if (singleAccountConversationQueue.length >= SINGLE_ACCOUNT_PREFETCH_LIMIT) return;
     const queued = new Set(singleAccountConversationQueue.map((item) => item.chatDigest));
-    const items = [...document.querySelectorAll(SELECTORS.conversation)]
-      .filter((item) => visible(item) && item.querySelector(SELECTORS.unread));
-    for (const item of items) {
+    const items = await collectUnreadItemsAcrossPages(SINGLE_ACCOUNT_PREFETCH_LIMIT * 2);
+    for (const { item, chatDigest } of items) {
       if (singleAccountConversationQueue.length >= SINGLE_ACCOUNT_PREFETCH_LIMIT) break;
-      const identity = stableIdentity(item);
-      if (!identity) continue;
-      const chatDigest = await digest(identity);
       if (queued.has(chatDigest)) continue;
       const signature = await unreadRowSignature(item);
       const known = singleAccountUnreadBaseline.get(chatDigest);
@@ -474,7 +485,7 @@
 
   async function findNewOrChangedUnreadConversationDeep() {
     return scanConversationPages(async (item) => {
-      if (!item.querySelector(SELECTORS.unread)) return null;
+      if (!hasUnread(item)) return null;
       const identity = stableIdentity(item);
       if (!identity) return null;
       const chatDigest = await digest(identity);
@@ -536,7 +547,7 @@
     }
     const matchingItem = [...document.querySelectorAll(SELECTORS.conversation)].filter(visible)
       .find((item) => stableIdentity(item) && item.matches(SELECTORS.selectedConversation));
-    if (matchingItem && await digest(stableIdentity(matchingItem)) === selected.chatDigest && matchingItem.querySelector(SELECTORS.unread)) {
+    if (matchingItem && await digest(stableIdentity(matchingItem)) === selected.chatDigest && hasUnread(matchingItem)) {
       singleAccountUnreadBaseline.set(selected.chatDigest, await unreadRowSignature(matchingItem));
     } else {
       singleAccountUnreadBaseline.delete(selected.chatDigest);
@@ -700,7 +711,7 @@
             taskId: replyResult.taskId, chatDigest: second.chatDigest, messageDigest: second.messageDigest, nextPollAt: Date.now() + 500,
           });
           const selectedRow = [...document.querySelectorAll(SELECTORS.selectedConversation)].find(visible);
-          if (selectedRow?.querySelector(SELECTORS.unread)) singleAccountUnreadBaseline.set(second.chatDigest, await unreadRowSignature(selectedRow));
+          if (selectedRow && hasUnread(selectedRow)) singleAccountUnreadBaseline.set(second.chatDigest, await unreadRowSignature(selectedRow));
           singleAccountSelectedMessageBaseline.set(second.chatDigest, second.messageDigest);
           await persistSingleAccountBaseline();
           singleAccountPendingChatDigest = null;
@@ -2074,6 +2085,19 @@
   }
 
   function compact(value) { return String(value || '').replace(/\s+/g, ' ').trim(); }
+  const UNREAD_INDICATOR_SELECTORS = [
+    '.badge-count', '[class*="badge-count"]', '[class*="unread"]',
+    '[class*="new-msg"]', '[class*="red-point"]', '[aria-label*="未读"]', '[title*="未读"]',
+  ];
+  function findUnreadNode(item) {
+    if (item.matches('[data-unread="true"], [aria-label*="未读"], [title*="未读"]')) return item;
+    for (const selector of UNREAD_INDICATOR_SELECTORS) {
+      const node = item.querySelector(selector);
+      if (node && visible(node)) return node;
+    }
+    return null;
+  }
+  function hasUnread(item) { return Boolean(findUnreadNode(item)); }
   function cleanMultiline(value) { return String(value || '').replace(/\r\n?/g, '\n').replace(/[ \t]+\n/g, '\n').trim(); }
   function matchText(value, pattern) { return compact(value.match(pattern)?.[0]); }
   function parseSalary(value) {
@@ -2093,7 +2117,7 @@
       const preview = textOf(item, SELECTORS.preview);
       const job = textOf(item, SELECTORS.job);
       const time = textOf(item, SELECTORS.time);
-      const unreadNode = item.querySelector(SELECTORS.unread);
+      const unreadNode = findUnreadNode(item);
       const unreadCount = unreadNode ? Math.max(1, Number(String(unreadNode.textContent || '').match(/\d+/)?.[0]) || 1) : 0;
       entries.push({
         chatDigest: await digest(identity), previewDigest: preview ? await digest(preview) : null,
@@ -2125,7 +2149,7 @@
     const chatDigest = await digest(identity);
     const mediaShape = [...last.querySelectorAll('img, video, audio, svg')].map((node) => node.tagName.toLowerCase()).join(',') || 'non-text';
     const messageDigest = await digest(stableIdentity(last) || `derived:${direction}:${messageAt}:${content || mediaShape}`);
-    const selectedUnread = Boolean(selected.querySelector(SELECTORS.unread));
+    const selectedUnread = hasUnread(selected);
     const conversationSignals = collectConversationSignals();
     const signalSignature = Object.values(conversationSignals).map((value) => value ? '1' : '0').join('');
     const messageText = direction === 'INBOUND' && content ? compact(content).slice(0, 1000) : null;
