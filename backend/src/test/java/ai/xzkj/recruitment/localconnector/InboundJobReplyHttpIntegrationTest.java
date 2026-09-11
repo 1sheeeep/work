@@ -17,6 +17,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -250,6 +251,35 @@ class InboundJobReplyHttpIntegrationTest {
                 () -> service(Duration.ofSeconds(2)).decide(job(), "工作地点在哪里？"));
 
         assertEquals("INBOUND_REPLY_AI_INVALID", error.getCode());
+    }
+
+    @Test
+    void retriesWhenACompatibleModelOmitsRequiredBooleanThenUsesTheCompleteResult() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        start(exchange -> respond(exchange, 200, completion(calls.incrementAndGet() == 1
+                ? """
+                  {"primaryIntent":"SALARY","secondaryIntents":[],"confidence":0.96,"action":"REPLY","riskLevel":"LOW","reply":"您好，招聘页面标注薪资为 8-13K。","evidenceKeys":["SALARY"]}
+                  """
+                : """
+                  {"primaryIntent":"SALARY","secondaryIntents":[],"relevant":true,"confidence":0.96,"action":"REPLY","riskLevel":"LOW","reply":"您好，招聘页面标注薪资为 8-13K。","evidenceKeys":["SALARY"]}
+                  """)));
+
+        InboundJobReplyService.Decision result = service(Duration.ofSeconds(2)).decide(job(), "请问薪资是多少？");
+
+        assertTrue(result.replyAllowed());
+        assertEquals(2, calls.get());
+    }
+
+    @Test
+    void failsClosedWhenACompatibleModelKeepsOmittingRequiredBoolean() throws Exception {
+        start(exchange -> respond(exchange, 200, completion("""
+                {"primaryIntent":"SALARY","secondaryIntents":[],"confidence":0.96,"action":"REPLY","riskLevel":"LOW","reply":"您好，招聘页面标注薪资为 8-13K。","evidenceKeys":["SALARY"]}
+                """)));
+
+        InboundJobReplyService.Decision result = service(Duration.ofSeconds(2)).decide(job(), "请问薪资是多少？");
+
+        assertFalse(result.replyAllowed());
+        assertTrue(result.reason().contains("无法可靠判断"));
     }
 
     @Test

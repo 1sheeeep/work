@@ -204,9 +204,18 @@ class InboundJobReplyService {
                         + "候选人最后一条消息：" + message + "\nALLOWED_FACTS：\n" + renderFacts(availableFacts));
         payload.set("response_format", combinedResponseFormat());
         JsonNode node = callModel(payload, "消息理解与岗位回复生成");
+        if (!hasCompleteCombinedResult(node)) {
+            // json_object 只能保证 JSON 合法，兼容模型仍可能漏掉必填字段。
+            // 第二次关闭思考并重申最小契约；若仍不完整，后续按安全默认值转人工。
+            if (properties.isDeepSeekEndpoint()) payload.putObject("thinking").put("type", "disabled");
+            else payload.put("enable_thinking", false);
+            messages.addObject().put("role", "user").put("content",
+                    "格式修复重试：只输出一个 JSON 对象，且必须包含 primaryIntent、secondaryIntents、relevant（布尔值）、confidence（0 到 1 的数字）、action、riskLevel、reply、evidenceKeys。字段不能省略；无法判断时 relevant=false、confidence=0、action=HANDOFF_TO_HR、reply=空字符串、evidenceKeys=[]。");
+            node = callModel(payload, "消息理解与岗位回复生成格式修复");
+        }
         String category = node.path("primaryIntent").stringValueOpt().orElse("UNCERTAIN").toUpperCase(Locale.ROOT);
-        boolean relevant = node.path("relevant").booleanValue();
-        double confidence = node.path("confidence").doubleValue();
+        boolean relevant = booleanOrFalse(node.path("relevant"));
+        double confidence = confidenceOrZero(node.path("confidence"));
         if (!allowedCategory(category) || confidence < 0 || confidence > 1) {
             category = "UNCERTAIN";
             relevant = false;
@@ -346,8 +355,8 @@ class InboundJobReplyService {
         payload.set("response_format", classificationResponseFormat());
         JsonNode result = callModel(payload, "消息相关性识别");
         String category = result.path("category").stringValueOpt().orElse("UNCERTAIN").toUpperCase(Locale.ROOT);
-        boolean relevant = result.path("relevant").booleanValue();
-        double confidence = result.path("confidence").doubleValue();
+        boolean relevant = booleanOrFalse(result.path("relevant"));
+        double confidence = confidenceOrZero(result.path("confidence"));
         if (!allowedCategory(category) || confidence < 0 || confidence > 1) return new Topic("UNCERTAIN", List.of(), false, 0, "HANDOFF_TO_HR", "HIGH");
         if (Set.of("TRUE_OFF_TOPIC", "UNRELATED", "SENSITIVE", "UNCERTAIN").contains(category)) relevant = false;
         else if (isSocialIntent(category)) relevant = true;
@@ -439,6 +448,28 @@ class InboundJobReplyService {
         jsonSchema.put("strict", true);
         jsonSchema.set("schema", schema);
         return format;
+    }
+
+    private static boolean hasCompleteCombinedResult(JsonNode node) {
+        return node != null && node.isObject()
+                && node.path("primaryIntent").stringValueOpt().isPresent()
+                && node.path("relevant").isBoolean()
+                && node.path("confidence").isNumber()
+                && node.path("action").stringValueOpt().isPresent()
+                && node.path("riskLevel").stringValueOpt().isPresent()
+                && node.path("reply").stringValueOpt().isPresent()
+                && node.path("secondaryIntents").isArray()
+                && node.path("evidenceKeys").isArray();
+    }
+
+    private static boolean booleanOrFalse(JsonNode node) {
+        return node != null && node.isBoolean() && node.booleanValue();
+    }
+
+    private static double confidenceOrZero(JsonNode node) {
+        if (node == null || !node.isNumber()) return 0;
+        double value = node.doubleValue();
+        return Double.isFinite(value) && value >= 0 && value <= 1 ? value : 0;
     }
 
     private Map<String, String> selectFacts(JobPosition job, List<String> intents) {
