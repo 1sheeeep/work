@@ -24,10 +24,13 @@ const navigationGroups = computed(() => [
   ] },
 ])
 const systemItems = computed(() => user.value?.role === 'SYSTEM_ADMIN'
-  ? [{ path: '/system-logs', label: '项目运行日志', icon: DataAnalysis }]
+  ? [
+      { path: '/hr-users', label: 'HR 用户管理', icon: UserFilled },
+      { path: '/system-logs', label: '项目运行日志', icon: DataAnalysis },
+    ]
   : [])
 const roleLabel = computed(() => ({ SYSTEM_ADMIN: '系统管理员', RECRUITMENT_ADMIN: '招聘管理员', RECRUITER: '招聘专员' }[user.value?.role ?? 'SYSTEM_ADMIN']))
-const workspaceLabel = computed(() => ({ dashboard: '今日总览', 'boss-accounts': '招聘账号', 'job-positions': '岗位资料', 'resume-intakes': '简历分析', 'system-logs': '项目运行日志' }[String(route.name)] ?? '招聘值守台'))
+const workspaceLabel = computed(() => ({ dashboard: '今日总览', 'boss-accounts': '招聘账号', 'job-positions': '岗位资料', 'resume-intakes': '简历分析', 'hr-users': 'HR 用户管理', 'system-logs': '项目运行日志' }[String(route.name)] ?? '招聘值守台'))
 
 const transitionName = ref('fade-slide')
 watch(() => route.path, (_to, from) => {
