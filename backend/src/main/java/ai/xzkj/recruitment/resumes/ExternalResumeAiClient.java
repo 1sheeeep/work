@@ -77,6 +77,7 @@ public class ExternalResumeAiClient {
                 + "如果有一个最匹配岗位，matchedJobId 必须使用岗位列表中的 ID。"
                 + "JSON 顶层必须包含 candidateName、matchedJobId、analysis；analysis 必须包含 recommendation、summary、evidence、gaps、risks、followUpQuestions。"
                 + "analysis.jobComparisons 用于逐岗位详细对比；对输入的每个岗位最多输出一条，必须使用原始岗位 ID 和名称，并逐项比较岗位职责与简历证据。"
+                + "每个岗位必须单独输出 skillMatches：只列出岗位要求中与简历明确技能相对应的项目，也可列出未发现或待确认的技能；skill、requirement、resumeEvidence 必须分别写清楚，不能把整段岗位描述当作技能。"
                 + "jobComparisons 不是录用结论；没有证据时使用 UNCLEAR 或 NOT_FOUND，不得猜测。"
                 + "recommendation 必须严格使用 PRIORITY_VIEW、NORMAL_VIEW 或 INFORMATION_NEEDED。"
                 + "analysis.evidence[].status 必须严格使用 FOUND、NOT_FOUND 或 UNCLEAR，不要使用 MISS、MATCHED、UNKNOWN 等别名。"
@@ -133,7 +134,7 @@ public class ExternalResumeAiClient {
         ObjectNode comparisons = p.putObject("jobComparisons");
         comparisons.put("type", "array"); comparisons.put("maxItems", 20);
         ObjectNode comparison = comparisons.putObject("items"); comparison.put("type", "object"); comparison.put("additionalProperties", false);
-        comparison.putArray("required").add("jobId").add("jobTitle").add("summary").add("responsibilities").add("gaps").add("risks");
+        comparison.putArray("required").add("jobId").add("jobTitle").add("summary").add("responsibilities").add("skillMatches").add("gaps").add("risks");
         ObjectNode cp = comparison.putObject("properties");
         string(cp.putObject("jobId"), 1, 80); string(cp.putObject("jobTitle"), 1, 160); string(cp.putObject("summary"), 1, 600);
         ObjectNode responsibilities = cp.putObject("responsibilities"); responsibilities.put("type", "array"); responsibilities.put("minItems", 1); responsibilities.put("maxItems", 12);
@@ -141,6 +142,11 @@ public class ExternalResumeAiClient {
         responsibility.putArray("required").add("responsibility").add("resumeEvidence").add("status");
         ObjectNode rp = responsibility.putObject("properties"); string(rp.putObject("responsibility"), 1, 400); string(rp.putObject("resumeEvidence"), 1, 600);
         rp.putObject("status").put("type", "string").putArray("enum").add("FOUND").add("NOT_FOUND").add("UNCLEAR");
+        ObjectNode skills = cp.putObject("skillMatches"); skills.put("type", "array"); skills.put("minItems", 0); skills.put("maxItems", 12);
+        ObjectNode skill = skills.putObject("items"); skill.put("type", "object"); skill.put("additionalProperties", false);
+        skill.putArray("required").add("skill").add("requirement").add("resumeEvidence").add("status");
+        ObjectNode sp = skill.putObject("properties"); string(sp.putObject("skill"), 1, 160); string(sp.putObject("requirement"), 1, 400); string(sp.putObject("resumeEvidence"), 1, 600);
+        sp.putObject("status").put("type", "string").putArray("enum").add("FOUND").add("NOT_FOUND").add("UNCLEAR");
         array(cp, "gaps", 0, 8); array(cp, "risks", 0, 8);
         return schema;
     }

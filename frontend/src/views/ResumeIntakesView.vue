@@ -636,6 +636,15 @@ function showAnalysisHelp() {
                       <el-tag size="small" :type="item.status === 'FOUND' ? 'success' : item.status === 'NOT_FOUND' ? 'danger' : 'info'">{{ item.status === 'FOUND' ? '符合' : item.status === 'NOT_FOUND' ? '未发现' : '待确认' }}</el-tag>
                     </li>
                   </ul>
+                  <div v-if="comparison.skillMatches.length" class="skill-match-block">
+                    <h4>技能匹配</h4>
+                    <ul class="responsibility-list skill-match-list">
+                      <li v-for="(item, itemIndex) in comparison.skillMatches" :key="`${item.skill}-${itemIndex}`">
+                        <div><strong>{{ item.skill }}</strong><p>岗位要求：{{ item.requirement }}</p><p>简历依据：{{ item.resumeEvidence }}</p></div>
+                        <el-tag size="small" :type="item.status === 'FOUND' ? 'success' : item.status === 'NOT_FOUND' ? 'danger' : 'info'">{{ item.status === 'FOUND' ? '匹配' : item.status === 'NOT_FOUND' ? '未发现' : '待确认' }}</el-tag>
+                      </li>
+                    </ul>
+                  </div>
                   <div v-if="comparison.gaps.length || comparison.risks.length" class="comparison-flags">
                     <span v-for="gap in comparison.gaps" :key="`comparison-gap-${gap}`" class="flag flag--warning">差距 · {{ gap }}</span>
                     <span v-for="risk in comparison.risks" :key="`comparison-risk-${risk}`" class="flag flag--danger">风险 · {{ risk }}</span>
@@ -917,6 +926,9 @@ function showAnalysisHelp() {
 .responsibility-list strong { font-size:12px; }
 .responsibility-list p { margin:4px 0 0; color:var(--text-secondary); font-size:12px; line-height:1.5; overflow-wrap:anywhere; }
 .responsibility-list .el-tag { flex:none; margin-top:1px; }
+.skill-match-block { margin:0 16px 8px 44px; padding-top:10px; border-top:1px solid var(--border); }
+.skill-match-block h4 { margin:0 0 2px; color:var(--text); font-size:12px; }
+.skill-match-list { padding:0; }
 .comparison-flags { display:flex; flex-wrap:wrap; gap:6px; padding:2px 16px 14px 44px; }
 .summary-flags { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 13px; }
 .flag { display: inline-flex; max-width: 100%; padding: 4px 8px; border-radius: 6px; font-size: 11px; overflow-wrap: anywhere; line-height:1.45; }

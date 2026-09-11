@@ -56,7 +56,8 @@ export interface ResumeIntake {id:string;contactId:string;candidateName:string;j
 export type ResumeAnalysisRecommendation='PRIORITY_VIEW'|'NORMAL_VIEW'|'INFORMATION_NEEDED'
 export interface ResumeAnalysisEvidence {criterion:string;finding:string;status:'FOUND'|'NOT_FOUND'|'UNCLEAR'}
 export interface ResumeResponsibilityMatch {responsibility:string;resumeEvidence:string;status:'FOUND'|'NOT_FOUND'|'UNCLEAR'}
-export interface ResumeJobComparison {jobId?:string;jobTitle:string;summary:string;responsibilities:ResumeResponsibilityMatch[];gaps:string[];risks:string[]}
+export interface ResumeSkillMatch {skill:string;requirement:string;resumeEvidence:string;status:'FOUND'|'NOT_FOUND'|'UNCLEAR'}
+export interface ResumeJobComparison {jobId?:string;jobTitle:string;summary:string;responsibilities:ResumeResponsibilityMatch[];skillMatches:ResumeSkillMatch[];gaps:string[];risks:string[]}
 export interface ResumeAnalysisResult {recommendation:ResumeAnalysisRecommendation;summary:string;evidence:ResumeAnalysisEvidence[];gaps:string[];risks:string[];followUpQuestions:string[];jobComparisons?:ResumeJobComparison[]}
 export type ResumeAnalysisFeedbackType='ADOPTED'|'AMENDED'|'NOT_USED'
 export interface ResumeAnalysisFeedback {id:string;feedbackType:ResumeAnalysisFeedbackType;note:string;createdBy:string;createdAt:string}

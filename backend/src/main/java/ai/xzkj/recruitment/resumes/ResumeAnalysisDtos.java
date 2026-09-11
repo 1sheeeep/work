@@ -158,7 +158,10 @@ record ResumeAnalysisResult(
                         item.responsibilities() == null ? new ArrayList<>() : item.responsibilities().stream()
                                 .filter(detail -> detail != null && meaningful(detail.responsibility()))
                                 .map(detail -> new ResumeResponsibilityMatch(detail.responsibility().trim(), detail.resumeEvidence() == null || detail.resumeEvidence().isBlank() ? "未在简历中找到明确证据" : detail.resumeEvidence().trim(), safeEvidenceStatus(detail.status())))
-                                .toList(), cleanTextList(item.gaps()), cleanTextList(item.risks())))
+                                .toList(), item.skillMatches() == null ? new ArrayList<>() : item.skillMatches().stream()
+                                .filter(skill -> skill != null && meaningful(skill.skill()))
+                                .map(skill -> new ResumeSkillMatch(skill.skill().trim(), skill.requirement() == null || skill.requirement().isBlank() ? "岗位未明确提供该技能要求" : skill.requirement().trim(), skill.resumeEvidence() == null || skill.resumeEvidence().isBlank() ? "未在简历中找到明确证据" : skill.resumeEvidence().trim(), safeEvidenceStatus(skill.status())))
+                                .limit(12).toList(), cleanTextList(item.gaps()), cleanTextList(item.risks())))
                 .limit(20)
                 .toList();
         return new ResumeAnalysisResult(trim(value.candidateName()), normalizeRecommendation(value.recommendation()), trim(value.summary()), evidence,
@@ -254,8 +257,11 @@ record ResumeJobComparison(
         String jobTitle,
         String summary,
         List<ResumeResponsibilityMatch> responsibilities,
+        List<ResumeSkillMatch> skillMatches,
         List<String> gaps,
         List<String> risks
 ) {}
 
 record ResumeResponsibilityMatch(String responsibility, String resumeEvidence, String status) {}
+
+record ResumeSkillMatch(String skill, String requirement, String resumeEvidence, String status) {}
