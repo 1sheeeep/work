@@ -87,4 +87,19 @@ class ResumeAnalysisResultTest {
         assertThat(result.evidence()).extracting(ResumeAnalysisEvidence::status)
                 .containsExactly("NOT_FOUND", "FOUND", "UNCLEAR");
     }
+
+    @Test
+    void acceptsStringifiedNestedAnalysisAndRepairsMissingOptionalFields() {
+        String response = """
+                {"result":{"analysis":{"recommendation":"UNKNOWN_PROVIDER_VALUE","summary":"","evidence":[],"gaps":["a","b","c","d","e","f","g","h","ignored"],"risks":[],"followUpQuestions":[]}}}
+                """;
+
+        ResumeAnalysisResult result = ResumeAnalysisResult.parseExternal(response, mapper);
+
+        assertThat(result.recommendation()).isEqualTo("INFORMATION_NEEDED");
+        assertThat(result.summary()).contains("未返回明确摘要");
+        assertThat(result.evidence()).singleElement().extracting(ResumeAnalysisEvidence::status).isEqualTo("UNCLEAR");
+        assertThat(result.gaps()).hasSize(8);
+        assertThat(result.followUpQuestions()).hasSize(3);
+    }
 }

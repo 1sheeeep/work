@@ -6,7 +6,9 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import org.springframework.http.HttpStatus;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.time.Instant;
 import java.util.List;
@@ -101,7 +103,19 @@ record ResumeAnalysisResult(
 
     static ResumeAnalysisResult parseExternal(String json, ObjectMapper mapper) {
         try {
-            return validate(normalize(mapper.readValue(extractJsonObject(json), ResumeAnalysisResult.class)));
+            JsonNode root = mapper.readTree(extractJsonObject(json));
+            JsonNode analysis = analysisNode(root, mapper);
+            try {
+                return validate(normalize(mapper.readValue(mapper.writeValueAsString(analysis), ResumeAnalysisResult.class)));
+            } catch (RuntimeException optionalFieldFailure) {
+                // jobComparisons 是增强字段；某些兼容模型会把它返回成错误类型。
+                // 保留核心分析结果，丢弃无法安全解析的增强字段，避免整份简历失败。
+                if (analysis instanceof ObjectNode object && object.has("jobComparisons")) {
+                    object.remove("jobComparisons");
+                    return validate(normalize(mapper.readValue(mapper.writeValueAsString(object), ResumeAnalysisResult.class)));
+                }
+                throw optionalFieldFailure;
+            }
         } catch (IllegalArgumentException exception) {
             System.getLogger(ResumeAnalysisResult.class.getName())
                     .log(System.Logger.Level.WARNING, "简历分析 JSON 校验失败: " + exception.getMessage()
@@ -117,7 +131,7 @@ record ResumeAnalysisResult(
 
     private static String extractJsonObject(String value) {
         if (value == null) throw new IllegalArgumentException("Missing JSON response");
-        String clean = value.trim();
+        String clean = value.replaceAll("(?s)<think>.*?</think>", "").trim();
         if (clean.startsWith("```")) {
             int firstLineEnd = clean.indexOf('\n');
             int closingFence = clean.lastIndexOf("```");
@@ -131,6 +145,26 @@ record ResumeAnalysisResult(
         return clean.substring(start, end + 1);
     }
 
+    private static JsonNode analysisNode(JsonNode root, ObjectMapper mapper) {
+        JsonNode node = root;
+        for (int i = 0; i < 3; i++) {
+            if (node == null || node.isNull()) break;
+            JsonNode nested = node.path("analysis");
+            if (!nested.isMissingNode() && !nested.isNull()) {
+                if (nested.isTextual()) {
+                    return mapper.readTree(extractJsonObject(nested.textValue()));
+                }
+                return nested;
+            }
+            JsonNode result = node.path("result");
+            if (!result.isMissingNode() && result.isObject()) { node = result; continue; }
+            JsonNode data = node.path("data");
+            if (!data.isMissingNode() && data.isObject()) { node = data; continue; }
+            break;
+        }
+        return node;
+    }
+
     static ResumeAnalysisResult parseStored(String json, ObjectMapper mapper) {
         try {
             return validate(normalize(mapper.readValue(json, ResumeAnalysisResult.class)));
@@ -141,12 +175,15 @@ record ResumeAnalysisResult(
 
     private static ResumeAnalysisResult normalize(ResumeAnalysisResult value) {
         if (value == null) return null;
-        List<ResumeAnalysisEvidence> evidence = value.evidence() == null ? null : value.evidence().stream()
+        List<ResumeAnalysisEvidence> evidence = value.evidence() == null ? new ArrayList<>() : value.evidence().stream()
                 .filter(item -> item != null && meaningful(item.criterion()) && meaningful(item.finding()))
                 .map(item -> new ResumeAnalysisEvidence(item.criterion().trim(), item.finding().trim(),
                         normalizeEvidenceStatus(item.status())))
-                .toList();
-        List<String> followUpQuestions = new ArrayList<>(cleanTextList(value.followUpQuestions()));
+                .limit(8).toList();
+        if (evidence.isEmpty()) {
+            evidence = List.of(new ResumeAnalysisEvidence("整体岗位匹配", "大模型未返回明确证据，请由 HR 复核。", "UNCLEAR"));
+        }
+        List<String> followUpQuestions = new ArrayList<>(cleanTextList(value.followUpQuestions()).stream().limit(5).toList());
         List<String> defaults = List.of("请补充说明最近一份工作的主要职责？", "请介绍一个与岗位相关的项目成果？", "最快何时可以到岗？");
         for (String question : defaults) {
             if (followUpQuestions.size() >= 3) break;
@@ -164,17 +201,19 @@ record ResumeAnalysisResult(
                                 .limit(12).toList(), cleanTextList(item.gaps()), cleanTextList(item.risks())))
                 .limit(20)
                 .toList();
-        return new ResumeAnalysisResult(trim(value.candidateName()), normalizeRecommendation(value.recommendation()), trim(value.summary()), evidence,
-                cleanTextList(value.gaps()), cleanTextList(value.risks()), followUpQuestions, comparisons);
+        String summary = trim(value.summary());
+        if (!meaningful(summary)) summary = "大模型未返回明确摘要，请结合岗位要求和简历原文由 HR 复核。";
+        return new ResumeAnalysisResult(trim(value.candidateName()), normalizeRecommendation(value.recommendation()), summary, evidence,
+                cleanTextList(value.gaps()).stream().limit(8).toList(), cleanTextList(value.risks()).stream().limit(8).toList(), followUpQuestions, comparisons);
     }
 
     private static String normalizeRecommendation(String value) {
-        if (value == null) return null;
+        if (value == null || value.isBlank()) return "INFORMATION_NEEDED";
         return switch (value.trim().toUpperCase(Locale.ROOT)) {
-            case "INTERVIEW_RECOMMENDED", "STRONG_MATCH", "HIGH_MATCH", "RECOMMENDED", "PRIORITY" -> "PRIORITY_VIEW";
-            case "MATCHED", "PARTIAL_MATCH", "NORMAL", "REVIEW" -> "NORMAL_VIEW";
-            case "NEEDS_MORE_INFO", "INSUFFICIENT_INFO", "UNCERTAIN", "UNKNOWN" -> "INFORMATION_NEEDED";
-            default -> value.trim().toUpperCase(Locale.ROOT);
+            case "PRIORITY_VIEW", "INTERVIEW_RECOMMENDED", "STRONG_MATCH", "HIGH_MATCH", "RECOMMENDED", "PRIORITY" -> "PRIORITY_VIEW";
+            case "NORMAL_VIEW", "MATCHED", "PARTIAL_MATCH", "NORMAL", "REVIEW" -> "NORMAL_VIEW";
+            case "INFORMATION_NEEDED", "NEEDS_MORE_INFO", "INSUFFICIENT_INFO", "UNCERTAIN", "UNKNOWN" -> "INFORMATION_NEEDED";
+            default -> "INFORMATION_NEEDED";
         };
     }
 
