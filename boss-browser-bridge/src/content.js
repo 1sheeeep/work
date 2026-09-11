@@ -40,6 +40,8 @@
   let resumeCardScanTimer = null;
   let resumeAttachmentProcessing = false;
   let lastResumePdfImportOutcome = null;
+  let lastResumeCardScanSignature = '';
+  let lastResumeCardScanAt = 0;
   const clickedResumeCardControls = new WeakSet();
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -603,14 +605,21 @@
           lastResumePdfImportOutcome = null;
           showResumeCaptureStatus('挂机：检测到候选人附件，锁定当前会话并开始简历处理。');
           scheduleResumeCardScan(0);
-          for (let attempt = 0; attempt < 50; attempt++) {
-            await delay(500);
-            const outcome = lastResumePdfImportOutcome;
-            if (outcome?.chatDigest === second.chatDigest) break;
-            if (attempt === 8 || attempt === 20 || attempt === 35) scheduleResumeCardScan(0);
+          try {
+            for (let attempt = 0; attempt < 50; attempt++) {
+              await delay(500);
+              const outcome = lastResumePdfImportOutcome;
+              if (outcome?.chatDigest === second.chatDigest) break;
+              if (attempt === 8 || attempt === 20 || attempt === 35) scheduleResumeCardScan(0);
+            }
+          } catch (error) {
+            lastResumePdfImportOutcome = { ok: false, chatDigest: second.chatDigest, error: `简历处理异常：${String(error?.message || error || '未知错误')}` };
+            showResumeCaptureStatus(lastResumePdfImportOutcome.error, 'error');
+          } finally {
+            // Never leave the whole auto-reply loop locked by a failed DOM/API await.
+            resumeAttachmentProcessing = false;
           }
           const outcome = lastResumePdfImportOutcome;
-          resumeAttachmentProcessing = false;
           await reportSingleAccountResult(second, 'SILENT', outcome?.chatDigest === second.chatDigest && outcome.ok
             ? `候选人附件简历已导入，记录 ${outcome.intakeId || '已建立'}，AI 状态 ${outcome.analysisStatus || '处理中'}。`
             : `候选人附件不需要文本回复；简历导入${outcome?.error ? `未完成：${outcome.error}` : '等待超时，已保留状态供后续重试'}。`);
@@ -769,10 +778,10 @@
     }
   }
 
-  async function collectAndPublish(reportNonChat) {
+  async function collectAndPublish(reportNonChat, allowDuringAutoReply = false) {
     if (collecting) return;
     if (autoReplyArm) return;
-    if (autoReplyBusy) { scheduleCollect(800); return; }
+    if (autoReplyBusy && !allowDuringAutoReply) { scheduleCollect(800); return; }
     collecting = true;
     try {
       const page = classifyPage();
@@ -2308,22 +2317,36 @@
       showResumeCaptureStatus('content：PDF 数据校验失败');
       return;
     }
-    const selected = await collectSelectedConversation();
+    let selected = await collectSelectedConversation();
     if (!selected.ok) {
       showResumeCaptureStatus('content：collectSelectedConversation 失败: ' + (selected.reason || 'unknown'));
       return;
     }
     showResumeCaptureStatus('content：会话识别成功，chatDigest=' + (selected.chatDigest || '').slice(0, 12));
-    await waitForCollectionIdle(2_500);
-    await collectAndPublish(true);
     const fileDigest = await digest(data.fileBase64);
-    const sourceEventDigest = await digest(`${selected.chatDigest}|${selected.messageDigest}|${fileDigest}`);
-    const payload = {
-      actionType: 'VISIBLE_RESUME_PDF_CAPTURE', chatDigest: selected.chatDigest,
-      sourceEventDigest, fileDigest, fileBase64: data.fileBase64, fileSize: data.fileSize,
-    };
     let response = null;
     for (let attempt = 1; attempt <= 4; attempt++) {
+      await waitForCollectionIdle(2_500);
+      // Resume processing runs while autoReplyBusy is held. Explicitly allow
+      // this stability snapshot so the background runtime gets the current digest.
+      await collectAndPublish(true, true);
+      await waitForCollectionIdle(2_500);
+      const refreshed = await collectSelectedConversation();
+      if (!refreshed.ok || refreshed.chatDigest !== selected.chatDigest) {
+        showResumeCaptureStatus(`content：第 ${attempt}/4 次等待会话摘要稳定，暂不提交 PDF。`);
+        if (attempt === 4) {
+          response = { ok: false, error: '当前 PDF 与预览中的稳定会话不一致，已停止导入。' };
+          break;
+        }
+        await delay(attempt * 600);
+        continue;
+      }
+      selected = refreshed;
+      const sourceEventDigest = await digest(`${selected.chatDigest}|${selected.messageDigest}|${fileDigest}`);
+      const payload = {
+        actionType: 'VISIBLE_RESUME_PDF_CAPTURE', chatDigest: selected.chatDigest,
+        sourceEventDigest, fileDigest, fileBase64: data.fileBase64, fileSize: data.fileSize,
+      };
       showResumeCaptureStatus(`content：正在发送 PDF 到后端（第 ${attempt}/4 次）...`);
       response = await send({ type: 'BRIDGE_VISIBLE_RESUME_PDF_CAPTURE', payload });
       if (response?.ok) break;
@@ -2331,8 +2354,6 @@
       if (!/稳定|会话|观测|通信失败|无响应/.test(reason) || attempt === 4) break;
       showResumeCaptureStatus(`后端尚未就绪，将自动重试：${reason}`);
       await delay(attempt * 600);
-      await waitForCollectionIdle(2_500);
-      await collectAndPublish(true);
     }
     showResumeImportResult(response);
     const previewClosed = response?.ok ? await closeVisibleResumePreview(selected.chatDigest) : false;
@@ -2479,6 +2500,17 @@
         .filter((n) => n instanceof HTMLElement);
       const cards = raw.filter((n) => visible(n));
       const uniqueCards = cards.filter((c, i) => !cards.some((p, j) => j !== i && p.contains(c)));
+      const scanSignature = uniqueCards.map((card) => {
+        const actionArea = card.querySelector('.message-card-buttons') || card;
+        const labels = [...actionArea.querySelectorAll('.card-btn, button, [role="button"]')]
+          .filter((btn) => btn instanceof HTMLElement && visible(btn))
+          .map((btn) => `${compact(controlLabel(btn))}:${isAvailableAction(btn) ? 'ready' : 'disabled'}`)
+          .join(',');
+        return `${card.tagName}.${String(card.className || '').slice(0, 60)}|${labels}`;
+      }).join('||');
+      if (scanSignature === lastResumeCardScanSignature && Date.now() - lastResumeCardScanAt < 3_000) return;
+      lastResumeCardScanSignature = scanSignature;
+      lastResumeCardScanAt = Date.now();
       if (raw.length > 0) {
         showResumeCaptureStatus('原始匹配: ' + raw.length + ' 个, 可见: ' + cards.length + ' 个, 去重: ' + uniqueCards.length + ' 个');
         raw.forEach((n) => {
