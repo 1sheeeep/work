@@ -81,22 +81,23 @@ public class ExternalResumeAnalysisService {
 
         String inputHash = hash(document.text());
         ExternalResumeAiClient.ExternalResumeMatch match = client.match(accessibleJobs, document.text(), actorHash(user));
-        JobPosition matchedJob = accessibleJobs.stream().filter(job -> job.getId().equals(match.matchedJobId())).findFirst()
-                .orElseThrow(() -> new ApiException(HttpStatus.BAD_GATEWAY, "OPENAI_MATCHED_JOB_INVALID",
-                        "AI 返回的匹配岗位不在当前可用岗位范围内"));
-        String candidateName = cleanName(match.candidateName());
-        Company company = matchedJob.getCompany();
+        JobPosition matchedJob = accessibleJobs.stream().filter(job -> job.getId().equals(match.matchedJobId())).findFirst().orElse(null);
+        String candidateName = cleanName(match.candidateName(), document.documentHash());
+        boolean unmatched = matchedJob == null;
+        if (matchedJob == null) matchedJob = accessibleJobs.getFirst();
+        JobPosition selectedJob = matchedJob;
+        Company company = selectedJob.getCompany();
         String documentHash = document.documentHash();
         CandidateProfile candidate = candidates.findByCompanyIdAndSourceAndDedupKey(company.getId(), CandidateSource.MANUAL, documentHash)
                 .orElseGet(() -> candidates.save(new CandidateProfile(company, CandidateSource.MANUAL, documentHash,
                         candidateName, null, null, null, null)));
         candidate.refresh(candidateName, candidate.getCurrentTitle(), candidate.getYearsExperience(),
                 candidate.getEducation(), candidate.getSkillsSummary());
-        CandidateJobContact contact = contacts.findByCandidateIdAndJobPositionId(candidate.getId(), matchedJob.getId())
-                .orElseGet(() -> contacts.save(new CandidateJobContact(candidate, matchedJob, matchedJob.getBossAccount())));
+        CandidateJobContact contact = contacts.findByCandidateIdAndJobPositionId(candidate.getId(), selectedJob.getId())
+                .orElseGet(() -> contacts.save(new CandidateJobContact(candidate, selectedJob, selectedJob.getBossAccount())));
         ResumeIntake intake = intakes.findByContactIdAndResumeDigest(contact.getId(), documentHash).orElseGet(() ->
                 intakes.save(new ResumeIntake(contact, ResumeIntakeSource.MANUAL, documentHash,
-                        "外部 PDF · " + candidateName, Instant.now())));
+                        "外部 PDF · " + candidateName + (unmatched ? " · 未匹配岗位" : ""), Instant.now())));
         intake.processing();
         intake.readyForAi("PDF", inputHash, scan.scanned(), Instant.now());
         intake.review(ResumeIntakeStatus.APPROVED_FOR_AI, "外部 PDF 拖入并确认 AI 岗位匹配", user, Instant.now());
@@ -107,7 +108,8 @@ public class ExternalResumeAnalysisService {
         audit.success("ANALYZE_EXTERNAL_RESUME_PDF", "RESUME_INTAKE", intake.getId(),
                 "外部 PDF 摘要 " + documentHash.substring(0, 12),
                 "HR 拖入外部 PDF 并确认 AI 处理；已识别姓名并在 " + accessibleJobs.size()
-                        + " 个授权启用岗位中完成匹配；不保存 PDF 原文或提取文本");
+                        + " 个授权启用岗位中完成对比；" + (unmatched ? "未匹配到单一岗位，已保留全部岗位差异分析；" : "已识别最匹配岗位；")
+                        + "不保存 PDF 原文或提取文本");
         return new ExternalResumeAnalysisResponse(ResumeIntakeResponse.from(intake),
                 ResumeAnalysisResponse.from(run, mapper, List.of()), accessibleJobs.size());
     }
@@ -117,10 +119,9 @@ public class ExternalResumeAnalysisService {
                 .map(Company::getId).anyMatch(company.getId()::equals);
     }
 
-    private String cleanName(String value) {
+    private String cleanName(String value, String documentHash) {
         String clean = value == null ? "" : value.replace('\n', ' ').replace('\r', ' ').trim();
-        if (clean.isBlank()) throw new ApiException(HttpStatus.BAD_GATEWAY, "OPENAI_CANDIDATE_NAME_MISSING",
-                "AI 未能从 PDF 中识别候选人姓名");
+        if (clean.isBlank()) return "匿名候选人 " + documentHash.substring(0, 8);
         return clean.substring(0, Math.min(100, clean.length()));
     }
 
