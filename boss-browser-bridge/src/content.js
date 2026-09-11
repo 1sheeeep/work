@@ -18,6 +18,7 @@
     description: ['[class*="job-detail"]', '[class*="description"]', '[class*="job-desc"]'],
   };
   const TEST_DRAFT_TEXT = '【草稿测试，不会自动发送】您好，已收到您的消息。';
+  const SINGLE_ACCOUNT_PREFETCH_LIMIT = 5;
   let collectTimer = null;
   let collecting = false;
   let autoReplyArm = null;
@@ -31,6 +32,9 @@
   let singleAccountUnreadBaseline = new Map();
   let singleAccountSelectedMessageBaseline = new Map();
   let singleAccountPendingReplies = new Map();
+  let singleAccountConversationQueue = [];
+  let singleAccountBacklogMode = false;
+  let singleAccountBacklogSeen = new Map();
   let lastDeepConversationScanAt = 0;
   let jobConfirmationTimer = null;
   let pendingJobConfirmationSignature = '';
@@ -299,6 +303,9 @@
       singleAccountUnreadBaseline = new Map();
       singleAccountSelectedMessageBaseline = new Map();
       singleAccountPendingReplies = new Map();
+      singleAccountConversationQueue = [];
+      singleAccountBacklogMode = false;
+      singleAccountBacklogSeen = new Map();
     } else if (!wasEnabled) {
       const saved = restore ? await send({ type: 'BRIDGE_GET_SINGLE_ACCOUNT_BASELINE' }) : null;
       const currentUnread = await collectUnreadBaseline();
@@ -313,6 +320,11 @@
       }
       const pending = await send({ type: 'BRIDGE_GET_PENDING_INBOUND_REPLIES' });
       singleAccountPendingReplies = new Map((pending?.tasks || []).map((task) => [task.taskId, { ...task, nextPollAt: 0 }]));
+      singleAccountConversationQueue = [];
+      // A manual enable starts one bounded backlog pass. A background restore
+      // resumes only unseen/changed messages to avoid replaying old replies.
+      singleAccountBacklogMode = !restore;
+      singleAccountBacklogSeen = new Map();
       await persistSingleAccountBaseline();
     }
     clearTimeout(singleAccountAutoReplyTimer);
@@ -366,6 +378,28 @@
       }
     }
     return { item: null, chatDigest: null };
+  }
+
+  async function refillSingleAccountConversationQueue() {
+    if (singleAccountConversationQueue.length >= SINGLE_ACCOUNT_PREFETCH_LIMIT) return;
+    const queued = new Set(singleAccountConversationQueue.map((item) => item.chatDigest));
+    const items = [...document.querySelectorAll(SELECTORS.conversation)]
+      .filter((item) => visible(item) && item.querySelector(SELECTORS.unread));
+    for (const item of items) {
+      if (singleAccountConversationQueue.length >= SINGLE_ACCOUNT_PREFETCH_LIMIT) break;
+      const identity = stableIdentity(item);
+      if (!identity) continue;
+      const chatDigest = await digest(identity);
+      if (queued.has(chatDigest)) continue;
+      const signature = await unreadRowSignature(item);
+      const known = singleAccountUnreadBaseline.get(chatDigest);
+      if (singleAccountBacklogMode) {
+        if (singleAccountBacklogSeen.get(chatDigest) === signature) continue;
+        singleAccountBacklogSeen.set(chatDigest, signature);
+      } else if (known && known === signature) continue;
+      singleAccountConversationQueue.push({ chatDigest, signature });
+      queued.add(chatDigest);
+    }
   }
 
   async function findConversationByDigest(chatDigest) {
@@ -555,9 +589,20 @@
       }
       if (!target && !queuedTask) {
         singleAccountPendingChatDigest = null;
-        const candidate = await findNewOrChangedUnreadConversation();
-        if (candidate.error) return void await haltSingleAccountAutoReply(`持续回复已停止：${candidate.error}`);
-        target = candidate.item;
+        await refillSingleAccountConversationQueue();
+        const queuedCandidate = singleAccountConversationQueue.shift();
+        if (queuedCandidate) {
+          target = await findConversationByDigest(queuedCandidate.chatDigest);
+          if (!target && Date.now() - lastDeepConversationScanAt >= 15_000) {
+            lastDeepConversationScanAt = Date.now();
+            target = await findConversationByDigestDeep(queuedCandidate.chatDigest);
+          }
+        }
+        if (!target) {
+          const candidate = await findNewOrChangedUnreadConversation();
+          if (candidate.error) return void await haltSingleAccountAutoReply(`持续回复已停止：${candidate.error}`);
+          target = candidate.item;
+        }
         if (!target && Date.now() - lastDeepConversationScanAt >= 15_000) {
           lastDeepConversationScanAt = Date.now();
           const deepCandidate = await findNewOrChangedUnreadConversationDeep();

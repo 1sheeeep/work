@@ -24,7 +24,7 @@ public class ResumeDocumentPipelineService {
     private final ResumeDocumentTextExtractor documents;
     private final ResumeMalwareScanner malware;
     private final ResumeImageOcrClient ocr;
-    private final AutomatedResumeAnalysisService automatedAnalysis;
+    private final ResumeAnalysisQueueService analysisQueue;
     private final AuditService audit;
 
     public ResumeDocumentPipelineService(CandidateProfileRepository candidates,
@@ -33,7 +33,7 @@ public class ResumeDocumentPipelineService {
                                          ResumeDocumentTextExtractor documents,
                                          ResumeMalwareScanner malware,
                                          ResumeImageOcrClient ocr,
-                                         AutomatedResumeAnalysisService automatedAnalysis,
+                                         ResumeAnalysisQueueService analysisQueue,
                                          AuditService audit) {
         this.candidates = candidates;
         this.contacts = contacts;
@@ -41,7 +41,7 @@ public class ResumeDocumentPipelineService {
         this.documents = documents;
         this.malware = malware;
         this.ocr = ocr;
-        this.automatedAnalysis = automatedAnalysis;
+        this.analysisQueue = analysisQueue;
         this.audit = audit;
     }
 
@@ -68,7 +68,11 @@ public class ResumeDocumentPipelineService {
             refreshRecognizedNameFromPdf(candidate, existing.getSourcePdf());
             if ("READY_FOR_AI".equals(existing.getProcessingStatus())
                     && !"SUCCEEDED".equals(existing.getAnalysisStatus())) {
-                retryExistingAnalysis(existing, candidate, content, documentDigest);
+                if (existing.getExtractedText() != null && !existing.getExtractedText().isBlank()) {
+                    analysisQueue.enqueue(existing);
+                } else {
+                    retryExistingAnalysis(existing, candidate, content, documentDigest);
+                }
             }
             audit.systemSuccess("DEDUPLICATE_VISIBLE_RESUME", "RESUME_INTAKE", existing.getId(),
                     "简历摘要 " + documentDigest.substring(0, 12), "同一候选人和岗位已处理相同文件；分析不可用时已尝试重新提取并调用 AI");
@@ -105,7 +109,7 @@ public class ResumeDocumentPipelineService {
             audit.systemSuccess("PROCESS_VISIBLE_RESUME", "RESUME_INTAKE", intake.getId(),
                     "简历摘要 " + documentDigest.substring(0, 12),
                     "已完成" + (malwareScanned ? "病毒扫描、" : "") + "去重和 " + type + " 文本提取；已保存 PDF 供 HR 重新分析");
-            automatedAnalysis.analyzeInMemory(intake, text);
+            analysisQueue.enqueue(intake);
         } catch (ApiException exception) {
             intake.processingFailed(cleanCode(exception.getCode()), cleanReason(exception.getMessage()), Instant.now());
             audit.systemSuccess("QUEUE_RESUME_PROCESSING_EXCEPTION", "RESUME_INTAKE", intake.getId(),
@@ -139,7 +143,7 @@ public class ResumeDocumentPipelineService {
             intake.autoApproveForAi(Instant.now());
             updateRecognizedName(candidate, text);
             intake.storeSourcePdf(content);
-            automatedAnalysis.analyzeInMemory(intake, text);
+            analysisQueue.enqueue(intake);
             audit.systemSuccess("RETRY_RESUME_ANALYSIS", "RESUME_INTAKE", intake.getId(),
                     "简历摘要 " + documentDigest.substring(0, 12), "重复简历原分析不可用，已重新提取并提交 AI 分析");
         } catch (RuntimeException exception) {
@@ -179,7 +183,7 @@ public class ResumeDocumentPipelineService {
         audit.systemSuccess("PROCESS_VISIBLE_RESUME_TEXT", "RESUME_INTAKE", intake.getId(),
                 "简历摘要 " + documentDigest.substring(0, 12),
                 "已从当前真实 BOSS 在线简历提取必要文本并绑定当前会话与岗位；仅保存摘要，不保存正文");
-        automatedAnalysis.analyzeInMemory(intake, text);
+        analysisQueue.enqueue(intake);
         return ResumeDocumentProcessingResponse.from(intake, false);
     }
 

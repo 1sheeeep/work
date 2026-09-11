@@ -100,6 +100,10 @@ app:
     send-limit-per-hour: ${APP_INBOUND_REPLY_SEND_LIMIT_PER_HOUR:20}
     send-limit-per-day: ${APP_INBOUND_REPLY_SEND_LIMIT_PER_DAY:100}
   resume:
+    analysis-queue:
+      enabled: ${APP_RESUME_ANALYSIS_QUEUE_ENABLED:true}
+      poll-interval: ${APP_RESUME_ANALYSIS_QUEUE_POLL_INTERVAL:2s}
+      initial-delay: ${APP_RESUME_ANALYSIS_QUEUE_INITIAL_DELAY:5s}
     malware-scan:
       enabled: ${APP_RESUME_MALWARE_SCAN_ENABLED:false}
       host: ${APP_RESUME_MALWARE_SCAN_HOST:clamav}

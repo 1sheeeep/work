@@ -68,7 +68,7 @@ class ResumeDocumentPipelineServiceTest {
         ResumeDocumentProcessingResponse result = f.service.processVisibleResume(f.job, "b".repeat(64), "c".repeat(64), null, f.file);
 
         assertThat(result.duplicate()).isTrue();
-        verify(f.automatedAnalysis).analyzeInMemory(eq(existing), contains("林嘉明"));
+        verify(f.analysisQueue).enqueue(eq(existing));
         verify(f.documents, times(2)).extract(any());
     }
 
@@ -86,7 +86,7 @@ class ResumeDocumentPipelineServiceTest {
         assertThat(result.duplicate()).isFalse();
         assertThat(result.processingStatus()).isEqualTo("READY_FOR_AI");
         verify(f.candidate).updateRecognizedName("林嘉明");
-        verify(f.automatedAnalysis).analyzeInMemory(any(ResumeIntake.class), eq(visibleText));
+        verify(f.analysisQueue).enqueue(any(ResumeIntake.class));
     }
 
     private static class Fixture {
@@ -96,7 +96,7 @@ class ResumeDocumentPipelineServiceTest {
         final ResumeDocumentTextExtractor documents=mock(ResumeDocumentTextExtractor.class);
         final ResumeMalwareScanner malware=mock(ResumeMalwareScanner.class);
         final ResumeImageOcrClient ocr=mock(ResumeImageOcrClient.class);
-        final AutomatedResumeAnalysisService automatedAnalysis=mock(AutomatedResumeAnalysisService.class);
+        final ResumeAnalysisQueueService analysisQueue=mock(ResumeAnalysisQueueService.class);
         final AuditService audit=mock(AuditService.class);
         final MultipartFile file=mock(MultipartFile.class);
         final Company company=mock(Company.class);
@@ -105,7 +105,7 @@ class ResumeDocumentPipelineServiceTest {
         final CandidateProfile candidate=mock(CandidateProfile.class);
         final CandidateJobContact contact=mock(CandidateJobContact.class);
         final UUID companyId=UUID.randomUUID(),jobId=UUID.randomUUID(),candidateId=UUID.randomUUID(),contactId=UUID.randomUUID();
-        final ResumeDocumentPipelineService service=new ResumeDocumentPipelineService(candidates,contacts,intakes,documents,malware,ocr,automatedAnalysis,audit);
+        final ResumeDocumentPipelineService service=new ResumeDocumentPipelineService(candidates,contacts,intakes,documents,malware,ocr,analysisQueue,audit);
         Fixture(){
             when(company.getId()).thenReturn(companyId);when(job.getCompany()).thenReturn(company);when(job.getBossAccount()).thenReturn(account);when(job.getId()).thenReturn(jobId);
             when(candidate.getId()).thenReturn(candidateId);when(candidate.getDisplayName()).thenReturn("匿名候选人");

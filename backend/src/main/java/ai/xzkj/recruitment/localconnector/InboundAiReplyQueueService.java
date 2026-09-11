@@ -37,7 +37,7 @@ import java.util.concurrent.TimeUnit;
 
 /** 持久化、按账号 FIFO 串行的入站 AI 回复队列；不同账号可并行。 */
 @Service
-class InboundAiReplyQueueService {
+class InboundAiReplyQueueService implements InboundReplyWorkGate {
     private static final long CLIENT_WAIT_NANOS = 125_000_000_000L;
     private final InboundAiReplyTaskRepository tasks;
     private final BrowserUnreadObservationRepository observations;
@@ -151,6 +151,14 @@ class InboundAiReplyQueueService {
     }
     List<InboundAiReplyTask> recentDecisions(Instant since) {
         return tasks.findTop500ByCompletedAtAfterOrderByCompletedAtDesc(since);
+    }
+
+    @Override
+    public boolean hasPendingWork(UUID accountId) {
+        if (accountId == null) return false;
+        return tasks.countByAccountIdAndStatusIn(accountId, List.of("QUEUED", "PROCESSING", "RETRY_WAIT")) > 0
+                || tasks.countByAccountIdAndSendStatus(accountId, "READY") > 0
+                || tasks.countByAccountIdAndSendStatus(accountId, "CLAIMED") > 0;
     }
 
     InboundReplyTaskDiscardResponse discardStale(UUID accountId, UUID taskId, InboundReplyTaskDiscardRequest request) {

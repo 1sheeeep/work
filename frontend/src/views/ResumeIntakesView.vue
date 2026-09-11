@@ -59,7 +59,7 @@ const analysisForm = reactive({ intakeId: '', resumeText: '', consent: false, so
 type ExternalResumeAnalysisResponse = { intake: ResumeIntake; analysis: ResumeAnalysisRun; comparedJobCount: number }
 
 const pending = computed(() => intakes.value.filter((item) => item.status === 'PENDING_REVIEW'))
-const processing = computed(() => intakes.value.filter((item) => item.processingStatus === 'PROCESSING' || item.analysisStatus === 'ANALYZING'))
+const processing = computed(() => intakes.value.filter((item) => item.processingStatus === 'PROCESSING' || item.analysisStatus === 'ANALYZING' || item.analysisQueueStatus === 'QUEUED' || item.analysisQueueStatus === 'PROCESSING' || item.analysisQueueStatus === 'RETRY_WAIT'))
 const processingFailures = computed(() => intakes.value.filter((item) => item.processingStatus === 'FAILED'))
 const analysisExceptions = computed(() => intakes.value.filter((item) => item.analysisStatus !== undefined && ['FAILED', 'NOT_AUTHORIZED', 'NOT_CONFIGURED'].includes(item.analysisStatus)))
 const exceptionCount = computed(() => new Set([...processingFailures.value, ...analysisExceptions.value].map((item) => item.id)).size)
@@ -103,7 +103,8 @@ function processingLabel(item: ResumeIntake) {
 
 function analysisLabel(item: ResumeIntake) {
   if (item.analysisStatus === 'SUCCEEDED') return 'AI 已完成'
-  if (item.analysisStatus === 'ANALYZING') return 'AI 分析中'
+  if (item.analysisStatus === 'ANALYZING' || item.analysisQueueStatus === 'PROCESSING') return 'AI 分析中'
+  if (item.analysisQueueStatus === 'QUEUED' || item.analysisQueueStatus === 'RETRY_WAIT') return 'AI 排队中'
   if (item.analysisStatus === 'FAILED') return 'AI 失败'
   if (item.analysisStatus === 'NOT_AUTHORIZED') return '待授权'
   if (item.analysisStatus === 'NOT_CONFIGURED') return 'AI 未配置'
@@ -112,7 +113,7 @@ function analysisLabel(item: ResumeIntake) {
 
 function analysisTagType(item: ResumeIntake): 'success' | 'warning' | 'danger' | 'info' {
   if (item.analysisStatus === 'SUCCEEDED') return 'success'
-  if (item.analysisStatus === 'ANALYZING' || item.analysisStatus === 'NOT_CONFIGURED') return 'warning'
+  if (item.analysisStatus === 'ANALYZING' || item.analysisQueueStatus === 'PROCESSING' || item.analysisQueueStatus === 'QUEUED' || item.analysisQueueStatus === 'RETRY_WAIT' || item.analysisStatus === 'NOT_CONFIGURED') return 'warning'
   if (item.analysisStatus === 'FAILED') return 'danger'
   return 'info'
 }
