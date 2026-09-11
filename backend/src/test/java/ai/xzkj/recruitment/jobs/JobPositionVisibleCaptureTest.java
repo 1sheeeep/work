@@ -80,6 +80,45 @@ class JobPositionVisibleCaptureTest {
         assertThat(job.isCaptureVerified()).isFalse();
     }
 
+    @Test void routineObservationDoesNotOverwriteOrInvalidateReviewedJob() {
+        JobPosition job = importedDraft();
+        job.applyVisiblePageObservation("c".repeat(64), "Java 开发工程师", "上海", 20, 30, 13,
+                "3-5年", "本科", "后端开发", "20-30K·13薪", null, null, null, null, null, 6, observedAt);
+        job.updateKnowledge("稳定岗位回复知识", "20-30K·13薪", true);
+        job.changeStatus(JobPositionStatus.ACTIVE);
+
+        boolean changed = job.recordVisiblePageObservation("c".repeat(64), observedAt.plusSeconds(60));
+
+        assertThat(changed).isFalse();
+        assertThat(job.getStatus()).isEqualTo(JobPositionStatus.ACTIVE);
+        assertThat(job.isKnowledgeApproved()).isTrue();
+        assertThat(job.getTitle()).isEqualTo("Java 开发工程师");
+        assertThat(job.getLocation()).isEqualTo("上海");
+    }
+
+    @Test void routineReopenPreservesApprovedJobWithoutForcingReview() {
+        JobPosition job = importedDraft();
+        job.updateKnowledge("稳定岗位回复知识", "20-30K·13薪", true);
+        job.changeStatus(JobPositionStatus.ACTIVE);
+        job.reconcilePlatformStatus("CLOSED");
+
+        assertThat(job.reconcilePlatformStatus("OPEN", false)).isTrue();
+        assertThat(job.getStatus()).isEqualTo(JobPositionStatus.ACTIVE);
+        assertThat(job.isKnowledgeApproved()).isTrue();
+    }
+
+    @Test void explicitRecaptureCanReplaceAPreviouslyManualProfile() {
+        JobPosition job = new JobPosition(mock(Company.class), mock(BossAccount.class), "旧标题", "旧地点",
+                10, 20, 12, "不限", "本科", "旧描述", null);
+
+        assertThat(job.applyVisiblePageObservation("d".repeat(64), "新标题", "上海", 20, 30, 13,
+                "3-5年", "本科", "新描述", "20-30K·13薪", null, null, null, null, null, 6,
+                observedAt, true)).isTrue();
+        assertThat(job.getTitle()).isEqualTo("新标题");
+        assertThat(job.getLocation()).isEqualTo("上海");
+        assertThat(job.getDescription()).isEqualTo("新描述");
+    }
+
     private JobPosition importedDraft() {
         JobPosition job = new JobPosition(mock(Company.class), mock(BossAccount.class), "Java 开发工程师", "待从 BOSS 岗位页补全",
                 1, 1, 12, "待从 BOSS 岗位页补全", "待从 BOSS 岗位页补全", "待补全", null);

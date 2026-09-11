@@ -104,7 +104,7 @@ test('exposes only bounded single-account reply status without message digests',
 
 test('accepts minimized job snapshots and rejects duplicate or raw source identities', () => {
   const entry = { sourceDigest: digest, title: 'Java 开发工程师', location: '上海·徐汇', salaryDisplay: '20-30K·13薪', salaryMinK: 20, salaryMaxK: 30, salaryMonths: 13, experienceRequirement: '3-5年', educationRequirement: '本科', description: null, completeness: 5, platformStatus: 'OPEN' };
-  const payload = { pageState: 'JOB_MANAGEMENT_READY', entries: [entry], observedAt: '2026-08-30T08:00:00.000Z', scope: 'OPEN_JOBS', authoritative: true };
+  const payload = { pageState: 'JOB_MANAGEMENT_READY', entries: [entry], observedAt: '2026-08-30T08:00:00.000Z', scope: 'OPEN_JOBS', authoritative: true, refreshRequested: false };
   assert.equal(validateJobSnapshot(payload), payload);
   assert.match(jobSnapshotSignature(payload), /^OPEN_JOBS:true\|a{64}:Java 开发工程师:OPEN:/);
   assert.throws(() => validateJobSnapshot({ ...payload, entries: [entry, entry] }), /重复/);

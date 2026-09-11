@@ -51,7 +51,7 @@
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (!['BRIDGE_COLLECT', 'BRIDGE_COLLECT_JOBS', 'BRIDGE_LOCATE_CONVERSATION', 'BRIDGE_CHECK_REPLY_READINESS', 'BRIDGE_INSPECT_CURRENT_CONTROLS', 'BRIDGE_COPY_CURRENT_TRANSCRIPT', 'BRIDGE_TEST_CURRENT_ACTION_ENTRY', 'BRIDGE_CONFIRM_CURRENT_EXCHANGE', 'BRIDGE_PREPARE_ACTION_LEASE', 'BRIDGE_EXECUTE_ACTION_LEASE', 'BRIDGE_FILL_TEST_DRAFT', 'BRIDGE_PREPARE_CURRENT_SEND_TEST', 'BRIDGE_SEND_CURRENT_TEST_DRAFT', 'BRIDGE_DIAGNOSE_CURRENT_AUTO_REPLY', 'BRIDGE_ARM_CURRENT_AUTO_REPLY_TEST', 'BRIDGE_CANCEL_CURRENT_AUTO_REPLY_TEST', 'BRIDGE_SET_SINGLE_ACCOUNT_AUTO_REPLY', 'BRIDGE_PREPARE_APPROVED_DRAFT_FILL', 'BRIDGE_FILL_APPROVED_DRAFT', 'BRIDGE_COLLECT_VISIBLE_RESUME', 'BRIDGE_OPEN_VISIBLE_RESUME'].includes(message?.type)) return false;
     const task = message.type === 'BRIDGE_COLLECT_JOBS'
-      ? collectJobsAndPublish(Boolean(message.allowEmbeddedJobList))
+      ? collectJobsAndPublish(Boolean(message.allowEmbeddedJobList), Boolean(message.refreshRequested))
       : message.type === 'BRIDGE_LOCATE_CONVERSATION'
         ? locateConversation(message.chatDigest)
       : message.type === 'BRIDGE_CHECK_REPLY_READINESS'
@@ -873,7 +873,7 @@
     }
   }
 
-  async function collectJobsAndPublish(allowEmbeddedJobList) {
+  async function collectJobsAndPublish(allowEmbeddedJobList, refreshRequested = false) {
     if (collecting) return { ok: false, error: '页面正在生成另一份稳定快照，请稍后重试。' };
     collecting = true;
     try {
@@ -886,7 +886,7 @@
       const second = await collectCurrentJobPage();
       if (!second.ok) { await send({ type: 'BRIDGE_JOB_BLOCKED', payload: second }); return { ok: false, error: second.reason }; }
       if (first.signature !== second.signature) return { ok: false, error: '职位列表仍在变化，请等待页面稳定后重试。' };
-      const response = await send({ type: 'BRIDGE_JOB_SNAPSHOT', payload: { pageState: 'JOB_MANAGEMENT_READY', entries: second.entries, observedAt: new Date().toISOString(), scope: second.scope, authoritative: second.authoritative } });
+      const response = await send({ type: 'BRIDGE_JOB_SNAPSHOT', payload: { pageState: 'JOB_MANAGEMENT_READY', entries: second.entries, observedAt: new Date().toISOString(), scope: second.scope, authoritative: second.authoritative, refreshRequested } });
       scheduleJobClosureConfirmation(second, response);
       return response?.ok ? response : { ok: false, pageMatched: true, error: response?.error || '本地服务未接受职位快照。' };
     } finally { collecting = false; }

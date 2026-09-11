@@ -140,6 +140,22 @@ public class JobPosition {
         this.captureVerifiedAt = null;
     }
 
+    /**
+     * Records a routine page observation without importing page fields.  The bridge
+     * calls this during background polling so transient/partial DOM values cannot
+     * overwrite reviewed job data or force the job back to DRAFT.
+     */
+    public boolean recordVisiblePageObservation(String sourceKey, Instant observedAt) {
+        this.lastObservedAt = observedAt;
+        this.observationCount++;
+        this.missingFromOpenSnapshotCount = 0;
+        if (this.observedSourceKey == null) {
+            this.observedSourceKey = sourceKey;
+            return true;
+        }
+        return false;
+    }
+
     public boolean applyVisiblePageObservation(String sourceKey, String observedTitle, String observedLocation,
                                                Integer observedSalaryMinK, Integer observedSalaryMaxK,
                                                Integer observedSalaryMonths, String observedExperience,
@@ -148,6 +164,21 @@ public class JobPosition {
                                                String observedJobCategory, String observedOverseasRequirement,
                                                String observedJobKeywords, String observedWorkAddress,
                                                int completeness, Instant observedAt) {
+        return applyVisiblePageObservation(sourceKey, observedTitle, observedLocation, observedSalaryMinK,
+                observedSalaryMaxK, observedSalaryMonths, observedExperience, observedEducation,
+                observedDescription, observedSalaryDisplay, observedRecruitmentType, observedJobCategory,
+                observedOverseasRequirement, observedJobKeywords, observedWorkAddress, completeness,
+                observedAt, false);
+    }
+
+    public boolean applyVisiblePageObservation(String sourceKey, String observedTitle, String observedLocation,
+                                               Integer observedSalaryMinK, Integer observedSalaryMaxK,
+                                               Integer observedSalaryMonths, String observedExperience,
+                                               String observedEducation, String observedDescription,
+                                               String observedSalaryDisplay, String observedRecruitmentType,
+                                               String observedJobCategory, String observedOverseasRequirement,
+                                               String observedJobKeywords, String observedWorkAddress,
+                                               int completeness, Instant observedAt, boolean allowManualOverwrite) {
         this.lastObservedAt = observedAt;
         this.observationCount++;
         this.missingFromOpenSnapshotCount = 0;
@@ -157,7 +188,7 @@ public class JobPosition {
         }
         boolean requiresReviewOnChange = this.status == JobPositionStatus.ACTIVE || this.captureVerified;
         if (requiresReviewOnChange && completeness < 5) return false;
-        if ("MANUAL".equals(this.captureSource)) {
+        if ("MANUAL".equals(this.captureSource) && !allowManualOverwrite) {
             this.captureSource = "VISIBLE_PAGE";
             this.captureCompleteness = (short) completeness;
             this.capturedAt = observedAt;
@@ -204,17 +235,26 @@ public class JobPosition {
     }
 
     public boolean reconcilePlatformStatus(String platformStatus) {
+        return reconcilePlatformStatus(platformStatus, true);
+    }
+
+    public boolean reconcilePlatformStatus(String platformStatus, boolean refreshRequested) {
         this.missingFromOpenSnapshotCount = 0;
         if ("CLOSED".equals(platformStatus) && this.status != JobPositionStatus.CLOSED) {
             this.status = JobPositionStatus.CLOSED;
             return true;
         }
         if ("OPEN".equals(platformStatus) && this.status == JobPositionStatus.CLOSED) {
-            this.status = JobPositionStatus.DRAFT;
-            this.captureVerified = false;
-            this.captureVerifiedAt = null;
-            this.knowledgeApproved = false;
-            this.knowledgeApprovedAt = null;
+            // A routine presence check must not invalidate a previously reviewed job.
+            // An explicit re-capture is the only operation allowed to require review again.
+            this.status = !refreshRequested && this.knowledgeApproved
+                    ? JobPositionStatus.ACTIVE : JobPositionStatus.DRAFT;
+            if (refreshRequested) {
+                this.captureVerified = false;
+                this.captureVerifiedAt = null;
+                this.knowledgeApproved = false;
+                this.knowledgeApprovedAt = null;
+            }
             return true;
         }
         return false;

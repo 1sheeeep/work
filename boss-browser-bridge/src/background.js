@@ -929,7 +929,7 @@ async function collectJobsFromBestTab() {
     throw new Error(reason);
   }
   try {
-    const response = await collectJobsFromAllFrames(tab.id);
+    const response = await collectJobsFromAllFrames(tab.id, true);
     if (!response?.ok) throw new Error(response?.error || '职位页面脚本未连接。');
     return response.sync || { received: 0, created: 0, updated: 0, unchanged: 0 };
   } catch (error) {
@@ -946,7 +946,7 @@ async function collectJobsFromOpenTabIfAvailable() {
   const tab = tabs.find((item) => item.active && isJobManagementUrl(item.url)) || tabs.find((item) => isJobManagementUrl(item.url));
   if (!tab?.id) return { ok: true, skipped: true };
   try {
-    const response = await collectJobsFromAllFrames(tab.id);
+    const response = await collectJobsFromAllFrames(tab.id, false);
     if (!response?.ok) throw new Error(response?.error || '职位页面脚本未连接。');
     return response;
   } catch (error) {
@@ -956,14 +956,14 @@ async function collectJobsFromOpenTabIfAvailable() {
   }
 }
 
-async function collectJobsFromAllFrames(tabId) {
+async function collectJobsFromAllFrames(tabId, refreshRequested = false) {
   const injected = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: ['src/content.js'] });
   const frameIds = [...new Set(injected.map((item) => item.frameId))].sort((a, b) => a - b);
   if (!frameIds.length) throw new Error('当前 BOSS 页面没有可访问的文档 frame。');
   const failures = [];
   for (const frameId of frameIds) {
     try {
-      const response = await chrome.tabs.sendMessage(tabId, { type: 'BRIDGE_COLLECT_JOBS', allowEmbeddedJobList: frameId !== 0 }, { frameId });
+      const response = await chrome.tabs.sendMessage(tabId, { type: 'BRIDGE_COLLECT_JOBS', allowEmbeddedJobList: frameId !== 0, refreshRequested }, { frameId });
       if (response?.ok) return response;
       if (response?.pageMatched) throw new Error(response.error || '本地服务未接受已识别的职位详情。');
       failures.push(response?.error || `frame ${frameId} 未返回职位数据`);
@@ -1200,9 +1200,9 @@ async function doSubmitJobSnapshot(settings, payload) {
   const runtime = await getRuntime();
   const signature = jobSnapshotSignature(payload);
   const now = Date.now();
-  if (runtime.lastJobSignature === signature && now - Number(runtime.lastJobSubmittedAt || 0) < MIN_SYNC_INTERVAL_MS) return { ok: true, skipped: true };
+  if (!payload.refreshRequested && runtime.lastJobSignature === signature && now - Number(runtime.lastJobSubmittedAt || 0) < MIN_SYNC_INTERVAL_MS) return { ok: true, skipped: true };
   const sync = await request(settings.backendUrl, '/api/local-connector/runtime/job-observations', {
-    method: 'POST', token: settings.deviceToken, body: { entries: payload.entries, observedAt: payload.observedAt, scope: payload.scope, authoritative: payload.authoritative },
+    method: 'POST', token: settings.deviceToken, body: { entries: payload.entries, observedAt: payload.observedAt, scope: payload.scope, authoritative: payload.authoritative, refreshRequested: payload.refreshRequested === true },
   });
   const lifecycle = [sync.automaticallyClosed ? `自动关闭 ${sync.automaticallyClosed} 个` : '', sync.reopenedForReview ? `恢复待核对 ${sync.reopenedForReview} 个` : ''].filter(Boolean).join('，');
   const jobState = `职位页同步完成：识别 ${sync.received} 个，新增 ${sync.created} 个，更新 ${sync.updated} 个，重复或无需变更 ${sync.unchanged} 个${lifecycle ? `，${lifecycle}` : ''}。`;

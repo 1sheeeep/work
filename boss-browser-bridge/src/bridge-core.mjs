@@ -218,6 +218,7 @@ export function validateJobSnapshot(payload) {
   if (!Number.isFinite(Date.parse(payload.observedAt))) throw new Error('职位快照时间无效。');
   if (!['OPEN_JOBS', 'CLOSED_JOBS', 'MIXED', 'SINGLE_JOB'].includes(payload.scope)) throw new Error('职位快照范围无效。');
   if (typeof payload.authoritative !== 'boolean') throw new Error('职位快照完整性标记无效。');
+  if (payload.refreshRequested !== undefined && typeof payload.refreshRequested !== 'boolean') throw new Error('职位主动刷新标记无效。');
   if (payload.authoritative && payload.scope !== 'OPEN_JOBS') throw new Error('只有完整的在招职位清单可以作为下架依据。');
   const seen = new Set();
   for (const entry of payload.entries) {
