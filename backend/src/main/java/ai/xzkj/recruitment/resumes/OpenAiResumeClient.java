@@ -111,9 +111,10 @@ public class OpenAiResumeClient {
                 + "没有简历证据时必须标记 NOT_FOUND 或 UNCLEAR，不能把未发现等同于不具备。"
                 + "candidateName 只填写简历正文中明确出现的姓名；无法确定时返回空字符串，禁止猜测。"
                 + "输出 1 至 8 条匹配证据、0 至 8 条待确认缺口、0 至 8 条风险提示，以及 3 至 5 个建议追问。"
-                + "evidence.finding 仅引用必要的简短事实，不要包含联系方式、证件号或完整段落。");
+                + "evidence.finding 仅引用必要的简短事实，不要包含联系方式、证件号或完整段落。"
+                + "只输出一个合法 JSON 对象，不要输出 Markdown、代码围栏或额外说明。");
         messages.addObject().put("role", "user").put("content", userInput(job, resumeText));
-        payload.set("response_format", structuredOutput("resume_analysis", resumeAnalysisSchema()));
+        payload.set("response_format", responseFormat("resume_analysis", resumeAnalysisSchema()));
         return payload;
     }
 
@@ -140,7 +141,7 @@ public class OpenAiResumeClient {
         schema.put("additionalProperties", false);
         schema.putArray("required").add("ok");
         schema.putObject("properties").putObject("ok").put("type", "boolean").put("const", true);
-        payload.set("response_format", structuredOutput("connection_test", schema));
+        payload.set("response_format", responseFormat("connection_test", schema));
         return payload;
     }
 
@@ -209,6 +210,15 @@ public class OpenAiResumeClient {
         jsonSchema.put("strict", true);
         jsonSchema.set("schema", schema);
         return format;
+    }
+
+    private ObjectNode responseFormat(String name, ObjectNode schema) {
+        if (properties.isDeepSeekEndpoint()) {
+            ObjectNode format = mapper.createObjectNode();
+            format.put("type", "json_object");
+            return format;
+        }
+        return structuredOutput(name, schema);
     }
 
     private void required(ObjectNode node, String... names) {

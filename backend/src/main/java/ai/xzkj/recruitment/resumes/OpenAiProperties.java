@@ -35,8 +35,19 @@ public class OpenAiProperties {
             return "https".equalsIgnoreCase(uri.getScheme()) && host != null
         && ("api.openai.com".equalsIgnoreCase(host)
         || host.toLowerCase().endsWith(".api.openai.com")
+        || "api.deepseek.com".equalsIgnoreCase(host)
         || "dashscope.aliyuncs.com".equalsIgnoreCase(host)
         || host.toLowerCase().endsWith(".maas.aliyuncs.com"));
+        } catch (Exception exception) {
+            return false;
+        }
+    }
+
+    public boolean isDeepSeekEndpoint() {
+        try {
+            URI uri = URI.create(baseUrl);
+            return "https".equalsIgnoreCase(uri.getScheme())
+                    && "api.deepseek.com".equalsIgnoreCase(uri.getHost());
         } catch (Exception exception) {
             return false;
         }
