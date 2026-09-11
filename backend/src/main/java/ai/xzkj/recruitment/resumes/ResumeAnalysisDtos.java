@@ -137,7 +137,7 @@ record ResumeAnalysisResult(
         List<ResumeAnalysisEvidence> evidence = value.evidence() == null ? null : value.evidence().stream()
                 .filter(item -> item != null && meaningful(item.criterion()) && meaningful(item.finding()))
                 .map(item -> new ResumeAnalysisEvidence(item.criterion().trim(), item.finding().trim(),
-                        item.status() == null ? "UNCLEAR" : item.status().trim().toUpperCase(Locale.ROOT)))
+                        normalizeEvidenceStatus(item.status())))
                 .toList();
         List<String> followUpQuestions = new ArrayList<>(cleanTextList(value.followUpQuestions()));
         List<String> defaults = List.of("请补充说明最近一份工作的主要职责？", "请介绍一个与岗位相关的项目成果？", "最快何时可以到岗？");
@@ -156,6 +156,17 @@ record ResumeAnalysisResult(
             case "MATCHED", "PARTIAL_MATCH", "NORMAL", "REVIEW" -> "NORMAL_VIEW";
             case "NEEDS_MORE_INFO", "INSUFFICIENT_INFO", "UNCERTAIN", "UNKNOWN" -> "INFORMATION_NEEDED";
             default -> value.trim().toUpperCase(Locale.ROOT);
+        };
+    }
+
+    private static String normalizeEvidenceStatus(String value) {
+        if (value == null) return "UNCLEAR";
+        String normalized = value.trim().toUpperCase(Locale.ROOT).replaceAll("[\\s-]+", "_");
+        return switch (normalized) {
+            case "FOUND", "MATCH", "MATCHED", "PRESENT", "YES", "TRUE", "PASS", "符合", "匹配", "存在" -> "FOUND";
+            case "NOT_FOUND", "MISS", "MISSING", "ABSENT", "NOT_PRESENT", "NO", "FALSE", "FAIL", "未找到", "不匹配", "缺失" -> "NOT_FOUND";
+            case "UNCLEAR", "UNKNOWN", "UNDETERMINED", "UNCERTAIN", "NOT_SURE", "UNSURE", "不明确", "未知", "无法判断" -> "UNCLEAR";
+            default -> normalized;
         };
     }
 

@@ -64,4 +64,27 @@ class ResumeAnalysisResultTest {
 
         assertThat(result.recommendation()).isEqualTo("PRIORITY_VIEW");
     }
+
+    @Test
+    void normalizesCompatibleEvidenceStatusAliases() {
+        String response = """
+                {
+                  "recommendation":"NORMAL_VIEW",
+                  "summary":"简历与岗位存在部分匹配项。",
+                  "evidence":[
+                    {"criterion":"工作地点","finding":"简历未明确工作地点。","status":"MISS"},
+                    {"criterion":"项目经验","finding":"简历列出相关项目。","status":"MATCHED"},
+                    {"criterion":"学历要求","finding":"简历信息不足以判断。","status":"UNKNOWN"}
+                  ],
+                  "gaps":[],
+                  "risks":[],
+                  "followUpQuestions":["请说明最近项目职责？","请说明期望工作地点？","何时可以到岗？"]
+                }
+                """;
+
+        ResumeAnalysisResult result = ResumeAnalysisResult.parseExternal(response, mapper);
+
+        assertThat(result.evidence()).extracting(ResumeAnalysisEvidence::status)
+                .containsExactly("NOT_FOUND", "FOUND", "UNCLEAR");
+    }
 }

@@ -111,6 +111,7 @@ public class OpenAiResumeClient {
                 + "不得给出录用或淘汰结论；只能在 PRIORITY_VIEW、NORMAL_VIEW、INFORMATION_NEEDED 中选择建议。"
                 + "recommendation 必须严格使用上述三个值，不要使用 INTERVIEW_RECOMMENDED 等其他枚举。"
                 + "没有简历证据时必须标记 NOT_FOUND 或 UNCLEAR，不能把未发现等同于不具备。"
+                + "evidence.status 必须严格使用 FOUND、NOT_FOUND 或 UNCLEAR，不要使用 MISS、MATCHED、UNKNOWN 等别名。"
                 + "candidateName 只填写简历正文中明确出现的姓名；无法确定时返回空字符串，禁止猜测。"
                 + "输出 1 至 8 条匹配证据、0 至 8 条待确认缺口、0 至 8 条风险提示，以及 3 至 5 个建议追问。"
                 + "evidence.finding 仅引用必要的简短事实，不要包含联系方式、证件号或完整段落。"
