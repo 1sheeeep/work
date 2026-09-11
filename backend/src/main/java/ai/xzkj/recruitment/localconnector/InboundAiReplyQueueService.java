@@ -157,7 +157,8 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
     public boolean hasPendingWork(UUID accountId) {
         if (accountId == null) return false;
         return tasks.countByAccountIdAndStatusIn(accountId, List.of("QUEUED", "PROCESSING", "RETRY_WAIT")) > 0
-                || tasks.countByAccountIdAndSendStatus(accountId, "READY") > 0
+                // READY means the AI decision is already complete; do not let a
+                // human-review draft starve the independent resume worker.
                 || tasks.countByAccountIdAndSendStatus(accountId, "CLAIMED") > 0;
     }
 
