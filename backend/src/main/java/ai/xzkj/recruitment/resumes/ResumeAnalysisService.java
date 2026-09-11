@@ -62,11 +62,16 @@ public class ResumeAnalysisService {
     public ResumeAnalysisResponse reanalyzeStoredPdf(UUID intakeId) {
         SystemUser user = users.requireCurrentUser();
         ResumeIntake intake = requireApprovedIntake(intakeId, user);
+        String storedText = intake.getExtractedText();
+        if (storedText != null && !storedText.isBlank()) {
+            return analyzeText(intake, user, cleanResumeText(storedText), "后端已保存的提取文本（未重新提取文件）");
+        }
         byte[] content = intake.getSourcePdf();
         if (content == null || content.length < 5) throw new ApiException(HttpStatus.CONFLICT, "RESUME_SOURCE_PDF_NOT_AVAILABLE", "该简历未保存可重新分析的 PDF 文件");
         try {
             malwareScanner.scan(content);
             String text = imageOcr.supports(content) ? imageOcr.extract(content).text() : documents.extract(content).text();
+            intake.storeExtractedText(text);
             return analyzeText(intake, user, cleanResumeText(text), "后端已保存的 PDF 文件");
         } catch (ApiException exception) { throw exception; }
         catch (RuntimeException exception) { throw new ApiException(HttpStatus.BAD_REQUEST, "RESUME_PDF_REEXTRACT_FAILED", "已保存 PDF 无法重新提取文本"); }

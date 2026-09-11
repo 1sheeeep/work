@@ -98,6 +98,7 @@ public class ResumeDocumentPipelineService {
                 text = extracted.text();
             }
             intake.readyForAi(type, hash(text), malwareScanned, Instant.now());
+            intake.storeExtractedText(text);
             intake.autoApproveForAi(Instant.now());
             updateRecognizedName(candidate, text);
             intake.storeSourcePdf(content);
@@ -134,6 +135,7 @@ public class ResumeDocumentPipelineService {
             }
             intake.processing();
             intake.readyForAi(type, hash(text), scan.scanned(), Instant.now());
+            intake.storeExtractedText(text);
             intake.autoApproveForAi(Instant.now());
             updateRecognizedName(candidate, text);
             intake.storeSourcePdf(content);
@@ -171,6 +173,7 @@ public class ResumeDocumentPipelineService {
         intake.attachSourceEvent(intakeSourceEventDigest);
         intake.processing();
         intake.readyForAi("BOSS_VISIBLE_TEXT", hash(text), false, Instant.now());
+        intake.storeExtractedText(text);
         intake.autoApproveForAi(Instant.now());
         updateRecognizedName(candidate, text);
         audit.systemSuccess("PROCESS_VISIBLE_RESUME_TEXT", "RESUME_INTAKE", intake.getId(),

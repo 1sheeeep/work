@@ -12,6 +12,7 @@ import java.util.UUID;
  @Id private UUID id;@ManyToOne(fetch=FetchType.LAZY,optional=false)@JoinColumn(name="contact_id")private CandidateJobContact contact;@Enumerated(EnumType.STRING)@Column(nullable=false,length=24)private ResumeIntakeSource source;@JdbcTypeCode(SqlTypes.CHAR)@Column(name="resume_digest",nullable=false,length=64,columnDefinition="CHAR(64)")private String resumeDigest;@Column(name="display_label",nullable=false,length=120)private String displayLabel;@Enumerated(EnumType.STRING)@Column(nullable=false,length=24)private ResumeIntakeStatus status;@Column(name="received_at",nullable=false)private Instant receivedAt;@ManyToOne(fetch=FetchType.LAZY)@JoinColumn(name="reviewed_by")private SystemUser reviewedBy;@Column(name="reviewed_at")private Instant reviewedAt;@Column(name="review_note",length=500)private String reviewNote;@Column(name="created_at",nullable=false)private Instant createdAt;@Column(name="updated_at",nullable=false)private Instant updatedAt;
  @Column(name="processing_status",nullable=false,length=32)private String processingStatus="RECEIVED";@Column(name="document_type",length=24)private String documentType;@Column(name="malware_scanned",nullable=false)private boolean malwareScanned;@JdbcTypeCode(SqlTypes.CHAR)@Column(name="extracted_text_digest",length=64,columnDefinition="CHAR(64)")private String extractedTextDigest;@Column(name="failure_code",length=80)private String failureCode;@Column(name="failure_reason",length=300)private String failureReason;@Column(name="processed_at")private Instant processedAt;
  @JdbcTypeCode(SqlTypes.VARBINARY)@Column(name="source_pdf",columnDefinition="bytea")private byte[] sourcePdf;
+ @Column(name="extracted_text",columnDefinition="text")private String extractedText;
  @JdbcTypeCode(SqlTypes.CHAR)@Column(name="source_event_digest",length=64,columnDefinition="CHAR(64)")private String sourceEventDigest;
  @Column(name="source_action_task_id")private UUID sourceActionTaskId;
  @Column(name="analysis_status",nullable=false,length=32)private String analysisStatus="NOT_REQUESTED";@Column(name="analysis_failure_code",length=80)private String analysisFailureCode;@Column(name="analysis_failure_reason",length=300)private String analysisFailureReason;@Column(name="analysis_completed_at")private Instant analysisCompletedAt;
@@ -24,7 +25,10 @@ import java.util.UUID;
  void readyForAi(String type,String textDigest,boolean scanned,Instant now){processingStatus="READY_FOR_AI";documentType=type;extractedTextDigest=textDigest;malwareScanned=scanned;failureCode=null;failureReason=null;processedAt=now;}
  void storeSourcePdf(byte[] content){sourcePdf=content == null ? null : content.clone();}
  void clearSourcePdf(){sourcePdf=null;updatedAt=Instant.now();}
+ void storeExtractedText(String text){extractedText=text == null ? null : text; updatedAt=Instant.now();}
+ void clearExtractedText(){extractedText=null;updatedAt=Instant.now();}
  public byte[] getSourcePdf(){return sourcePdf == null ? null : sourcePdf.clone();}
+ public String getExtractedText(){return extractedText;}
  void processingFailed(String code,String reason,Instant now){processingStatus="FAILED";failureCode=code;failureReason=reason;processedAt=now;}
  void analysisStarted(){analysisStatus="ANALYZING";analysisFailureCode=null;analysisFailureReason=null;analysisCompletedAt=null;}
  void analysisSucceeded(Instant now){analysisStatus="SUCCEEDED";analysisFailureCode=null;analysisFailureReason=null;analysisCompletedAt=now;}

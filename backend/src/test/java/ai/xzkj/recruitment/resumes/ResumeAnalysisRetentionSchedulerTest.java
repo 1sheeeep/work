@@ -68,6 +68,7 @@ class ResumeAnalysisRetentionSchedulerTest {
         scheduler.purgeExpiredSourcePdfs();
 
         verify(intake).clearSourcePdf();
+        verify(intake).clearExtractedText();
         verify(intakes).findSourcePdfsDueForPurge(eq(now.minusSeconds(90 * 24 * 60 * 60)), any(Pageable.class));
     }
 

@@ -98,6 +98,7 @@ public class ExternalResumeAnalysisService {
         ResumeIntake intake = intakes.findByContactIdAndResumeDigest(contact.getId(), documentHash).orElseGet(() ->
                 intakes.save(new ResumeIntake(contact, ResumeIntakeSource.MANUAL, documentHash,
                         "外部 PDF · " + candidateName + (unmatched ? " · 未匹配岗位" : ""), Instant.now())));
+        intake.storeExtractedText(document.text());
         intake.processing();
         intake.readyForAi("PDF", inputHash, scan.scanned(), Instant.now());
         intake.review(ResumeIntakeStatus.APPROVED_FOR_AI, "外部 PDF 拖入并确认 AI 岗位匹配", user, Instant.now());

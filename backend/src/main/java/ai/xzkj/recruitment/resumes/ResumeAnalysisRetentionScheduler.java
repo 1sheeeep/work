@@ -57,8 +57,9 @@ public class ResumeAnalysisRetentionScheduler {
         Instant cutoff = now.minus(java.time.Duration.ofDays(properties.getDays()));
         for (ResumeIntake intake : intakes.findSourcePdfsDueForPurge(cutoff, PageRequest.of(0, properties.getBatchSize()))) {
             intake.clearSourcePdf();
+            intake.clearExtractedText();
             audit.systemSuccess("PURGE_RESUME_SOURCE_PDF", "RESUME_INTAKE", intake.getId(),
-                    intake.getDisplayLabel(), "已按保留策略清除原始 PDF，仅保留摘要、分析状态和审计记录");
+                    intake.getDisplayLabel(), "已按保留策略清除原始 PDF 和提取文本，仅保留摘要、分析状态和审计记录");
         }
     }
 }
