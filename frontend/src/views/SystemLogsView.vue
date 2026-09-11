@@ -43,6 +43,8 @@ const actionLabels: Record<string, string> = {
   TEST_OPENAI_CONNECTION: '测试 AI 服务',
   ENABLE_COMPANY_AI_AUTO_ANALYSIS: '启用公司 AI 自动分析',
   BROWSER_DEVICE_OFFLINE: '浏览器桥接离线', BROWSER_DEVICE_ONLINE: '浏览器桥接恢复',
+  AUTO_REPLY_DIAGNOSTIC_BLOCKED: '自动回复阻塞诊断',
+  AUTO_REPLY_DIAGNOSTIC_RECOVERED: '自动回复诊断恢复',
 }
 const queueState = computed(() => {
   const q = summary.value?.inboundReplyQueue
