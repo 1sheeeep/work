@@ -295,9 +295,22 @@ async function pollInboundReply(payload) {
   const tracked = (runtime.singleAccountProcessedMessages || [])
     .find((item) => item.key === key && item.taskId === payload.taskId && item.outcome === 'PROCESSING');
   if (!tracked) return { ok: true, status: 'CANCELLED' };
-  const result = await request(settings.backendUrl, `/api/local-connector/runtime/inbound-reply-tasks/${payload.taskId}`, {
-    method: 'GET', token: settings.deviceToken, timeoutMs: 8_000,
-  });
+  let result;
+  try {
+    result = await request(settings.backendUrl, `/api/local-connector/runtime/inbound-reply-tasks/${payload.taskId}`, {
+      method: 'GET', token: settings.deviceToken, timeoutMs: 8_000,
+    });
+  } catch (error) {
+    if (error?.status === 404 || error?.code === 'AI_REPLY_TASK_NOT_FOUND') {
+      // A task removed by retention or created under an older pairing can
+      // never become ready. Remove it from local storage instead of polling
+      // the same missing id forever.
+      await updateSingleAccountProcessedMessage(key, 'STALE');
+      await setRuntime({ singleAccountAutoReplyState: 'AI 任务已失效，已清理本地等待记录，继续处理其他会话。' });
+      return { ok: true, status: 'CANCELLED', reason: 'AI 任务不存在或已过期，已停止轮询。' };
+    }
+    throw error;
+  }
   if (!['COMPLETED', 'FAILED'].includes(result?.status)) return { ok: true, status: result?.status || 'QUEUED' };
   const decision = result.decision || { replyAllowed: false, category: 'UNCERTAIN', reason: 'AI 任务未返回有效结果。' };
   if (!decision.replyAllowed) await updateSingleAccountProcessedMessage(key, 'SILENT');
@@ -1222,7 +1235,7 @@ async function doSubmitSnapshot(settings, payload) {
     return { ok: true, skipped: true };
   }
   const sync = await request(settings.backendUrl, '/api/local-connector/runtime/unread-observations', {
-    method: 'POST', token: settings.deviceToken, body: { entries: payload.entries },
+    method: 'POST', token: settings.deviceToken, body: { entries: payload.entries, authoritative: false },
   });
   let detailState = payload.detailStatus?.reason || '尚未复核当前会话详情。';
   if (payload.selected) {
@@ -1322,7 +1335,12 @@ async function request(backendUrl, path, options) {
     throw new Error(`无法连接本机招聘值守台：${safeError(error)}`);
   }
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body?.message || `本地服务返回 HTTP ${response.status}`);
+  if (!response.ok) {
+    const error = new Error(body?.message || `本地服务返回 HTTP ${response.status}`);
+    error.status = response.status;
+    error.code = body?.code || '';
+    throw error;
+  }
   return body;
 }
 
