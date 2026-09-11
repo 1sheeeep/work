@@ -125,6 +125,9 @@ services:
     tmpfs:
       - /config
       - /data
+    networks:
+      - default
+      - public-ingress
 
   prometheus:
     image: prom/prometheus:v3.5.0
@@ -148,3 +151,8 @@ volumes:
   recruitment_postgres_data:
   clamav_signatures:
   recruitment_prometheus_data:
+
+networks:
+  public-ingress:
+    external: true
+    name: xz-erp-public-ingress
