@@ -10,6 +10,8 @@ public interface ConversationMessageRepository extends JpaRepository<Conversatio
     @EntityGraph(attributePaths = {"createdBy"})
     List<ConversationMessage> findTop50ByContactIdOrderByCreatedAtAsc(UUID contactId);
     List<ConversationMessage> findByContactIdOrderByCreatedAtAsc(UUID contactId);
+    @EntityGraph(attributePaths = {"createdBy"})
+    List<ConversationMessage> findTop100ByContactIdOrderByCreatedAtDesc(UUID contactId);
     Optional<ConversationMessage> findByContactIdAndExternalMessageId(UUID contactId, String externalMessageId);
     Optional<ConversationMessage> findByIdAndContactId(UUID id, UUID contactId);
     Optional<ConversationMessage> findFirstByContactIdOrderByCreatedAtDescIdDesc(UUID contactId);

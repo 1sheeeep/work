@@ -42,6 +42,8 @@ public class JobPosition {
     @Column(name = "overseas_requirement", length = 40) private String overseasRequirement;
     @Column(name = "job_keywords", length = 500) private String jobKeywords;
     @Column(name = "work_address", length = 240) private String workAddress;
+    @Column(name = "work_time", length = 240) private String workTime;
+    @Column(name = "benefits", length = 500) private String benefits;
     @Column(nullable = false, columnDefinition = "TEXT") private String description;
     @Column(name = "screening_requirements", columnDefinition = "TEXT") private String screeningRequirements;
     @Column(name = "reply_summary", columnDefinition = "TEXT") private String replySummary;
@@ -125,11 +127,23 @@ public class JobPosition {
 
     public void updateReviewedDetails(String recruitmentType, String jobCategory, String overseasRequirement,
                                       String jobKeywords, String workAddress) {
+        updateReviewedDetails(recruitmentType, jobCategory, overseasRequirement, jobKeywords, workAddress, null, null);
+    }
+
+    public void updateReviewedDetails(String recruitmentType, String jobCategory, String overseasRequirement,
+                                      String jobKeywords, String workAddress, String workTime, String benefits) {
         this.recruitmentType = recruitmentType;
         this.jobCategory = jobCategory;
         this.overseasRequirement = overseasRequirement;
         this.jobKeywords = jobKeywords;
         this.workAddress = workAddress;
+        this.workTime = cleanOptional(workTime);
+        this.benefits = cleanOptional(benefits);
+    }
+
+    public void updateWorkingConditions(String workTime, String benefits) {
+        this.workTime = cleanOptional(workTime);
+        this.benefits = cleanOptional(benefits);
     }
 
     public void markVisiblePageCapture(int completeness) {
@@ -167,7 +181,7 @@ public class JobPosition {
         return applyVisiblePageObservation(sourceKey, observedTitle, observedLocation, observedSalaryMinK,
                 observedSalaryMaxK, observedSalaryMonths, observedExperience, observedEducation,
                 observedDescription, observedSalaryDisplay, observedRecruitmentType, observedJobCategory,
-                observedOverseasRequirement, observedJobKeywords, observedWorkAddress, completeness,
+                observedOverseasRequirement, observedJobKeywords, observedWorkAddress, null, null, completeness,
                 observedAt, false);
     }
 
@@ -178,6 +192,38 @@ public class JobPosition {
                                                String observedSalaryDisplay, String observedRecruitmentType,
                                                String observedJobCategory, String observedOverseasRequirement,
                                                String observedJobKeywords, String observedWorkAddress,
+                                               String observedWorkTime, String observedBenefits,
+                                               int completeness, Instant observedAt) {
+        return applyVisiblePageObservation(sourceKey, observedTitle, observedLocation, observedSalaryMinK,
+                observedSalaryMaxK, observedSalaryMonths, observedExperience, observedEducation,
+                observedDescription, observedSalaryDisplay, observedRecruitmentType, observedJobCategory,
+                observedOverseasRequirement, observedJobKeywords, observedWorkAddress, observedWorkTime,
+                observedBenefits, completeness, observedAt, false);
+    }
+
+    public boolean applyVisiblePageObservation(String sourceKey, String observedTitle, String observedLocation,
+                                               Integer observedSalaryMinK, Integer observedSalaryMaxK,
+                                               Integer observedSalaryMonths, String observedExperience,
+                                               String observedEducation, String observedDescription,
+                                               String observedSalaryDisplay, String observedRecruitmentType,
+                                               String observedJobCategory, String observedOverseasRequirement,
+                                               String observedJobKeywords, String observedWorkAddress,
+                                               int completeness, Instant observedAt, boolean allowManualOverwrite) {
+        return applyVisiblePageObservation(sourceKey, observedTitle, observedLocation, observedSalaryMinK,
+                observedSalaryMaxK, observedSalaryMonths, observedExperience, observedEducation,
+                observedDescription, observedSalaryDisplay, observedRecruitmentType, observedJobCategory,
+                observedOverseasRequirement, observedJobKeywords, observedWorkAddress, null, null,
+                completeness, observedAt, allowManualOverwrite);
+    }
+
+    public boolean applyVisiblePageObservation(String sourceKey, String observedTitle, String observedLocation,
+                                               Integer observedSalaryMinK, Integer observedSalaryMaxK,
+                                               Integer observedSalaryMonths, String observedExperience,
+                                               String observedEducation, String observedDescription,
+                                               String observedSalaryDisplay, String observedRecruitmentType,
+                                               String observedJobCategory, String observedOverseasRequirement,
+                                               String observedJobKeywords, String observedWorkAddress,
+                                               String observedWorkTime, String observedBenefits,
                                                int completeness, Instant observedAt, boolean allowManualOverwrite) {
         this.lastObservedAt = observedAt;
         this.observationCount++;
@@ -207,6 +253,8 @@ public class JobPosition {
         contentChanged |= assignDetail("overseasRequirement", observedOverseasRequirement);
         contentChanged |= assignDetail("jobKeywords", observedJobKeywords);
         contentChanged |= assignDetail("workAddress", observedWorkAddress);
+        contentChanged |= assignDetail("workTime", observedWorkTime);
+        contentChanged |= assignDetail("benefits", observedBenefits);
         if (observedSalaryMinK != null && observedSalaryMaxK != null && observedSalaryMaxK >= observedSalaryMinK) {
             if (salaryMinK != observedSalaryMinK || salaryMaxK != observedSalaryMaxK) contentChanged = true;
             salaryMinK = observedSalaryMinK;
@@ -296,7 +344,9 @@ public class JobPosition {
             case "jobCategory" -> { boolean changed = !clean.equals(jobCategory); jobCategory = clean; yield changed; }
             case "overseasRequirement" -> { boolean changed = !clean.equals(overseasRequirement); overseasRequirement = clean; yield changed; }
             case "jobKeywords" -> { boolean changed = !clean.equals(jobKeywords); jobKeywords = clean; yield changed; }
-            default -> { boolean changed = !clean.equals(workAddress); workAddress = clean; yield changed; }
+            case "workAddress" -> { boolean changed = !clean.equals(workAddress); workAddress = clean; yield changed; }
+            case "workTime" -> { boolean changed = !clean.equals(workTime); workTime = clean; yield changed; }
+            default -> { boolean changed = !clean.equals(benefits); benefits = clean; yield changed; }
         };
     }
 
@@ -336,6 +386,8 @@ public class JobPosition {
     public String getOverseasRequirement() { return overseasRequirement; }
     public String getJobKeywords() { return jobKeywords; }
     public String getWorkAddress() { return workAddress; }
+    public String getWorkTime() { return workTime; }
+    public String getBenefits() { return benefits; }
     public String getDescription() { return description; }
     public String getScreeningRequirements() { return screeningRequirements; }
     public String getReplySummary() { return replySummary; }
@@ -356,4 +408,8 @@ public class JobPosition {
     public long getVersion() { return version; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
+
+    private static String cleanOptional(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
+    }
 }

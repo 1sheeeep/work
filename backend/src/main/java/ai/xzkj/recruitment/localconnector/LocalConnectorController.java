@@ -21,6 +21,7 @@ import jakarta.validation.Valid;import org.springframework.http.HttpHeaders;impo
  @PostMapping("/api/local-connector/runtime/approved-draft-fill/receipt")public ApprovedDraftFillReceiptResponse receiptDraftFill(@RequestHeader(HttpHeaders.AUTHORIZATION)String token,@Valid@RequestBody ApprovedDraftFillReceiptRequest r){return service.receiptApprovedDraftFill(token,r);}
  @GetMapping("/api/local-connector/observations")public List<UnreadObservationResponse> observations(){return service.listUnreadObservations();}
  @GetMapping("/api/local-connector/ai-duty-replies")public List<AiDutyReplyResponse> aiDutyReplies(){return service.listRecentAiDutyReplies();}
+ @GetMapping("/api/local-connector/ai-duty-events")public List<AiDutyEventResponse> aiDutyEvents(){return service.listRecentAiDutyEvents();}
  @GetMapping("/api/local-connector/ai-duty-review-required")public List<AiDutyReviewRequiredResponse> aiDutyReviewRequired(){return service.listRecentAiDutyReviewRequired();}
  @GetMapping("/api/local-connector/ai-reply-quality-summary")public InboundReplyQualitySummaryResponse aiReplyQualitySummary(){return service.inboundReplyQualitySummary();}
  @GetMapping("/api/local-connector/observations/unmatched-job-groups")public List<UnmatchedJobGroupResponse> unmatchedJobGroups(){return service.listUnmatchedJobGroups();}

@@ -1,0 +1,3 @@
+ALTER TABLE job_positions
+    ADD COLUMN IF NOT EXISTS work_time VARCHAR(240),
+    ADD COLUMN IF NOT EXISTS benefits VARCHAR(500);

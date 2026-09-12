@@ -14,6 +14,9 @@ public interface AiAssistanceRunRepository extends JpaRepository<AiAssistanceRun
     List<AiAssistanceRun> findByResumeIntakeIdOrderByCreatedAtDesc(UUID resumeIntakeId);
 
     @EntityGraph(attributePaths = {"resumeIntake", "resumeIntake.contact", "resumeIntake.contact.candidate", "resumeIntake.contact.candidate.company", "resumeIntake.contact.jobPosition", "resumeIntake.contact.bossAccount", "createdBy"})
+    List<AiAssistanceRun> findByResumeIntake_Contact_Candidate_IdOrderByCreatedAtDesc(UUID candidateId);
+
+    @EntityGraph(attributePaths = {"resumeIntake", "resumeIntake.contact", "resumeIntake.contact.candidate", "resumeIntake.contact.candidate.company", "resumeIntake.contact.jobPosition", "resumeIntake.contact.bossAccount", "createdBy"})
     Optional<AiAssistanceRun> findWithDetailsById(UUID id);
 
     @EntityGraph(attributePaths = {"resumeIntake", "resumeIntake.contact", "resumeIntake.contact.candidate", "resumeIntake.contact.candidate.company"})

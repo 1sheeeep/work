@@ -20,6 +20,12 @@ public class CandidateProfile {
     @Column(name = "years_experience") private Integer yearsExperience;
     @Column(length = 80) private String education;
     @Column(name = "skills_summary", columnDefinition = "TEXT") private String skillsSummary;
+    /** 企业范围内用于跨来源合并的不可逆身份摘要，不保存手机号/邮箱原文。 */
+    @JdbcTypeCode(SqlTypes.CHAR) @Column(name = "identity_phone_digest", length = 64, columnDefinition = "CHAR(64)") private String identityPhoneDigest;
+    @JdbcTypeCode(SqlTypes.CHAR) @Column(name = "identity_email_digest", length = 64, columnDefinition = "CHAR(64)") private String identityEmailDigest;
+    @Column(name = "merged_into_id") private UUID mergedIntoId;
+    @Column(name = "merged_at") private Instant mergedAt;
+    @ManyToOne(fetch = FetchType.LAZY) @JoinColumn(name = "merged_by") private ai.xzkj.recruitment.auth.SystemUser mergedBy;
     @Enumerated(EnumType.STRING) @Column(name = "privacy_status", nullable = false, length = 20) private CandidatePrivacyStatus privacyStatus;
     @Version private long version;
     @Column(name = "created_at", nullable = false) private Instant createdAt;
@@ -47,6 +53,25 @@ public class CandidateProfile {
         this.displayName = recognizedName.trim();
     }
 
+    public void updateIdentity(String phoneDigest, String emailDigest) {
+        if (privacyStatus == CandidatePrivacyStatus.ANONYMIZED) return;
+        if (phoneDigest != null && !phoneDigest.isBlank()) this.identityPhoneDigest = phoneDigest;
+        if (emailDigest != null && !emailDigest.isBlank()) this.identityEmailDigest = emailDigest;
+    }
+
+    public void markMerged(UUID primaryCandidateId, ai.xzkj.recruitment.auth.SystemUser user, Instant now) {
+        if (primaryCandidateId == null || primaryCandidateId.equals(id)) throw new IllegalArgumentException("候选人不能合并到自身");
+        this.mergedIntoId = primaryCandidateId;
+        this.mergedBy = user;
+        this.mergedAt = now == null ? Instant.now() : now;
+    }
+
+    public void undoMerge() {
+        this.mergedIntoId = null;
+        this.mergedBy = null;
+        this.mergedAt = null;
+    }
+
     public void anonymize() {
         this.displayName = "已匿名候选人"; this.currentTitle = null; this.yearsExperience = null;
         this.education = null; this.skillsSummary = null; this.privacyStatus = CandidatePrivacyStatus.ANONYMIZED;
@@ -62,6 +87,12 @@ public class CandidateProfile {
     public Integer getYearsExperience() { return yearsExperience; }
     public String getEducation() { return education; }
     public String getSkillsSummary() { return skillsSummary; }
+    public String getIdentityPhoneDigest() { return identityPhoneDigest; }
+    public String getIdentityEmailDigest() { return identityEmailDigest; }
+    public UUID getMergedIntoId() { return mergedIntoId; }
+    public Instant getMergedAt() { return mergedAt; }
+    public ai.xzkj.recruitment.auth.SystemUser getMergedBy() { return mergedBy; }
+    public boolean isMerged() { return mergedIntoId != null; }
     public CandidatePrivacyStatus getPrivacyStatus() { return privacyStatus; }
     public long getVersion() { return version; }
     public Instant getCreatedAt() { return createdAt; }

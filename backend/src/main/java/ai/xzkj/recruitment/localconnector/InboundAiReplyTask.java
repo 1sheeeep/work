@@ -13,6 +13,8 @@ import java.util.UUID;
 @Entity
 @Table(name = "inbound_ai_reply_tasks")
 class InboundAiReplyTask {
+    /** Initial attempt plus at most two retry attempts for transient AI failures. */
+    static final int MAX_AI_ATTEMPTS = 3;
     @Id private UUID id;
     @Version private long version;
     @Column(name="account_id",nullable=false) private UUID accountId;
@@ -63,7 +65,7 @@ class InboundAiReplyTask {
     void start(Instant now){status="PROCESSING";attemptCount++;startedAt=now;updatedAt=now;}
     void complete(InboundJobReplyService.Decision decision,Instant now){if(!"PROCESSING".equals(status))return;status="COMPLETED";replyAllowed=decision.replyAllowed();category=decision.category();confidence=decision.confidence();replyContent=decision.content();resultReason=bounded(decision.reason());sendStatus=decision.replyAllowed()?"READY":"SKIPPED";messageText=null;conversationContext=null;nextAttemptAt=null;lastErrorCode=null;completedAt=now;updatedAt=now;}
     void fail(String reason,Instant now){status="FAILED";replyAllowed=false;category="UNCERTAIN";confidence=0d;replyContent=null;resultReason=bounded(reason);sendStatus="SKIPPED";messageText=null;conversationContext=null;nextAttemptAt=null;completedAt=now;updatedAt=now;}
-    boolean retry(String code,String reason,Instant now){if(attemptCount>=3){lastErrorCode=code;fail(reason,now);return false;}status="RETRY_WAIT";lastErrorCode=code;resultReason=bounded(reason);startedAt=null;nextAttemptAt=now.plusSeconds(5L*(1L<<Math.max(0,attemptCount-1)));updatedAt=now;return true;}
+    boolean retry(String code,String reason,Instant now){if(attemptCount>=MAX_AI_ATTEMPTS){lastErrorCode=code;fail("AI 输出重试已耗尽（"+MAX_AI_ATTEMPTS+" 次）："+reason,now);return false;}status="RETRY_WAIT";lastErrorCode=code;resultReason=bounded(reason);startedAt=null;nextAttemptAt=now.plusSeconds(5L*(1L<<Math.max(0,attemptCount-1)));updatedAt=now;return true;}
     void releaseRetry(Instant now){if("RETRY_WAIT".equals(status)&&nextAttemptAt!=null&&!nextAttemptAt.isAfter(now)){status="QUEUED";updatedAt=now;}}
     void recoverIfStale(Instant now){if("PROCESSING".equals(status)&&startedAt!=null&&Duration.between(startedAt,now).toMinutes()>=3){status="QUEUED";startedAt=null;nextAttemptAt=now;updatedAt=now;}}
     InboundJobReplyService.Decision decision(){return new InboundJobReplyService.Decision(Boolean.TRUE.equals(replyAllowed),category==null?"UNCERTAIN":category,confidence==null?0:confidence,replyContent,resultReason==null?"任务尚未完成":resultReason);}
@@ -75,8 +77,8 @@ class InboundAiReplyTask {
     private String bounded(String value){String clean=value==null?"处理失败":value.replace('\n',' ').replace('\r',' ').trim();return clean.substring(0,Math.min(300,clean.length()));}
 
     UUID getId(){return id;} UUID getAccountId(){return accountId;} UUID getObservationId(){return observationId;} UUID getJobPositionId(){return jobPositionId;}
-    String getMessageText(){return messageText;} String getConversationContext(){return conversationContext;} String getStatus(){return status;} Instant getCreatedAt(){return createdAt;} int getAttemptCount(){return attemptCount;} Instant getNextAttemptAt(){return nextAttemptAt;}
-    String getChatDigest(){return chatDigest;} String getMessageDigest(){return messageDigest;} String getReplyContent(){return replyContent;} String getCategory(){return category;} Double getConfidence(){return confidence;} String getResultReason(){return resultReason;} String getSendStatus(){return sendStatus;} UUID getSendDeviceId(){return sendDeviceId;} String getSendLeaseTokenHash(){return sendLeaseTokenHash;} Instant getSendLeaseUntil(){return sendLeaseUntil;} Instant getCompletedAt(){return completedAt;} Instant getSendCompletedAt(){return sendCompletedAt;}
+    String getMessageText(){return messageText;} String getConversationContext(){return conversationContext;} String getStatus(){return status;} Instant getCreatedAt(){return createdAt;} int getAttemptCount(){return attemptCount;} Instant getNextAttemptAt(){return nextAttemptAt;} String getLastErrorCode(){return lastErrorCode;}
+    String getChatDigest(){return chatDigest;} String getMessageDigest(){return messageDigest;} String getReplyContent(){return replyContent;} String getCategory(){return category;} Double getConfidence(){return confidence;} String getResultReason(){return resultReason;} String getSendStatus(){return sendStatus;} String getSendResultReason(){return sendResultReason;} UUID getSendDeviceId(){return sendDeviceId;} String getSendLeaseTokenHash(){return sendLeaseTokenHash;} Instant getSendLeaseUntil(){return sendLeaseUntil;} Instant getCompletedAt(){return completedAt;} Instant getSendCompletedAt(){return sendCompletedAt;} Instant getUpdatedAt(){return updatedAt;}
     boolean isPartialReply(){return resultReason!=null&&resultReason.startsWith("已部分回答，仍需 HR 补充：");}
     boolean isExpectedSilence(){return resultReason!=null&&resultReason.startsWith("正常静默：");}
     boolean isShadowEvaluation(){return resultReason!=null&&resultReason.startsWith("影子评测：");}

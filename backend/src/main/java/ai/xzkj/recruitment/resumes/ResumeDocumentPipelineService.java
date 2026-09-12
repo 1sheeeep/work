@@ -5,6 +5,7 @@ import ai.xzkj.recruitment.candidates.*;
 import ai.xzkj.recruitment.common.ApiException;
 import ai.xzkj.recruitment.jobs.JobPosition;
 import org.springframework.http.HttpStatus;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -26,6 +27,7 @@ public class ResumeDocumentPipelineService {
     private final ResumeImageOcrClient ocr;
     private final ResumeAnalysisQueueService analysisQueue;
     private final AuditService audit;
+    private final CandidateIdentityService identity;
 
     public ResumeDocumentPipelineService(CandidateProfileRepository candidates,
                                          CandidateJobContactRepository contacts,
@@ -35,6 +37,18 @@ public class ResumeDocumentPipelineService {
                                          ResumeImageOcrClient ocr,
                                          ResumeAnalysisQueueService analysisQueue,
                                          AuditService audit) {
+        this(candidates, contacts, intakes, documents, malware, ocr, analysisQueue, audit, null);
+    }
+
+    @Autowired
+    public ResumeDocumentPipelineService(CandidateProfileRepository candidates,
+                                         CandidateJobContactRepository contacts,
+                                         ResumeIntakeRepository intakes,
+                                         ResumeDocumentTextExtractor documents,
+                                         ResumeMalwareScanner malware,
+                                         ResumeImageOcrClient ocr,
+                                         ResumeAnalysisQueueService analysisQueue,
+                                         AuditService audit, CandidateIdentityService identity) {
         this.candidates = candidates;
         this.contacts = contacts;
         this.intakes = intakes;
@@ -43,6 +57,7 @@ public class ResumeDocumentPipelineService {
         this.ocr = ocr;
         this.analysisQueue = analysisQueue;
         this.audit = audit;
+        this.identity = identity;
     }
 
     @Transactional
@@ -105,6 +120,7 @@ public class ResumeDocumentPipelineService {
             intake.storeExtractedText(text);
             intake.autoApproveForAi(Instant.now());
             updateRecognizedName(candidate, text);
+            if (identity != null) identity.updateFromResume(candidate, identity.extractPhone(text), identity.extractEmail(text));
             intake.storeSourcePdf(content);
             audit.systemSuccess("PROCESS_VISIBLE_RESUME", "RESUME_INTAKE", intake.getId(),
                     "简历摘要 " + documentDigest.substring(0, 12),
@@ -142,6 +158,7 @@ public class ResumeDocumentPipelineService {
             intake.storeExtractedText(text);
             intake.autoApproveForAi(Instant.now());
             updateRecognizedName(candidate, text);
+            if (identity != null) identity.updateFromResume(candidate, identity.extractPhone(text), identity.extractEmail(text));
             intake.storeSourcePdf(content);
             analysisQueue.enqueue(intake);
             audit.systemSuccess("RETRY_RESUME_ANALYSIS", "RESUME_INTAKE", intake.getId(),
@@ -159,10 +176,13 @@ public class ResumeDocumentPipelineService {
         if (text.length() < 100 || text.length() > 30_000)
             throw new ApiException(HttpStatus.BAD_REQUEST, "VISIBLE_RESUME_TEXT_INVALID", "在线简历文本长度无效");
         String documentDigest = hash(text);
-        CandidateProfile candidate = candidates.findByCompanyIdAndSourceAndDedupKey(
-                        job.getCompany().getId(), CandidateSource.BOSS, chatDigest)
-                .orElseGet(() -> candidates.save(new CandidateProfile(job.getCompany(), CandidateSource.BOSS,
-                        chatDigest, "匿名候选人 " + chatDigest.substring(0, 8), null, null, null, null)));
+        CandidateProfile candidate = identity == null
+                ? candidates.findByCompanyIdAndSourceAndDedupKey(job.getCompany().getId(), CandidateSource.BOSS, chatDigest)
+                    .orElseGet(() -> candidates.save(new CandidateProfile(job.getCompany(), CandidateSource.BOSS,
+                            chatDigest, "匿名候选人 " + chatDigest.substring(0, 8), null, null, null, null)))
+                : identity.resolve(job.getCompany(), CandidateSource.BOSS, chatDigest,
+                    "匿名候选人 " + chatDigest.substring(0, Math.min(8, chatDigest.length())),
+                    null, null, null, null, identity.extractPhone(text), identity.extractEmail(text));
         CandidateJobContact contact = contacts.findByCandidateIdAndJobPositionId(candidate.getId(), job.getId())
                 .orElseGet(() -> contacts.save(new CandidateJobContact(candidate, job, job.getBossAccount())));
         ResumeIntake sameEvent = intakes.findByContactIdAndSourceEventDigest(contact.getId(), sourceEventDigest).orElse(null);
@@ -180,6 +200,7 @@ public class ResumeDocumentPipelineService {
         intake.storeExtractedText(text);
         intake.autoApproveForAi(Instant.now());
         updateRecognizedName(candidate, text);
+        if (identity != null) identity.updateFromResume(candidate, identity.extractPhone(text), identity.extractEmail(text));
         audit.systemSuccess("PROCESS_VISIBLE_RESUME_TEXT", "RESUME_INTAKE", intake.getId(),
                 "简历摘要 " + documentDigest.substring(0, 12),
                 "已从当前真实 BOSS 在线简历提取必要文本并绑定当前会话与岗位；仅保存摘要，不保存正文");

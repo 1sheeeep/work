@@ -9,6 +9,7 @@ import ai.xzkj.recruitment.candidates.CandidateJobContactRepository;
 import ai.xzkj.recruitment.candidates.CandidateProfile;
 import ai.xzkj.recruitment.candidates.CandidateProfileRepository;
 import ai.xzkj.recruitment.candidates.CandidateSource;
+import ai.xzkj.recruitment.candidates.CandidateIdentityService;
 import ai.xzkj.recruitment.common.ApiException;
 import ai.xzkj.recruitment.jobs.JobPosition;
 import ai.xzkj.recruitment.jobs.JobPositionRepository;
@@ -41,6 +42,7 @@ public class ExternalResumeAnalysisService {
     private final ResumeAnalysisRetentionProperties retention;
     private final ObjectMapper mapper;
     private final AuditService audit;
+    private final CandidateIdentityService identity;
 
     public ExternalResumeAnalysisService(JobPositionRepository jobs, CandidateProfileRepository candidates,
                                          CandidateJobContactRepository contacts, ResumeIntakeRepository intakes,
@@ -48,7 +50,7 @@ public class ExternalResumeAnalysisService {
                                          ResumeDocumentTextExtractor documents, ResumeMalwareScanner malware,
                                          ExternalResumeAiClient client, OpenAiProperties properties,
                                          ResumeAnalysisRetentionProperties retention, ObjectMapper mapper,
-                                         AuditService audit) {
+                                         AuditService audit, CandidateIdentityService identity) {
         this.jobs = jobs;
         this.candidates = candidates;
         this.contacts = contacts;
@@ -62,6 +64,7 @@ public class ExternalResumeAnalysisService {
         this.retention = retention;
         this.mapper = mapper;
         this.audit = audit;
+        this.identity = identity;
     }
 
     @Transactional(noRollbackFor = ApiException.class)
@@ -88,11 +91,10 @@ public class ExternalResumeAnalysisService {
         JobPosition selectedJob = matchedJob;
         Company company = selectedJob.getCompany();
         String documentHash = document.documentHash();
-        CandidateProfile candidate = candidates.findByCompanyIdAndSourceAndDedupKey(company.getId(), CandidateSource.MANUAL, documentHash)
-                .orElseGet(() -> candidates.save(new CandidateProfile(company, CandidateSource.MANUAL, documentHash,
-                        candidateName, null, null, null, null)));
-        candidate.refresh(candidateName, candidate.getCurrentTitle(), candidate.getYearsExperience(),
-                candidate.getEducation(), candidate.getSkillsSummary());
+        String phone = identity.extractPhone(document.text());
+        String email = identity.extractEmail(document.text());
+        CandidateProfile candidate = identity.resolve(company, CandidateSource.MANUAL, documentHash,
+                candidateName, null, null, null, null, phone, email);
         CandidateJobContact contact = contacts.findByCandidateIdAndJobPositionId(candidate.getId(), selectedJob.getId())
                 .orElseGet(() -> contacts.save(new CandidateJobContact(candidate, selectedJob, selectedJob.getBossAccount())));
         ResumeIntake intake = intakes.findByContactIdAndResumeDigest(contact.getId(), documentHash).orElseGet(() ->

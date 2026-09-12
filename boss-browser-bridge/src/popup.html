@@ -23,6 +23,9 @@
       <div class="continuous-reply-heading"><div><strong id="continuousReplyTitle">当前账号·全未读自动回复</strong><small id="continuousReplyState">当前未开启</small></div><span id="continuousReplyBadge" class="badge">已停止</span></div>
       <p>由招聘值守台 Dashboard 统一开启或停止。开启后立即处理当前未读，并持续监测新来信。</p>
       <small id="lastContinuousReply"></small>
+      <div class="trace-heading"><strong>自动回复运行日志</strong><button id="copyAutoReplyTrace" class="secondary" type="button" disabled>一键复制日志</button></div>
+      <small id="autoReplyTraceSummary" class="trace-summary">日志汇总：暂无</small>
+      <pre id="autoReplyTraceLog" class="auto-reply-trace-log" aria-live="polite">尚无运行日志。</pre>
     </section>
     <details class="tool-group"><summary><span>页面与职位工具</span><small>同步职位、检查回复入口</small></summary><div class="tool-content">
       <div class="tool-item"><strong>职位同步</strong><span id="jobState">尚未同步职位页面。</span><small id="lastJobSync"></small><button id="collectJobs" class="secondary" type="button">同步当前职位页</button></div>

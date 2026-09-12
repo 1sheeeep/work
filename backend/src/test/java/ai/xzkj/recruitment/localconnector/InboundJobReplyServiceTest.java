@@ -7,6 +7,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class InboundJobReplyServiceTest {
     @Test
@@ -145,6 +146,37 @@ class InboundJobReplyServiceTest {
                 new InboundJobReplyService.Topic("SOCIAL_ACKNOWLEDGEMENT", List.of(), true, .92, "REPLY", "LOW"),
                 memory);
 
+        assertEquals("候选人仅确认收到或自然结束，本轮不追加机械客套", reason);
+    }
+
+    @Test
+    void actionableCandidateMessagesCannotBeSilencedByLeadingGreeting() {
+        List<String> messages = List.of(
+                "Boss您好，我是26年毕业生，可以和您进一步沟通AI应用开发助理这个职位吗？",
+                "您好，可以聊聊吗？您这个职位我很有兴趣，希望进一步了解",
+                "Boss您好，我对您发布的职位非常感兴趣，可以把简历发给您吗？",
+                "你好，非常喜欢这个岗位，一定能够努力胜任，期待您的回复");
+
+        for (String message : messages) {
+            assertTrue(InboundJobReplyService.hasActionableRecruitmentSignal(message), message);
+            InboundJobReplyService.Topic reinforced = InboundJobReplyService.reinforceActionableTopic(
+                    message, new InboundJobReplyService.Topic(
+                            "SOCIAL_GREETING", List.of(), true, .95, "NO_REPLY", "LOW"));
+            assertEquals("REPLY", reinforced.action(), message);
+            assertTrue(reinforced.relevant(), message);
+            assertNull(InboundJobReplyService.expectedSilenceReason(
+                    reinforced,
+                    InboundJobReplyService.ConversationMemory.empty(),
+                    message), message);
+        }
+    }
+
+    @Test
+    void pureCourtesyStillUsesExpectedSilence() {
+        assertTrue(!InboundJobReplyService.hasActionableRecruitmentSignal("好的，谢谢您"));
+        String reason = InboundJobReplyService.expectedSilenceReason(
+                new InboundJobReplyService.Topic("SOCIAL_ACKNOWLEDGEMENT", List.of(), true, .92, "REPLY", "LOW"),
+                InboundJobReplyService.ConversationMemory.empty(), "好的，谢谢您");
         assertEquals("候选人仅确认收到或自然结束，本轮不追加机械客套", reason);
     }
 

@@ -5,6 +5,7 @@ const RUNTIME_KEY = 'bridgeRuntimeV1';
 const ALARM_NAME = 'bridge-observe';
 const MIN_SYNC_INTERVAL_MS = 10_000;
 const BOSS_TAB_PATTERNS = ['https://zhipin.com/*', 'https://*.zhipin.com/*'];
+const AUTO_REPLY_TRACE_LIMIT = 200;
 let syncInFlight = null;
 let jobSyncInFlight = null;
 let actionExecutionInFlight = null;
@@ -37,7 +38,10 @@ async function flashActionBadge(text, color) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  void handleMessage(message, sender).then(sendResponse).catch((error) => sendResponse({ ok: false, error: safeError(error) }));
+  void handleMessage(message, sender).then(sendResponse).catch((error) => sendResponse({
+    ok: false, error: safeError(error), code: String(error?.code || '').slice(0, 80),
+    status: Number.isInteger(error?.status) ? error.status : null,
+  }));
   return true;
 });
 
@@ -203,6 +207,9 @@ async function handleMessage(message, sender) {
     case 'BRIDGE_SINGLE_ACCOUNT_AUTO_REPLY_STATE':
       if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的持续回复状态。');
       return recordSingleAccountAutoReplyState(message.payload);
+    case 'BRIDGE_AUTO_REPLY_TRACE':
+      if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的自动回复诊断日志。');
+      return recordAutoReplyTrace(message.payload);
     case 'BRIDGE_RESUME_PREVIEW_CLICK_DIAGNOSTIC':
       if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的简历预览诊断。');
       return recordResumePreviewClickDiagnostic(message.payload);
@@ -415,6 +422,41 @@ async function receiptInboundReplySend(payload) {
   return request(settings.backendUrl, '/api/local-connector/runtime/inbound-reply-send/receipt', {
     method: 'POST', token: settings.deviceToken, body: payload, timeoutMs: 8_000,
   });
+}
+
+async function recordAutoReplyTrace(payload) {
+  if (!payload || typeof payload.stage !== 'string' || !/^[A-Z][A-Z0-9_]{1,47}$/.test(payload.stage)
+      || (payload.outcome != null && (typeof payload.outcome !== 'string' || payload.outcome.length > 24))
+      || (payload.reason != null && (typeof payload.reason !== 'string' || payload.reason.length > 300))
+      || (payload.runId != null && (typeof payload.runId !== 'string' || payload.runId.length > 64))
+      || (payload.chatDigest != null && !/^[a-f0-9]{1,64}$/.test(payload.chatDigest))
+      || (payload.messageDigest != null && !/^[a-f0-9]{1,64}$/.test(payload.messageDigest))
+      || (payload.taskId != null && (typeof payload.taskId !== 'string' || payload.taskId.length > 80))
+      || (payload.queuePosition != null && (!Number.isInteger(payload.queuePosition) || payload.queuePosition < 0 || payload.queuePosition > 500))
+      || (payload.attempt != null && (!Number.isInteger(payload.attempt) || payload.attempt < 0 || payload.attempt > 100))
+      || (payload.elapsedMs != null && (!Number.isFinite(payload.elapsedMs) || payload.elapsedMs < 0 || payload.elapsedMs > 900_000))) {
+    throw new Error('自动回复诊断日志无效。');
+  }
+  const occurredAt = Number.isFinite(Date.parse(payload.occurredAt))
+    ? new Date(payload.occurredAt).toISOString() : new Date().toISOString();
+  const event = {
+    occurredAt,
+    stage: payload.stage,
+    outcome: String(payload.outcome || 'INFO').slice(0, 24),
+    runId: payload.runId ? payload.runId.slice(0, 64) : null,
+    chatDigest: payload.chatDigest ? payload.chatDigest.slice(0, 12) : null,
+    messageDigest: payload.messageDigest ? payload.messageDigest.slice(0, 12) : null,
+    taskId: payload.taskId ? payload.taskId.slice(0, 80) : null,
+    queuePosition: Number.isInteger(payload.queuePosition) ? payload.queuePosition : null,
+    attempt: Number.isInteger(payload.attempt) ? payload.attempt : null,
+    elapsedMs: Number.isFinite(payload.elapsedMs) ? Math.round(payload.elapsedMs) : null,
+    reason: String(payload.reason || '').slice(0, 300),
+  };
+  await mutateRuntime((runtime) => ({
+    autoReplyTrace: [...(Array.isArray(runtime.autoReplyTrace) ? runtime.autoReplyTrace : []), event].slice(-AUTO_REPLY_TRACE_LIMIT),
+    lastAutoReplyTraceAt: occurredAt,
+  }));
+  return { ok: true };
 }
 
 async function recordSingleAccountAutoReplyResult(payload) {

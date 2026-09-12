@@ -2,13 +2,18 @@
 import PageHeader from '../components/PageHeader.vue'
 import AsyncState from '../components/AsyncState.vue'
 import MetricCard from '../components/MetricCard.vue'
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { Check, Cpu, InfoFilled, Refresh, UploadFilled, Warning } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import { api, apiErrorMessage, ensureCsrf } from '../services/api'
 import { authStore } from '../stores/auth'
 import type {
   CandidateContact,
+  CandidateDuplicateGroup,
+  CandidateDuplicatePreview,
+  CandidateMergeOperation,
+  CandidateMergePreview,
+  CandidateMergeRequest,
   Company,
   OpenAiConfigurationStatus,
   ResumeAnalysisFeedbackType,
@@ -17,6 +22,8 @@ import type {
   ResumeAnalysisRun,
   ResumeIntake,
   ResumeIntakeStatus,
+  TalentCandidateDetail,
+  TalentCandidatePage,
 } from '../types'
 
 type ResumeDocumentPreview = {
@@ -48,9 +55,26 @@ const selectedIntakeId = ref('')
 const draggingId = ref('')
 const dragOver = ref(false)
 const analysisByIntake = ref<Record<string, ResumeAnalysisRun[]>>({})
+const talentPage = ref<TalentCandidatePage | null>(null)
+const talentDetails = ref<Record<string, TalentCandidateDetail>>({})
+const talentDetailLoading = ref(false)
+const talentDetailError = ref('')
 const autoAnalysisDialogOpen = ref(false)
 const autoAnalysisSaving = ref(false)
 const autoAnalysisForm = reactive({ enabled: false, resumeProcessingAuthorized: false, candidateNoticeConfirmed: false, retentionPolicyConfirmed: false })
+const duplicateDialogOpen = ref(false)
+const mergePreviewDialogOpen = ref(false)
+const duplicateLoading = ref(false)
+const duplicateError = ref('')
+const mergePreviewLoading = ref(false)
+const mergeSubmitting = ref(false)
+const undoingOperationId = ref('')
+const duplicatePreview = ref<CandidateDuplicatePreview | null>(null)
+const selectedDuplicateGroupId = ref('')
+const selectedPrimaryCandidateId = ref('')
+const selectedDuplicateCandidateIds = ref<string[]>([])
+const mergePreview = ref<CandidateMergePreview | null>(null)
+const mergeOperations = ref<CandidateMergeOperation[]>([])
 
 const form = reactive({ contactId: '', displayLabel: '候选人已提供附件简历', reference: '' })
 const feedbackForm = reactive({ runId: '', feedbackType: 'ADOPTED' as ResumeAnalysisFeedbackType, note: '' })
@@ -67,8 +91,15 @@ const analyzed = computed(() => intakes.value.filter((item) => latestAnalysis(it
 const bossIntakes = computed(() => intakes.value.filter((item) => item.source === 'BOSS_VISIBLE').length)
 const selectedIntake = computed(() => intakes.value.find((item) => item.id === selectedIntakeId.value))
 const selectedAnalysis = computed(() => selectedIntake.value ? latestAnalysis(selectedIntake.value.id) : undefined)
+const selectedCandidateId = computed(() => selectedIntake.value
+  ? contacts.value.find((item) => item.id === selectedIntake.value?.contactId)?.candidateId
+  : undefined)
+const selectedTalentDetail = computed(() => selectedCandidateId.value ? talentDetails.value[selectedCandidateId.value] : undefined)
 const candidateOptions = computed(() => contacts.value.filter((item) => item.privacyStatus === 'ACTIVE'))
 const canConfigureAutoAnalysis = computed(() => authStore.state.user?.role === 'SYSTEM_ADMIN')
+const canManageCandidateMerge = computed(() => ['SYSTEM_ADMIN', 'RECRUITMENT_ADMIN'].includes(authStore.state.user?.role ?? ''))
+const selectedDuplicateGroup = computed<CandidateDuplicateGroup | undefined>(() => duplicatePreview.value?.groups.find((group) => group.groupId === selectedDuplicateGroupId.value))
+const selectedDuplicateCandidates = computed(() => selectedDuplicateGroup.value?.candidates.filter((candidate) => candidate.candidateId !== selectedPrimaryCandidateId.value) ?? [])
 const analysisCompany = computed(() => {
   const companyId = selectedIntake.value?.companyId || intakes.value[0]?.companyId
   return companies.value.find((company) => company.id === companyId) || companies.value.find((company) => company.status === 'ACTIVE')
@@ -143,6 +174,20 @@ function selectIntake(id: string) {
   selectedIntakeId.value = id
 }
 
+async function loadTalentDetail(candidateId: string) {
+  if (talentDetails.value[candidateId]) return
+  talentDetailLoading.value = true
+  talentDetailError.value = ''
+  try {
+    const { data } = await api.get<TalentCandidateDetail>(`/talent-candidates/${candidateId}`)
+    talentDetails.value = { ...talentDetails.value, [candidateId]: data }
+  } catch {
+    talentDetailError.value = '人才档案暂时无法加载，简历分析仍可继续使用。'
+  } finally {
+    talentDetailLoading.value = false
+  }
+}
+
 function startDrag(event: DragEvent, item: ResumeIntake) {
   if (item.source !== 'BOSS_VISIBLE') return
   draggingId.value = item.id
@@ -194,6 +239,12 @@ async function load(silentOrEvent: boolean | Event = false) {
     contacts.value = contactResult.data
     aiStatus.value = aiResult.data
     companies.value = companyResult.data
+    try {
+      const { data } = await api.get<TalentCandidatePage>('/talent-candidates/page?page=0&pageSize=100')
+      talentPage.value = data
+    } catch {
+      talentPage.value = null
+    }
     await loadAnalysis(intakes.value)
     const arrived = intakes.value.find((item) => !previousIds.has(item.id) && item.source === 'BOSS_VISIBLE')
     if (silent && arrived) {
@@ -210,6 +261,135 @@ async function load(silentOrEvent: boolean | Event = false) {
     errorMessage.value = apiErrorMessage(error, '简历分析暂时无法加载')
   } finally {
     if (!silent) loading.value = false
+  }
+}
+
+watch(selectedCandidateId, (candidateId) => {
+  if (candidateId) void loadTalentDetail(candidateId)
+}, { immediate: true })
+
+function confidenceLabel(confidence: CandidateDuplicateGroup['confidence']) {
+  return confidence === 'HIGH' ? '高置信度' : confidence === 'MEDIUM' ? '中置信度' : '低置信度'
+}
+
+function selectDuplicateGroup(group: CandidateDuplicateGroup) {
+  selectedDuplicateGroupId.value = group.groupId
+  selectedPrimaryCandidateId.value = group.suggestedPrimaryCandidateId || group.candidates[0]?.candidateId || ''
+  selectedDuplicateCandidateIds.value = group.candidates
+    .map((candidate) => candidate.candidateId)
+    .filter((candidateId) => candidateId !== selectedPrimaryCandidateId.value)
+}
+
+watch(selectedPrimaryCandidateId, (primaryCandidateId) => {
+  if (primaryCandidateId) {
+    selectedDuplicateCandidateIds.value = selectedDuplicateCandidateIds.value.filter((candidateId) => candidateId !== primaryCandidateId)
+  }
+})
+
+async function loadMergeOperations() {
+  try {
+    const { data } = await api.get<CandidateMergeOperation[]>('/talent-candidates/merge/operations?activeOnly=true')
+    mergeOperations.value = data
+  } catch {
+    mergeOperations.value = []
+  }
+}
+
+async function openDuplicateScan() {
+  duplicateDialogOpen.value = true
+  duplicateLoading.value = true
+  duplicateError.value = ''
+  duplicatePreview.value = null
+  selectedDuplicateGroupId.value = ''
+  selectedPrimaryCandidateId.value = ''
+  selectedDuplicateCandidateIds.value = []
+  await Promise.all([
+    (async () => {
+      try {
+        const { data } = await api.get<CandidateDuplicatePreview>('/talent-candidates/duplicate-preview')
+        duplicatePreview.value = data
+        if (data.groups[0]) selectDuplicateGroup(data.groups[0])
+      } catch (error) {
+        duplicateError.value = apiErrorMessage(error, '重复候选人扫描失败，请检查本地后端是否包含最新接口')
+      }
+    })(),
+    loadMergeOperations(),
+  ])
+  duplicateLoading.value = false
+}
+
+async function previewCandidateMerge() {
+  if (!selectedPrimaryCandidateId.value || !selectedDuplicateCandidateIds.value.length) {
+    ElMessage.warning('请选择主档案和至少一个待合并档案')
+    return
+  }
+  const payload: CandidateMergeRequest = {
+    primaryCandidateId: selectedPrimaryCandidateId.value,
+    duplicateCandidateIds: selectedDuplicateCandidateIds.value,
+  }
+  mergePreviewLoading.value = true
+  try {
+    await ensureCsrf()
+    const { data } = await api.post<CandidateMergePreview>('/talent-candidates/merge/preview', payload)
+    mergePreview.value = data
+    mergePreviewDialogOpen.value = true
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error, '合并预览生成失败'))
+  } finally {
+    mergePreviewLoading.value = false
+  }
+}
+
+async function confirmCandidateMerge() {
+  if (!mergePreview.value) return
+  try {
+    await ElMessageBox.confirm('合并后重复档案会保留为别名，支持从操作记录撤销。是否确认继续？', '确认合并候选人档案', {
+      type: 'warning',
+      confirmButtonText: '确认合并',
+      cancelButtonText: '返回检查',
+    })
+  } catch {
+    return
+  }
+  mergeSubmitting.value = true
+  try {
+    await ensureCsrf()
+    await api.post<CandidateMergeOperation>('/talent-candidates/merge', {
+      primaryCandidateId: mergePreview.value.primaryCandidateId,
+      duplicateCandidateIds: mergePreview.value.duplicateCandidateIds,
+    } satisfies CandidateMergeRequest)
+    mergePreviewDialogOpen.value = false
+    duplicateDialogOpen.value = false
+    ElMessage.success('候选人档案已合并，原档案保留为可撤销别名')
+    await load()
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error, '候选人档案合并失败'))
+  } finally {
+    mergeSubmitting.value = false
+  }
+}
+
+async function undoCandidateMerge(operation: CandidateMergeOperation) {
+  try {
+    await ElMessageBox.confirm('撤销后将恢复本次合并前的档案视图，是否继续？', '撤销候选人合并', {
+      type: 'warning',
+      confirmButtonText: '确认撤销',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return
+  }
+  undoingOperationId.value = operation.operationId
+  try {
+    await ensureCsrf()
+    await api.post(`/talent-candidates/merge/${operation.operationId}/undo`)
+    ElMessage.success('最近一次候选人合并已撤销')
+    await loadMergeOperations()
+    await load()
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error, '候选人合并撤销失败'))
+  } finally {
+    undoingOperationId.value = ''
   }
 }
 
@@ -500,6 +680,7 @@ function showAnalysisHelp() {
       </div>
       <div class="heading-actions">
         <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
+        <el-button v-if="canManageCandidateMerge" :loading="duplicateLoading" @click="openDuplicateScan">重复档案</el-button>
         <el-button type="primary" :icon="UploadFilled" @click="openCreate">人工补录</el-button>
       </div>
     </PageHeader>
@@ -531,7 +712,7 @@ function showAnalysisHelp() {
 
       <section v-else class="analysis-workspace">
         <aside class="surface-panel section-card card-panel resume-queue-panel">
-          <div class="section-title-row queue-heading"><div><span class="section-kicker">待选择</span><h2>简历队列</h2><p>{{ intakes.length }} 份简历 · BOSS 简历可拖拽<el-button :icon="InfoFilled" size="small" type="text" @click="showQueueHelp">查看说明</el-button></p></div></div>
+          <div class="section-title-row queue-heading"><div><span class="section-kicker">待选择</span><h2>简历队列</h2><p>{{ talentPage?.total ?? 0 }} 位候选人 · {{ intakes.length }} 份简历 · BOSS 简历可拖拽<el-button :icon="InfoFilled" size="small" type="text" @click="showQueueHelp">查看说明</el-button></p></div></div>
           <div class="ai-service-inline" :class="{ 'ai-service-inline--ready': aiStatus?.ready }" aria-label="AI 分析服务状态">
             <span class="ai-service-inline__mark"><el-icon><Cpu /></el-icon></span>
             <div>
@@ -618,6 +799,26 @@ function showAnalysisHelp() {
                 <el-tag :type="analysisTagType(selectedIntake)">{{ analysisLabel(selectedIntake) }}</el-tag>
               </div>
             </header>
+
+            <section class="talent-profile-strip" aria-label="人才档案摘要">
+              <div class="talent-profile-strip__heading">
+                <div>
+                  <span class="section-kicker">人才档案</span>
+                  <strong>{{ selectedTalentDetail?.candidate.currentTitle || selectedIntake.candidateName }}</strong>
+                </div>
+                <el-tag v-if="selectedTalentDetail" type="success" effect="light">已关联人才库</el-tag>
+                <el-tag v-else-if="talentDetailLoading" type="info" effect="light">档案加载中</el-tag>
+                <el-tag v-else type="warning" effect="light">暂未加载档案</el-tag>
+              </div>
+              <div v-if="selectedTalentDetail" class="talent-profile-strip__meta">
+                <span>关联岗位 {{ selectedTalentDetail.contacts.length }} 个</span>
+                <span>简历版本 {{ selectedTalentDetail.resumes.length }} 份</span>
+                <span>沟通记录 {{ selectedTalentDetail.timeline.filter((event) => event.type === 'CONVERSATION').length }} 条</span>
+              </div>
+              <p v-if="selectedTalentDetail?.candidate.skillsSummary" class="talent-profile-strip__skills">技能摘要：{{ selectedTalentDetail.candidate.skillsSummary }}</p>
+              <p v-else-if="talentDetailError" class="talent-profile-strip__error">{{ talentDetailError }}</p>
+              <p v-else class="talent-profile-strip__empty">人才档案将随当前简历关联后显示。</p>
+            </section>
 
             <div v-if="selectedIntake.processingStatus === 'FAILED' || selectedIntake.analysisFailureCode" class="decision-card decision-card--danger card-emphasis card-emphasis--danger status-alert status-alert--danger">
               <strong>此简历需要处理</strong>
@@ -809,6 +1010,73 @@ function showAnalysisHelp() {
       </el-form>
       <template #footer><el-button @click="textDialogOpen = false">暂不提交</el-button><el-button type="primary" :loading="analyzingId === analysisForm.intakeId" @click="submitTextAnalysis">确认并发送给 AI</el-button></template>
     </el-dialog>
+
+    <el-dialog append-to-body v-model="duplicateDialogOpen" title="重复候选人扫描" width="820px" class="duplicate-dialog">
+      <div v-if="duplicatePreview || duplicateLoading" class="merge-dialog-summary" aria-live="polite">
+        <span>扫描 {{ duplicatePreview?.scannedCandidates ?? 0 }} 份人才档案</span>
+        <strong>{{ duplicatePreview?.duplicateGroups ?? 0 }} 个重复分组</strong>
+        <small v-if="duplicatePreview">生成于 {{ formatDate(duplicatePreview.generatedAt) }}</small>
+      </div>
+      <AsyncState v-if="duplicateLoading" state="loading" title="正在扫描重复候选人" message="仅比较后端提供的安全摘要，不读取手机号、邮箱或简历正文。" />
+      <AsyncState v-else-if="duplicateError" state="error" title="重复候选人扫描失败" :message="duplicateError" @retry="openDuplicateScan" />
+      <AsyncState v-else-if="!duplicatePreview?.groups.length" state="empty" title="暂未发现重复候选人" message="系统会优先依据手机号、邮箱或简历摘要判断；仅同名不会自动合并。" />
+      <div v-else class="duplicate-workspace">
+        <div class="duplicate-groups" role="listbox" aria-label="重复候选人分组">
+          <button v-for="group in duplicatePreview.groups" :key="group.groupId" type="button" class="duplicate-group" :class="{ 'duplicate-group--selected': selectedDuplicateGroupId === group.groupId }" :aria-selected="selectedDuplicateGroupId === group.groupId" @click="selectDuplicateGroup(group)">
+            <span class="duplicate-group__title">{{ confidenceLabel(group.confidence) }}</span>
+            <strong>{{ group.candidates.length }} 份档案</strong>
+            <small>{{ group.reasons[0] || group.recommendation }}</small>
+          </button>
+        </div>
+        <section v-if="selectedDuplicateGroup" class="duplicate-detail" aria-label="重复档案选择">
+          <div class="merge-section-heading"><div><span class="section-kicker">选择主档案</span><h3>保留哪个档案作为主记录？</h3></div><el-tag size="small" type="info">{{ confidenceLabel(selectedDuplicateGroup.confidence) }}</el-tag></div>
+          <el-radio-group v-model="selectedPrimaryCandidateId" class="candidate-choice-list" aria-label="主档案">
+            <label v-for="candidate in selectedDuplicateGroup.candidates" :key="candidate.candidateId" class="candidate-choice">
+              <el-radio :value="candidate.candidateId">{{ candidate.displayName }}</el-radio>
+              <span>{{ candidate.companyName }} · {{ candidate.resumeCount }} 份简历 · {{ candidate.contactCount }} 个岗位关联</span>
+              <small>{{ candidate.latestAnalysisStatus || '尚无 AI 分析' }} · {{ candidate.source }}</small>
+            </label>
+          </el-radio-group>
+          <div class="merge-section-heading merge-section-heading--duplicates"><div><span class="section-kicker">合并来源</span><h3>选择需要归入主档案的重复记录</h3></div><span>{{ selectedDuplicateCandidateIds.length }} 份</span></div>
+          <el-checkbox-group v-model="selectedDuplicateCandidateIds" class="candidate-choice-list" aria-label="待合并档案">
+            <label v-for="candidate in selectedDuplicateCandidates" :key="candidate.candidateId" class="candidate-choice candidate-choice--duplicate">
+              <el-checkbox :value="candidate.candidateId">{{ candidate.displayName }}</el-checkbox>
+              <span>{{ candidate.companyName }} · {{ candidate.resumeCount }} 份简历 · {{ candidate.contactCount }} 个岗位关联</span>
+              <small>{{ candidate.latestAnalysisStatus || '尚无 AI 分析' }} · {{ candidate.source }}</small>
+            </label>
+          </el-checkbox-group>
+          <div class="merge-reasons"><strong>判定依据</strong><span v-for="reason in selectedDuplicateGroup.reasons" :key="reason">{{ reason }}</span></div>
+        </section>
+      </div>
+      <section v-if="mergeOperations.length" class="merge-operations" aria-label="可撤销的合并操作">
+        <div class="merge-section-heading"><div><span class="section-kicker">操作记录</span><h3>最近合并</h3></div><small>原档案保留为别名，可撤销</small></div>
+        <div v-for="operation in mergeOperations" :key="operation.operationId" class="merge-operation-row">
+          <span>{{ operation.mergedCandidateIds.length }} 份档案 → 主档案 {{ operation.primaryCandidateId.slice(0, 8) }}</span>
+          <el-button link type="warning" :loading="undoingOperationId === operation.operationId" @click="undoCandidateMerge(operation)">撤销</el-button>
+        </div>
+      </section>
+      <template #footer>
+        <el-button @click="duplicateDialogOpen = false">关闭</el-button>
+        <el-button type="primary" :loading="mergePreviewLoading" :disabled="!selectedPrimaryCandidateId || !selectedDuplicateCandidateIds.length" @click="previewCandidateMerge">查看最终预览</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog append-to-body v-model="mergePreviewDialogOpen" title="最终合并预览" width="620px" class="merge-preview-dialog">
+      <template v-if="mergePreview">
+        <div class="merge-preview-grid">
+          <div><span>候选人档案</span><strong>{{ mergePreview.candidateCount }}</strong></div>
+          <div><span>岗位关联</span><strong>{{ mergePreview.contactCount }}</strong></div>
+          <div><span>简历版本</span><strong>{{ mergePreview.resumeCount }}</strong></div>
+          <div><span>成功分析</span><strong>{{ mergePreview.successfulAnalysisCount }}</strong></div>
+          <div><span>沟通消息</span><strong>{{ mergePreview.conversationMessageCount }}</strong></div>
+        </div>
+        <el-alert v-if="mergePreview.warnings.length" type="warning" :closable="false" title="请确认合并范围" class="merge-warning">
+          <ul><li v-for="warning in mergePreview.warnings" :key="warning">{{ warning }}</li></ul>
+        </el-alert>
+        <p v-else class="merge-preview-safe">未发现阻断项。合并只建立逻辑别名关系，不删除原始档案。</p>
+      </template>
+      <template #footer><el-button @click="mergePreviewDialogOpen = false">返回修改</el-button><el-button type="primary" :loading="mergeSubmitting" @click="confirmCandidateMerge">确认合并</el-button></template>
+    </el-dialog>
   </div>
 </template>
 
@@ -982,13 +1250,50 @@ function showAnalysisHelp() {
 .evidence-coverage :deep(.el-progress-bar__outer) { background:var(--border); }
 .evidence-coverage :deep(.el-progress-bar__inner) { background:var(--primary); }
 .recommendation-card { flex-wrap:wrap; }
+.talent-profile-strip { display:grid; gap:9px; margin:0 22px 4px; padding:14px 16px; border:1px solid rgba(13,148,136,.16); border-radius:var(--radius-control); background:linear-gradient(135deg,rgba(238,249,246,.76),rgba(255,255,255,.82)); }
+.talent-profile-strip__heading, .talent-profile-strip__meta { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.talent-profile-strip__heading strong { display:block; margin-top:4px; color:var(--text-main); font-size:14px; }
+.talent-profile-strip__meta { justify-content:flex-start; flex-wrap:wrap; color:var(--text-secondary); font-size:12px; }
+.talent-profile-strip__skills, .talent-profile-strip__empty, .talent-profile-strip__error { margin:0; color:var(--text-secondary); font-size:12px; line-height:1.55; }
+.talent-profile-strip__error { color:var(--danger); }
 .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+.merge-dialog-summary { display:flex; align-items:baseline; flex-wrap:wrap; gap:8px 18px; margin-bottom:16px; padding:12px 14px; border:1px solid var(--border-teal); border-radius:var(--radius-control); background:var(--surface-teal); color:var(--text-secondary); font-size:12px; }
+.merge-dialog-summary strong { color:var(--text-main); font-size:16px; }
+.merge-dialog-summary small { margin-left:auto; color:var(--text-tertiary); }
+.duplicate-workspace { display:grid; grid-template-columns:210px minmax(0,1fr); gap:16px; min-height:300px; }
+.duplicate-groups { display:grid; align-content:start; gap:8px; max-height:440px; overflow:auto; padding-right:3px; }
+.duplicate-group { display:grid; gap:4px; padding:12px; border:1px solid var(--border); border-radius:var(--radius-control); background:var(--surface); color:var(--text-main); text-align:left; cursor:pointer; transition:border-color var(--transition-fast), background var(--transition-fast), transform var(--transition-fast); }
+.duplicate-group:hover, .duplicate-group--selected { border-color:var(--primary); background:var(--surface-teal); transform:translateY(-1px); }
+.duplicate-group__title { color:var(--primary); font-size:11px; font-weight:750; }
+.duplicate-group strong { font-size:13px; }
+.duplicate-group small { overflow:hidden; color:var(--text-secondary); font-size:11px; line-height:1.45; text-overflow:ellipsis; white-space:nowrap; }
+.duplicate-detail { min-width:0; padding:2px 0; }
+.merge-section-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:10px; }
+.merge-section-heading h3 { margin:4px 0 0; font-size:15px; }
+.merge-section-heading > span, .merge-section-heading > small { color:var(--text-secondary); font-size:12px; }
+.merge-section-heading--duplicates { margin-top:20px; padding-top:16px; border-top:1px solid var(--border); }
+.candidate-choice-list { display:grid; gap:8px; width:100%; }
+.candidate-choice { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:4px 10px; align-items:center; padding:10px 12px; border:1px solid var(--border-subtle); border-radius:var(--radius-control); background:var(--surface-soft); cursor:pointer; transition:border-color var(--transition-fast), background var(--transition-fast); }
+.candidate-choice:hover { border-color:var(--border-teal); background:var(--surface-teal); }
+.candidate-choice .el-radio, .candidate-choice .el-checkbox { margin:0; min-width:0; }
+.candidate-choice > span { overflow:hidden; color:var(--text-secondary); font-size:11px; text-align:right; text-overflow:ellipsis; white-space:nowrap; }
+.candidate-choice small { grid-column:1/-1; color:var(--text-tertiary); font-size:11px; }
+.merge-reasons { display:grid; gap:5px; margin-top:16px; padding:11px 12px; border-radius:var(--radius-control); background:var(--surface-muted); color:var(--text-secondary); font-size:11px; line-height:1.5; }
+.merge-reasons strong { color:var(--text-main); font-size:12px; }
+.merge-operations { margin-top:18px; padding-top:16px; border-top:1px solid var(--border); }
+.merge-operation-row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:9px 0; border-top:1px dashed var(--border); color:var(--text-secondary); font-size:12px; }
+.merge-preview-grid { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:8px; margin-bottom:16px; }
+.merge-preview-grid > div { display:grid; gap:5px; padding:12px 10px; border-radius:var(--radius-control); background:var(--surface-muted); text-align:center; }
+.merge-preview-grid span { color:var(--text-secondary); font-size:11px; }
+.merge-preview-grid strong { color:var(--text-main); font-size:20px; line-height:1; }
+.merge-warning ul { margin:6px 0 0; padding-left:18px; }
+.merge-preview-safe { margin:0; padding:12px 14px; border-radius:var(--radius-control); background:var(--surface-teal); color:var(--brand-800); font-size:12px; line-height:1.6; }
 @media(min-width:1181px) {
  .analysis-workspace { height:calc(100dvh - 100px); min-height:620px; }
  .resume-queue-panel { display:flex; flex-direction:column; min-height:0; }.resume-queue { flex:1; max-height:none; min-height:0; }.analysis-board { overflow-y:auto; overscroll-behavior:contain; }
 }
 @media(max-width:1180px) { .analysis-workspace { grid-template-columns:1fr; }.resume-queue { grid-template-columns:repeat(2,minmax(0,1fr)); max-height:400px; }.insight-grid { grid-template-columns:1fr; }.analysis-actionbar { position:static; flex-wrap:wrap; }.candidate-status { justify-content:flex-start; } }
-@media(max-width:600px) { .external-pdf-drop { grid-template-columns:40px minmax(0,1fr); }.external-pdf-drop > .el-button { grid-column:1/-1; width:100%; }.resume-queue { grid-template-columns:1fr; }.candidate-header,.analysis-content,.analysis-dropzone,.intake-details,.analysis-actionbar { padding:16px; }.candidate-title { flex-basis:calc(100% - 80px); }.candidate-status { flex-basis:100%; }.analysis-actionbar__buttons { flex-wrap:wrap; width:100%; }.analysis-actionbar__buttons .el-button { flex:1; margin:0; }.recommendation-card { padding:16px; }.evidence-coverage { flex-basis:100%; margin:0; }.board-empty { padding:24px 16px; min-height:280px; } }
+@media(max-width:600px) { .external-pdf-drop { grid-template-columns:40px minmax(0,1fr); }.external-pdf-drop > .el-button { grid-column:1/-1; width:100%; }.resume-queue { grid-template-columns:1fr; }.candidate-header,.analysis-content,.analysis-dropzone,.intake-details,.analysis-actionbar { padding:16px; }.candidate-title { flex-basis:calc(100% - 80px); }.candidate-status { flex-basis:100%; }.analysis-actionbar__buttons { flex-wrap:wrap; width:100%; }.analysis-actionbar__buttons .el-button { flex:1; margin:0; }.recommendation-card { padding:16px; }.evidence-coverage { flex-basis:100%; margin:0; }.board-empty { padding:24px 16px; min-height:280px; }.talent-profile-strip { margin-inline:16px; }.duplicate-workspace { grid-template-columns:1fr; }.duplicate-groups { grid-template-columns:repeat(2,minmax(0,1fr)); max-height:180px; }.duplicate-group small { display:none; }.merge-preview-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }.merge-preview-grid > div:last-child { grid-column:1/-1; } }
 
 :root[data-theme="dark"] .metrics .metric-card--green {
   --indicator-surface: var(--surface-green);
@@ -1000,4 +1305,5 @@ function showAnalysisHelp() {
 :global(:root[data-theme="dark"]) .resume-ticket--selected { background:linear-gradient(135deg, rgba(15,31,29,.96) 0%, rgba(30,36,51,.82) 100%); box-shadow:0 0 0 2px rgba(20,184,166,.32), 0 4px 18px rgba(20,184,166,.14), inset 0 1px 0 rgba(255,255,255,.06); }
 :global(:root[data-theme="dark"]) .resume-ticket--pending { background:linear-gradient(135deg, rgba(42,34,22,.88) 0%, rgba(30,36,51,.78) 100%); box-shadow:0 1px 2px rgba(0,0,0,.22), 0 2px 8px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.04), 2px 0 0 0 rgba(183,110,0,.16); }
 :global(:root[data-theme="dark"]) .resume-ticket--rejected { background:linear-gradient(135deg, rgba(42,19,19,.88) 0%, rgba(30,36,51,.78) 100%); box-shadow:0 1px 2px rgba(0,0,0,.22), 0 2px 8px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.04), 2px 0 0 0 rgba(180,35,24,.14); }
+:global(:root[data-theme="dark"]) .talent-profile-strip { border-color:rgba(45,212,191,.18); background:linear-gradient(135deg,rgba(15,31,29,.9),rgba(30,36,51,.8)); }
 </style>

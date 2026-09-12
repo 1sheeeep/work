@@ -57,7 +57,7 @@ defineEmits<{ retry: [] }>()
 .async-state--loading { display: block; padding: 28px; }
 .async-state--error { border-color: var(--border-rose); background: linear-gradient(145deg, var(--surface-rose), rgba(255,255,255,.72)); }
 .async-state--empty { background: linear-gradient(145deg, var(--surface-slate), rgba(255,255,255,.72)); }
-.async-state--embedded { border: 0; border-radius: 0; background: transparent; box-shadow: none; padding: 48px 24px; }
+.async-state--embedded { border: 0; border-radius: 0; background: transparent; box-shadow: none; padding: 32px 24px; }
 .async-state__icon { display: grid; width: 60px; height: 60px; place-items: center; border-radius: 18px; background: linear-gradient(145deg, var(--surface-teal), rgba(255,255,255,.74)); color: var(--primary); font-size: 26px; box-shadow: var(--shadow-raised), inset 0 1px 0 rgba(255,255,255,.62); }
 .async-state--error .async-state__icon { background: color-mix(in srgb, var(--surface-rose) 70%, var(--danger) 10%); color: var(--danger); }
 .async-state--empty .async-state__icon { background: var(--surface-muted); color: var(--text-tertiary); }

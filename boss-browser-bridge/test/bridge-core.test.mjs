@@ -102,6 +102,15 @@ test('exposes only bounded single-account reply status without message digests',
   assert.equal('singleAccountProcessedMessages' in status, false);
 });
 
+test('exposes only the latest bounded automatic-reply trace events', () => {
+  const trace = Array.from({ length: 205 }, (_, index) => ({ stage: 'AI_READY', outcome: 'INFO', chatDigest: `${index}`, reason: `step-${index}` }));
+  const status = publicStatus({ deviceToken: 'secret-device-token', enabled: true }, { autoReplyTrace: trace });
+  assert.equal(status.autoReplyTrace.length, 200);
+  assert.equal(status.autoReplyTrace[0].reason, 'step-5');
+  assert.equal(status.autoReplyTrace.at(-1).reason, 'step-204');
+  assert.equal('deviceToken' in status, false);
+});
+
 test('accepts minimized job snapshots and rejects duplicate or raw source identities', () => {
   const entry = { sourceDigest: digest, title: 'Java 开发工程师', location: '上海·徐汇', salaryDisplay: '20-30K·13薪', salaryMinK: 20, salaryMaxK: 30, salaryMonths: 13, experienceRequirement: '3-5年', educationRequirement: '本科', description: null, completeness: 5, platformStatus: 'OPEN' };
   const payload = { pageState: 'JOB_MANAGEMENT_READY', entries: [entry], observedAt: '2026-08-30T08:00:00.000Z', scope: 'OPEN_JOBS', authoritative: true, refreshRequested: false };

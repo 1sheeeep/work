@@ -81,6 +81,8 @@ export function validateSelected(selected) {
   if (!Number.isFinite(Date.parse(selected.messageAt))) throw new Error('最后消息时间无效。');
   if (!Number.isFinite(Date.parse(selected.observedAt))) throw new Error('会话复核时间无效。');
   if (typeof selected.selectedUnread !== 'boolean') throw new Error('选中会话未读状态无效。');
+  if (selected.messageText !== null && selected.messageText !== undefined
+      && (typeof selected.messageText !== 'string' || selected.messageText.length > 1000)) throw new Error('消息正文无效。');
   validateConversationSignals(selected.conversationSignals);
   return selected;
 }
@@ -225,12 +227,12 @@ export function validateJobSnapshot(payload) {
     if (!DIGEST_PATTERN.test(entry?.sourceDigest || '') || seen.has(entry.sourceDigest)) throw new Error('职位来源摘要无效或重复。');
     seen.add(entry.sourceDigest);
     if (typeof entry.title !== 'string' || entry.title.trim().length < 2 || entry.title.length > 120) throw new Error('职位标题无效。');
-    for (const [key, max] of [['location', 120], ['salaryDisplay', 120], ['experienceRequirement', 80], ['educationRequirement', 80], ['description', 10000], ['recruitmentType', 40], ['jobCategory', 120], ['overseasRequirement', 40], ['jobKeywords', 500], ['workAddress', 240]]) {
+    for (const [key, max] of [['location', 120], ['salaryDisplay', 120], ['experienceRequirement', 80], ['educationRequirement', 80], ['description', 10000], ['recruitmentType', 40], ['jobCategory', 120], ['overseasRequirement', 40], ['jobKeywords', 500], ['workAddress', 240], ['workTime', 240], ['benefits', 500]]) {
       if (entry[key] !== null && entry[key] !== undefined && (typeof entry[key] !== 'string' || entry[key].length > max)) throw new Error('职位字段无效。');
     }
     for (const key of ['salaryMinK', 'salaryMaxK']) if (entry[key] !== null && entry[key] !== undefined && (!Number.isInteger(entry[key]) || entry[key] < 1 || entry[key] > 1000)) throw new Error('职位薪资无效。');
     if (entry.salaryMonths !== null && entry.salaryMonths !== undefined && (!Number.isInteger(entry.salaryMonths) || entry.salaryMonths < 12 || entry.salaryMonths > 16)) throw new Error('职位薪数无效。');
-    if (!Number.isInteger(entry.completeness) || entry.completeness < 1 || entry.completeness > 12) throw new Error('职位完整度无效。');
+    if (!Number.isInteger(entry.completeness) || entry.completeness < 1 || entry.completeness > 14) throw new Error('职位完整度无效。');
     if (!['OPEN', 'CLOSED', 'UNKNOWN'].includes(entry.platformStatus)) throw new Error('职位平台状态无效。');
   }
   if (payload.authoritative && payload.entries.some((entry) => entry.platformStatus !== 'OPEN')) throw new Error('完整在招清单包含非在招职位。');
@@ -238,7 +240,7 @@ export function validateJobSnapshot(payload) {
 }
 
 export function jobSnapshotSignature(payload) {
-  return `${payload.scope}:${payload.authoritative}|${payload.entries.map((entry) => [entry.sourceDigest, entry.title, entry.platformStatus, entry.location || '', entry.salaryDisplay || '', entry.experienceRequirement || '', entry.educationRequirement || '', entry.description || '', entry.recruitmentType || '', entry.jobCategory || '', entry.overseasRequirement || '', entry.jobKeywords || '', entry.workAddress || ''].join(':')).join('|')}`;
+  return `${payload.scope}:${payload.authoritative}|${payload.entries.map((entry) => [entry.sourceDigest, entry.title, entry.platformStatus, entry.location || '', entry.salaryDisplay || '', entry.experienceRequirement || '', entry.educationRequirement || '', entry.description || '', entry.recruitmentType || '', entry.jobCategory || '', entry.overseasRequirement || '', entry.jobKeywords || '', entry.workAddress || '', entry.workTime || '', entry.benefits || ''].join(':')).join('|')}`;
 }
 
 export function snapshotSignature(payload) {
@@ -323,6 +325,8 @@ export function publicStatus(settings, runtime) {
     singleAccountAutoReplyProcessedCount: Array.isArray(runtime?.singleAccountProcessedMessages) ? runtime.singleAccountProcessedMessages.length : 0,
     singleAccountConsecutiveFailures: Number(runtime?.singleAccountConsecutiveFailures || 0),
     lastSingleAccountAutoReplyAt: runtime?.lastSingleAccountAutoReplyAt || null,
+    autoReplyTrace: Array.isArray(runtime?.autoReplyTrace) ? runtime.autoReplyTrace.slice(-200) : [],
+    lastAutoReplyTraceAt: runtime?.lastAutoReplyTraceAt || null,
     controlDiagnosticState: runtime?.controlDiagnosticState || '尚未识别当前会话功能键 DOM。',
     lastControlDiagnosticAt: runtime?.lastControlDiagnosticAt || null,
     controlDiagnostic: runtime?.controlDiagnostic || null,

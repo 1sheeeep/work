@@ -19,6 +19,15 @@ public record JobPositionUpsertRequest(
         @NotBlank(message = "请输入经验要求") @Size(max = 80, message = "经验要求不能超过 80 个字符") String experienceRequirement,
         @NotBlank(message = "请输入学历要求") @Size(max = 80, message = "学历要求不能超过 80 个字符") String educationRequirement,
         @NotBlank(message = "请输入职位描述") @Size(max = 10000, message = "职位描述不能超过 10000 个字符") String description,
-        @Size(max = 5000, message = "筛选要求不能超过 5000 个字符") String screeningRequirements
+        @Size(max = 5000, message = "筛选要求不能超过 5000 个字符") String screeningRequirements,
+        @Size(max = 240, message = "工作时间不能超过 240 个字符") String workTime,
+        @Size(max = 500, message = "福利待遇不能超过 500 个字符") String benefits
 ) {
+    public JobPositionUpsertRequest(UUID companyId, UUID bossAccountId, String title, String location,
+                                   int salaryMinK, int salaryMaxK, int salaryMonths,
+                                   String experienceRequirement, String educationRequirement,
+                                   String description, String screeningRequirements) {
+        this(companyId, bossAccountId, title, location, salaryMinK, salaryMaxK, salaryMonths,
+                experienceRequirement, educationRequirement, description, screeningRequirements, null, null);
+    }
 }

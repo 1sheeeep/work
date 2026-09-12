@@ -35,6 +35,8 @@ public record JobPositionResponse(
         int observationCount,
         String replySummary,
         String salaryDisplay,
+        String workTime,
+        String benefits,
         boolean knowledgeApproved,
         int knowledgeVersion,
         Instant knowledgeApprovedAt,
@@ -60,7 +62,8 @@ public record JobPositionResponse(
                 job.getJobCategory(), job.getOverseasRequirement(), job.getJobKeywords(), job.getWorkAddress(), job.getDescription(),
                 job.getScreeningRequirements(), job.getCaptureSource(), job.getCaptureCompleteness(), job.getCapturedAt(),
                 job.isCaptureVerified(), job.getCaptureVerifiedAt(), job.getLastObservedAt(), job.getObservationCount(),
-                job.getReplySummary(), job.getSalaryDisplay(), job.isKnowledgeApproved(),
+                job.getReplySummary(), job.getSalaryDisplay(), job.getWorkTime(), job.getBenefits(),
+                job.isKnowledgeApproved(),
                 job.getKnowledgeVersion(), job.getKnowledgeApprovedAt(), "KNOWLEDGE".equals(reply.mode()),
                 reply.missingFields(), ReviewReadiness.from(job), job.getStatus(), job.getVersion(),
                 job.getCreatedAt(), job.getUpdatedAt());

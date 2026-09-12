@@ -12,6 +12,7 @@ import ai.xzkj.recruitment.common.ApiException;
 import ai.xzkj.recruitment.organization.Company;
 import ai.xzkj.recruitment.organization.CompanyRepository;
 import ai.xzkj.recruitment.organization.CompanyStatus;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,15 +30,24 @@ public class JobPositionService {
     private final BossAccountRepository bossAccountRepository;
     private final CurrentUserService currentUserService;
     private final AuditService auditService;
+    private final JobReplyTemplateService replyTemplates;
 
+    @Autowired
     public JobPositionService(JobPositionRepository jobRepository, CompanyRepository companyRepository,
                               BossAccountRepository bossAccountRepository, CurrentUserService currentUserService,
-                              AuditService auditService) {
+                              AuditService auditService, JobReplyTemplateService replyTemplates) {
         this.jobRepository = jobRepository;
         this.companyRepository = companyRepository;
         this.bossAccountRepository = bossAccountRepository;
         this.currentUserService = currentUserService;
         this.auditService = auditService;
+        this.replyTemplates = replyTemplates;
+    }
+
+    JobPositionService(JobPositionRepository jobRepository, CompanyRepository companyRepository,
+                       BossAccountRepository bossAccountRepository, CurrentUserService currentUserService,
+                       AuditService auditService) {
+        this(jobRepository, companyRepository, bossAccountRepository, currentUserService, auditService, null);
     }
 
     @Transactional(readOnly = true)
@@ -74,6 +84,8 @@ public class JobPositionService {
                 request.salaryMinK(), request.salaryMaxK(), request.salaryMonths(),
                 cleanRequired(request.experienceRequirement()), cleanRequired(request.educationRequirement()),
                 cleanRequired(request.description()), cleanOptional(request.screeningRequirements())));
+        job.updateWorkingConditions(cleanOptional(request.workTime()), cleanOptional(request.benefits()));
+        if (replyTemplates != null) replyTemplates.ensureDefaults(job);
         auditService.success("CREATE_JOB_POSITION", "JOB_POSITION", job.getId(), job.getTitle(),
                 "新增职位草稿，归属企业 " + company.getCode() + "，绑定 BOSS 账号 " + account.getDisplayName());
         return JobPositionResponse.from(job);
@@ -93,6 +105,7 @@ public class JobPositionService {
                 request.salaryMinK(), request.salaryMaxK(), request.salaryMonths(),
                 cleanRequired(request.experienceRequirement()), cleanRequired(request.educationRequirement()),
                 cleanRequired(request.description()), cleanOptional(request.screeningRequirements()));
+        job.updateWorkingConditions(cleanOptional(request.workTime()), cleanOptional(request.benefits()));
         auditService.success("UPDATE_JOB_POSITION", "JOB_POSITION", job.getId(), job.getTitle(),
                 "更新职位资料和 BOSS 账号绑定");
         return JobPositionResponse.from(job);
@@ -181,7 +194,7 @@ public class JobPositionService {
                 cleanOptional(request.screeningRequirements()));
         job.updateReviewedDetails(cleanOptional(request.recruitmentType()), cleanOptional(request.jobCategory()),
                 cleanOptional(request.overseasRequirement()), cleanOptional(request.jobKeywords()),
-                cleanOptional(request.workAddress()));
+                cleanOptional(request.workAddress()), cleanOptional(request.workTime()), cleanOptional(request.benefits()));
         job.verifyVisiblePageCapture();
         job.updateKnowledge(cleanOptional(request.replySummary()), cleanOptional(request.salaryDisplay()), true);
         job.changeStatus(JobPositionStatus.ACTIVE);

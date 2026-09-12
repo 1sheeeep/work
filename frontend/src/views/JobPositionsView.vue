@@ -23,6 +23,8 @@ interface JobReviewFormValue {
   overseasRequirement: string;
   jobKeywords: string;
   workAddress: string;
+  workTime: string;
+  benefits: string;
   replySummary: string;
   salaryDisplay: string;
   captureConfirmed: boolean;
@@ -60,6 +62,8 @@ const reviewForm = reactive<JobReviewFormValue>({
   overseasRequirement: "",
   jobKeywords: "",
   workAddress: "",
+  workTime: "",
+  benefits: "",
   description: "",
   screeningRequirements: "",
   replySummary: "",
@@ -297,6 +301,8 @@ function openImportedReview(job: JobPosition) {
     overseasRequirement: realValue(job.overseasRequirement),
     jobKeywords: realValue(job.jobKeywords),
     workAddress: realValue(job.workAddress),
+    workTime: realValue(job.workTime),
+    benefits: realValue(job.benefits),
     description: realValue(job.description),
     screeningRequirements: realValue(job.screeningRequirements),
     replySummary: job.replySummary || suggestedReplySummary(job),
@@ -571,6 +577,14 @@ function showJobsHelp() {
                       <dt>工作地址</dt>
                       <dd>{{ row.workAddress || row.location }}</dd>
                     </div>
+                    <div>
+                      <dt>工作时间</dt>
+                      <dd>{{ row.workTime || "未设置" }}</dd>
+                    </div>
+                    <div>
+                      <dt>福利待遇</dt>
+                      <dd>{{ row.benefits || "未设置" }}</dd>
+                    </div>
                   </dl></div>
                   <div class="detail-section detail-description"><div class="detail-section-title"><span class="detail-section-icon">02</span><strong>职位描述</strong><span class="detail-section-line"></span></div><div class="detail-description-content">{{ row.description }}</div></div>
                 </div></template
@@ -709,6 +723,14 @@ function showJobsHelp() {
                     {{ job.educationRequirement }}
                   </dd>
                 </div>
+                <div>
+                  <dt>工作时间</dt>
+                  <dd>{{ job.workTime || "未设置" }}</dd>
+                </div>
+                <div>
+                  <dt>福利待遇</dt>
+                  <dd>{{ job.benefits || "未设置" }}</dd>
+                </div>
               </dl>
               <p class="job-description">{{ job.description }}</p>
               <footer v-if="canManage && job.status !== 'CLOSED'">
@@ -802,6 +824,12 @@ function showJobsHelp() {
           </el-form-item>
           <el-form-item label="工作地址" prop="location">
             <el-input v-model="reviewForm.workAddress" maxlength="240" />
+          </el-form-item>
+          <el-form-item label="工作时间">
+            <el-input v-model="reviewForm.workTime" maxlength="240" placeholder="例如：9:00-18:00，双休" />
+          </el-form-item>
+          <el-form-item label="福利待遇">
+            <el-input v-model="reviewForm.benefits" maxlength="500" placeholder="例如：五险一金、带薪年假" />
           </el-form-item>
         </div>
         <h3 class="boss-section-title">回复内容</h3>

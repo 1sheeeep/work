@@ -135,7 +135,7 @@ describe('DashboardView', () => {
       .mockResolvedValueOnce({ data: [] })
       .mockResolvedValueOnce({ data: [{ id:'o1', accountId:'a1', accountName:'主招聘账号', anonymousKey:'abc123', unreadCount:1, unread:true, observedJobTitle:'跨境客服', eligibilityStatus:'OBSERVING', resolutionStatus:'UNRESOLVED', reviewStatus:'PENDING', fillStatus:'NONE', latestDirection:'INBOUND', firstSeenAt:'2026-08-31T08:00:00Z', lastSeenAt:'2026-08-31T08:01:00Z' }] })
       .mockResolvedValueOnce({ data: [] })
-      .mockResolvedValueOnce({ data: [{ id:'r1', observationId:'o1', anonymousKey:'abc123', accountName:'主招聘账号', jobTitle:'跨境客服', category:'SALARY', replyContent:'您好，该岗位薪资为 8-13K。', sentAt:'2026-08-31T08:01:00Z', needsFollowUp:true }] })
+      .mockResolvedValueOnce({ data: [{ id:'r1', observationId:'o1', anonymousKey:'abc123', accountName:'主招聘账号', jobTitle:'跨境客服', category:'SALARY', taskStatus:'COMPLETED', sendStatus:'SUCCEEDED', replyContent:'您好，该岗位薪资为 8-13K。', updatedAt:'2026-08-31T08:01:00Z', completedAt:'2026-08-31T08:01:00Z', attemptCount:1, needsFollowUp:true, followUpReason:'有新回复，待跟进' }] })
       .mockResolvedValueOnce({ data: [] })
 
     const wrapper = mount(DashboardView)
@@ -152,7 +152,7 @@ describe('DashboardView', () => {
       .mockResolvedValueOnce({ data: [] })
       .mockResolvedValueOnce({ data: [] })
       .mockResolvedValueOnce({ data: [] })
-      .mockResolvedValueOnce({ data: [{ id:'r2', observationId:'o2', anonymousKey:'partial01', accountName:'主招聘账号', jobTitle:'跨境客服', category:'LOCATION', replyContent:'地点在广州，排班需要招聘人员确认。', sentAt:'2026-08-31T08:01:00Z', needsFollowUp:true, followUpReason:'已部分回答，仍需 HR 补充：OTHER_RECRUITMENT' }] })
+      .mockResolvedValueOnce({ data: [{ id:'r2', observationId:'o2', anonymousKey:'partial01', accountName:'主招聘账号', jobTitle:'跨境客服', category:'LOCATION', taskStatus:'COMPLETED', sendStatus:'SUCCEEDED', replyContent:'地点在广州，排班需要招聘人员确认。', detail:'已部分回答，仍需 HR 补充：OTHER_RECRUITMENT', updatedAt:'2026-08-31T08:01:00Z', completedAt:'2026-08-31T08:01:00Z', attemptCount:1, needsFollowUp:true, followUpReason:'已部分回答，仍需 HR 补充：OTHER_RECRUITMENT' }] })
       .mockResolvedValueOnce({ data: [] })
 
     const wrapper = mount(DashboardView)

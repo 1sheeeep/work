@@ -37,3 +37,43 @@
   font-size: 11px;
   line-height: 1.5;
 }
+
+.trace-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.trace-heading strong {
+  color: #5b5141;
+  font-size: 12px;
+}
+
+.trace-heading button {
+  min-height: 30px;
+  padding: 0 9px;
+  font-size: 11px;
+}
+
+.trace-summary {
+  display: block;
+  color: #695d48;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.auto-reply-trace-log {
+  max-height: 190px;
+  margin: 0;
+  padding: 9px;
+  overflow: auto;
+  border: 1px solid #eadfc9;
+  border-radius: 8px;
+  background: #fffdf8;
+  color: #4b463c;
+  font: 10px/1.55 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

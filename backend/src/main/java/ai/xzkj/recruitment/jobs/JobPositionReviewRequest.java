@@ -24,6 +24,19 @@ public record JobPositionReviewRequest(
         @Size(max = 120, message = "薪资说明不能超过 120 个字符") String salaryDisplay,
         @AssertTrue(message = "请确认已对照真实 BOSS 岗位资料逐项核对") boolean captureConfirmed,
         boolean knowledgeApproved,
+        @Size(max = 240, message = "工作时间不能超过 240 个字符") String workTime,
+        @Size(max = 500, message = "福利待遇不能超过 500 个字符") String benefits,
         @AssertTrue(message = "请明确确认启用该岗位") boolean activateConfirmed
 ) {
+    public JobPositionReviewRequest(String location, int salaryMinK, int salaryMaxK, int salaryMonths,
+                                    String experienceRequirement, String educationRequirement,
+                                    String recruitmentType, String jobCategory, String overseasRequirement,
+                                    String jobKeywords, String workAddress, String description,
+                                    String screeningRequirements, String replySummary, String salaryDisplay,
+                                    boolean captureConfirmed, boolean knowledgeApproved, boolean activateConfirmed) {
+        this(location, salaryMinK, salaryMaxK, salaryMonths, experienceRequirement, educationRequirement,
+                recruitmentType, jobCategory, overseasRequirement, jobKeywords, workAddress, description,
+                screeningRequirements, replySummary, salaryDisplay, captureConfirmed, knowledgeApproved,
+                null, null, activateConfirmed);
+    }
 }

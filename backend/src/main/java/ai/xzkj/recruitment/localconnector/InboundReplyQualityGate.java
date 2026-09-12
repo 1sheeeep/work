@@ -12,6 +12,8 @@ import java.util.regex.Pattern;
 final class InboundReplyQualityGate {
     private static final Pattern LOCATION = Pattern.compile("(地址|地点|哪里上班|在哪上班|工作地|办公地)");
     private static final Pattern SALARY = Pattern.compile("(薪资|工资|月薪|年薪|底薪|提成|多少钱)");
+    private static final Pattern WORK_TIME = Pattern.compile("(上班时间|工作时间|上下班时间|几点上班|几点下班|打卡时间|休息时间)");
+    private static final Pattern BENEFITS = Pattern.compile("(福利待遇|福利|五险一金|社保|公积金|补贴|奖金|年终奖|带薪年假)");
     private static final Pattern EXPERIENCE = Pattern.compile("(经验要求|需要经验|几年经验|没(?:有)?经验|无经验|应届|小白)");
     private static final Pattern EDUCATION = Pattern.compile("(学历|大专|本科|中专|高中|硕士|博士)");
     private static final Pattern RESPONSIBILITIES = Pattern.compile("(做什么|干嘛|职责|工作内容|主要负责|日常工作)");
@@ -36,6 +38,8 @@ final class InboundReplyQualityGate {
             switch (evidence) {
                 case "LOCATION", "WORK_ADDRESS" -> modeled.add("LOCATION");
                 case "SALARY" -> modeled.add("SALARY");
+                case "WORK_TIME" -> modeled.add("WORK_TIME");
+                case "BENEFITS" -> modeled.add("BENEFITS");
                 case "EXPERIENCE" -> modeled.add("EXPERIENCE");
                 case "EDUCATION" -> modeled.add("EDUCATION");
                 case "REPLY_SUMMARY", "DESCRIPTION", "KEYWORDS", "RECRUITMENT_TYPE" -> modeled.add("RESPONSIBILITIES");
@@ -65,6 +69,8 @@ final class InboundReplyQualityGate {
         Set<String> intents = new LinkedHashSet<>();
         if (LOCATION.matcher(message).find()) intents.add("LOCATION");
         if (SALARY.matcher(message).find()) intents.add("SALARY");
+        if (WORK_TIME.matcher(message).find()) intents.add("WORK_TIME");
+        if (BENEFITS.matcher(message).find()) intents.add("BENEFITS");
         if (EXPERIENCE.matcher(message).find()) intents.add("EXPERIENCE");
         if (EDUCATION.matcher(message).find()) intents.add("EDUCATION");
         if (RESPONSIBILITIES.matcher(message).find()) intents.add("RESPONSIBILITIES");
@@ -73,6 +79,11 @@ final class InboundReplyQualityGate {
 
     static String reasonCode(InboundJobReplyService.Decision decision) {
         String reason = normalize(decision.reason());
+        if (decision.retryable()
+                || reason.contains("独立意图校验")
+                || reason.contains("独立质量校验")
+                || reason.contains("模型未提供事实证据字段")
+                || reason.contains("精确字段未按已审核原文回答")) return "AI_OUTPUT_INVALID";
         if (reason.startsWith("正常静默：")) return "EXPECTED_SILENCE";
         if (reason.startsWith("影子评测：")) return "SHADOW";
         if (reason.contains("事实校验")) return "FACT_VALIDATION";

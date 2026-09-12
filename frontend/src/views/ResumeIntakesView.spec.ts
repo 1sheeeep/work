@@ -8,6 +8,10 @@ vi.mock('../services/api', () => ({
   apiErrorMessage: (_error: unknown, fallback: string) => fallback,
 }))
 
+vi.mock('../stores/auth', () => ({
+  authStore: { state: { user: { id: 'admin', displayName: '系统管理员', role: 'SYSTEM_ADMIN' } } },
+}))
+
 const baseIntake = {
   contactId: 'contact-1',
   companyId: 'company-1',
@@ -44,6 +48,10 @@ describe('ResumeIntakesView', () => {
         id: 'company-1', name: '新知科技集团', code: 'XINZHI', status: 'ACTIVE', knowledgeApproved: true,
         knowledgeVersion: 1, aiAutoAnalysisEnabled: true, version: 1,
       }] })
+      .mockResolvedValueOnce({ data: {
+        items: [], page: 0, pageSize: 100, total: 0,
+        counts: { total: 0, withResume: 0, analyzed: 0, processing: 0, failed: 0 },
+      } })
       .mockResolvedValueOnce({ data: [{
         id: 'run-2',
         resumeIntakeId: 'intake-2',
@@ -98,6 +106,7 @@ describe('ResumeIntakesView', () => {
       if (url === '/candidate-contacts') return { data: [] }
       if (url === '/ai-configuration/status') return { data: { ready: true, model: 'qwen-plus' } }
       if (url === '/organization/companies') return { data: [] }
+      if (url === '/talent-candidates/page?page=0&pageSize=100') return { data: { items: [], page: 0, pageSize: 100, total: 0, counts: { total: 0, withResume: 0, analyzed: 0, processing: 0, failed: 0 } } }
       return { data: [] }
     })
     vi.mocked(api.post).mockResolvedValue({ data: {
@@ -117,5 +126,96 @@ describe('ResumeIntakesView', () => {
       expect.any(FormData),
       { timeout: 120_000 },
     )
+  })
+
+  it('links the selected resume to its talent profile without blocking analysis', async () => {
+    vi.mocked(api.get).mockImplementation(async (url: string) => {
+      if (url === '/resume-intakes') return { data: [{ ...baseIntake, id: 'intake-profile', contactId: 'contact-profile', candidateName: '候选人甲', analysisStatus: 'NOT_REQUESTED' }] }
+      if (url === '/candidate-contacts') return { data: [{ id: 'contact-profile', candidateId: 'candidate-profile', company: { id: 'company-1', name: '新知科技集团', code: 'XINZHI' }, jobPosition: { id: 'job-1', title: 'Java 开发' }, bossAccount: { id: 'account-1', displayName: '主招聘账号' }, source: 'BOSS', sourceReference: 'source', displayName: '候选人甲', privacyStatus: 'ACTIVE', status: 'SCREENING', humanTakenOver: false, needsHrFollowUp: false, pendingReviewDraft: false }] }
+      if (url === '/ai-configuration/status') return { data: { ready: true, model: 'qwen-plus' } }
+      if (url === '/organization/companies') return { data: [] }
+      if (url === '/talent-candidates/page?page=0&pageSize=100') return { data: { items: [{ candidateId: 'candidate-profile', company: { id: 'company-1', name: '新知科技集团', code: 'XINZHI' }, source: 'BOSS', sourceReference: 'BOSS · source', displayName: '候选人甲', privacyStatus: 'ACTIVE', resumeCount: 1, relatedJobs: [{ id: 'job-1', title: 'Java 开发' }], createdAt: '2026-08-31T08:00:00Z', updatedAt: '2026-08-31T08:00:00Z' }], page: 0, pageSize: 100, total: 1, counts: { total: 1, withResume: 1, analyzed: 0, processing: 0, failed: 0 } } }
+      if (url === '/resume-intakes/intake-profile/analysis-runs') return { data: [] }
+      if (url === '/talent-candidates/candidate-profile') return { data: { candidate: { candidateId: 'candidate-profile', company: { id: 'company-1', name: '新知科技集团', code: 'XINZHI' }, source: 'BOSS', sourceReference: 'BOSS · source', displayName: '候选人甲', currentTitle: 'Java 开发工程师', skillsSummary: 'Java、Spring', privacyStatus: 'ACTIVE', resumeCount: 1, relatedJobs: [{ id: 'job-1', title: 'Java 开发' }], createdAt: '2026-08-31T08:00:00Z', updatedAt: '2026-08-31T08:00:00Z' }, contacts: [{ id: 'contact-profile', jobPositionId: 'job-1', jobTitle: 'Java 开发', bossAccountId: 'account-1', accountName: '主招聘账号', status: 'SCREENING', humanTakenOver: false }], resumes: [], analyses: [], timeline: [] } }
+      return { data: [] }
+    })
+
+    const wrapper = mount(ResumeIntakesView)
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('已关联人才库')
+    expect(wrapper.text()).toContain('关联岗位 1 个')
+    expect(wrapper.text()).toContain('技能摘要：Java、Spring')
+  })
+
+  it('scans duplicate candidates and requests a final merge preview', async () => {
+    vi.mocked(api.get).mockImplementation(async (url: string) => {
+      if (url === '/resume-intakes') return { data: [] }
+      if (url === '/candidate-contacts') return { data: [] }
+      if (url === '/ai-configuration/status') return { data: { ready: true, model: 'qwen-plus' } }
+      if (url === '/organization/companies') return { data: [] }
+      if (url === '/talent-candidates/page?page=0&pageSize=100') return { data: { items: [], page: 0, pageSize: 100, total: 0, counts: { total: 0, withResume: 0, analyzed: 0, processing: 0, failed: 0 } } }
+      if (url === '/talent-candidates/duplicate-preview') return { data: {
+        generatedAt: '2026-08-31T08:00:00Z', scannedCandidates: 2, duplicateGroups: 1,
+        groups: [{
+          groupId: 'group-1', confidence: 'HIGH', recommendation: '手机号摘要一致', suggestedPrimaryCandidateId: 'candidate-primary', reasons: ['手机号摘要一致'],
+          candidates: [
+            { candidateId: 'candidate-primary', source: 'BOSS', displayName: '候选人甲', companyName: '新知科技集团', resumeCount: 2, contactCount: 1, successfulAnalyses: 1, latestAnalysisStatus: 'SUCCEEDED', hasPhoneIdentity: true, hasEmailIdentity: false, createdAt: '2026-08-01T08:00:00Z', updatedAt: '2026-08-31T08:00:00Z' },
+            { candidateId: 'candidate-duplicate', source: 'MANUAL', displayName: '候选人甲（外部）', companyName: '新知科技集团', resumeCount: 1, contactCount: 1, successfulAnalyses: 0, latestAnalysisStatus: 'FAILED', hasPhoneIdentity: true, hasEmailIdentity: false, createdAt: '2026-08-02T08:00:00Z', updatedAt: '2026-08-30T08:00:00Z' },
+          ],
+        }],
+      } }
+      if (url === '/talent-candidates/merge/operations?activeOnly=true') return { data: [] }
+      return { data: [] }
+    })
+    vi.mocked(api.post).mockResolvedValue({ data: {
+      primaryCandidateId: 'candidate-primary', duplicateCandidateIds: ['candidate-duplicate'], candidateCount: 2,
+      contactCount: 2, resumeCount: 3, successfulAnalysisCount: 1, conversationMessageCount: 4, warnings: [],
+    } })
+
+    const wrapper = mount(ResumeIntakesView)
+    await flushPromises()
+    const scanButton = wrapper.findAll('button').find((button) => button.text().includes('重复档案'))
+    expect(scanButton).toBeTruthy()
+    await scanButton?.trigger('click')
+    await flushPromises()
+
+    const bodyText = () => document.body.textContent || ''
+    expect(bodyText()).toContain('手机号摘要一致')
+    expect(bodyText()).toContain('候选人甲（外部）')
+    const previewButton = Array.from(document.body.querySelectorAll('.duplicate-dialog button')).find((button) => button.textContent?.includes('查看最终预览'))
+    expect(previewButton).toBeTruthy()
+    ;(previewButton as HTMLElement).click()
+    await flushPromises()
+
+    expect(api.post).toHaveBeenCalledWith('/talent-candidates/merge/preview', {
+      primaryCandidateId: 'candidate-primary', duplicateCandidateIds: ['candidate-duplicate'],
+    })
+    expect(bodyText()).toContain('沟通消息')
+    expect(bodyText()).toContain('未发现阻断项')
+  })
+
+  it('shows a distinct scan error instead of an empty duplicate result', async () => {
+    vi.mocked(api.get).mockImplementation(async (url: string) => {
+      if (url === '/resume-intakes') return { data: [] }
+      if (url === '/candidate-contacts') return { data: [] }
+      if (url === '/ai-configuration/status') return { data: { ready: true, model: 'qwen-plus' } }
+      if (url === '/organization/companies') return { data: [] }
+      if (url === '/talent-candidates/page?page=0&pageSize=100') return { data: { items: [], page: 0, pageSize: 100, total: 0, counts: { total: 0, withResume: 0, analyzed: 0, processing: 0, failed: 0 } } }
+      if (url === '/talent-candidates/duplicate-preview') throw new Error('404')
+      if (url === '/talent-candidates/merge/operations?activeOnly=true') return { data: [] }
+      return { data: [] }
+    })
+
+    const wrapper = mount(ResumeIntakesView)
+    await flushPromises()
+    const scanButton = wrapper.findAll('button').find((button) => button.text().includes('重复档案'))
+    await scanButton?.trigger('click')
+    await flushPromises()
+
+    expect(document.body.textContent || '').toContain('重复候选人扫描失败')
+    expect(document.body.textContent || '').not.toContain('暂未发现重复候选人')
+    wrapper.unmount()
   })
 })

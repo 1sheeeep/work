@@ -47,6 +47,47 @@ class InboundJobReplyHttpIntegrationTest {
     }
 
     @Test
+    void acceptsCompatibleEvidenceObjectsWithoutWeakeningFactValidation() throws Exception {
+        start(exchange -> respond(exchange, 200, completion("""
+                {"primaryIntent":"SALARY","secondaryIntents":[],"relevant":true,"confidence":0.98,"action":"REPLY","riskLevel":"LOW",
+                 "reply":"您好，招聘页面标注薪资为 8-13K。","evidence":[{"criterion":"薪资","status":"FOUND"}]}
+                """)));
+
+        InboundJobReplyService.Decision result = service(Duration.ofSeconds(2)).decide(job(), "请问薪资是多少？");
+
+        assertTrue(result.replyAllowed());
+        assertEquals("SALARY", result.category());
+    }
+
+    @Test
+    void ignoresNegativeEvidenceObjectsAndFailsClosed() throws Exception {
+        start(exchange -> respond(exchange, 200, completion("""
+                {"primaryIntent":"SALARY","secondaryIntents":[],"relevant":true,"confidence":0.98,"action":"REPLY","riskLevel":"LOW",
+                 "reply":"您好，招聘页面标注薪资为 8-13K。","evidence":[{"criterion":"薪资","status":"MISS"}]}
+                """)));
+
+        InboundJobReplyService.Decision result = service(Duration.ofSeconds(2)).decide(job(), "请问薪资是多少？");
+
+        assertFalse(result.replyAllowed());
+        assertFalse(result.retryable());
+        assertTrue(result.reason().contains("模型未提供事实证据字段"));
+    }
+
+    @Test
+    void retriesWhenModelReturnsAnEmptyEvidenceArrayForAGroundedReply() throws Exception {
+        start(exchange -> respond(exchange, 200, completion("""
+                {"primaryIntent":"SALARY","secondaryIntents":[],"relevant":true,"confidence":0.98,"action":"REPLY","riskLevel":"LOW",
+                 "reply":"您好，招聘页面标注薪资为 8-13K。","evidenceKeys":[]}
+                """)));
+
+        InboundJobReplyService.Decision result = service(Duration.ofSeconds(2)).decide(job(), "请问薪资是多少？");
+
+        assertFalse(result.replyAllowed());
+        assertTrue(result.retryable());
+        assertTrue(result.reason().contains("模型未提供事实证据字段"));
+    }
+
+    @Test
     void rejectsHallucinatedFactsEvenWhenModelMarksThemRelevant() throws Exception {
         start(exchange -> respond(exchange, 200, completion("""
                 {"primaryIntent":"SALARY","secondaryIntents":[],"relevant":true,"confidence":0.99,"action":"REPLY","riskLevel":"LOW",
@@ -56,6 +97,7 @@ class InboundJobReplyHttpIntegrationTest {
         InboundJobReplyService.Decision result = service(Duration.ofSeconds(2)).decide(job(), "薪资和休息怎么安排？");
 
         assertFalse(result.replyAllowed());
+        assertFalse(result.retryable());
         assertTrue(result.reason().startsWith("AI 回复未通过岗位事实校验"));
     }
 
@@ -271,15 +313,15 @@ class InboundJobReplyHttpIntegrationTest {
     }
 
     @Test
-    void failsClosedWhenACompatibleModelKeepsOmittingRequiredBoolean() throws Exception {
+    void retriesWhenACompatibleModelKeepsOmittingRequiredBoolean() throws Exception {
         start(exchange -> respond(exchange, 200, completion("""
                 {"primaryIntent":"SALARY","secondaryIntents":[],"confidence":0.96,"action":"REPLY","riskLevel":"LOW","reply":"您好，招聘页面标注薪资为 8-13K。","evidenceKeys":["SALARY"]}
                 """)));
 
-        InboundJobReplyService.Decision result = service(Duration.ofSeconds(2)).decide(job(), "请问薪资是多少？");
+        ApiException error = assertThrows(ApiException.class,
+                () -> service(Duration.ofSeconds(2)).decide(job(), "请问薪资是多少？"));
 
-        assertFalse(result.replyAllowed());
-        assertTrue(result.reason().contains("无法可靠判断"));
+        assertEquals("INBOUND_REPLY_AI_INVALID_RESULT", error.getCode());
     }
 
     @Test

@@ -1,4 +1,4 @@
-const elements = Object.fromEntries(['stateBadge','summary','pairForm','accountName','totalCount','currentUnreadCount','trackedUnreadCount','reason','continuousReplyState','continuousReplyBadge','lastContinuousReply','detailState','lastSync','copyCurrentTranscript','jobState','lastJobSync','collectJobs','readinessState','lastReadiness','checkReadiness','controlDiagnosticState','lastControlDiagnostic','inspectControls','controlDiagnosticReport','copyControlDiagnostic','visibleResumeState','lastVisibleResume','recognizeCurrentResume','resumeStageBadge','resumeStepDetected','resumeStepImported','resumeStepAnalyzing','resumeStepCompleted','resumeRecovery','pluginVersion','actionTestState','lastActionTest','testRequestResume','testExchangePhone','testExchangeWechat','testInterview','exchangeConfirmState','lastExchangeConfirm','confirmExchangePhone','confirmExchangeWechat','productionActionState','lastProductionAction','draftTestState','lastDraftTest','fillTestDraft','sendTestState','lastSendTest','prepareCurrentSendTest','sendCurrentTestDraft','autoReplyTestResult','autoReplyTestState','autoReplyTestExpiry','autoReplyDiagnosticState','lastAutoReplyDiagnostic','diagnoseCurrentAutoReply','armCurrentAutoReplyTest','cancelCurrentAutoReplyTest','approvedDraftFillState','lastApprovedDraftFill','fillApprovedDraft','enabled','collect','forget','message','saveBackendUrl','backendUrl','deviceName','pairingToken','pageContext','openConsole'].map((id) => [id, document.getElementById(id)]));
+const elements = Object.fromEntries(['stateBadge','summary','pairForm','accountName','totalCount','currentUnreadCount','trackedUnreadCount','reason','continuousReplyState','continuousReplyBadge','lastContinuousReply','autoReplyTraceSummary','autoReplyTraceLog','copyAutoReplyTrace','detailState','lastSync','copyCurrentTranscript','jobState','lastJobSync','collectJobs','readinessState','lastReadiness','checkReadiness','controlDiagnosticState','lastControlDiagnostic','inspectControls','controlDiagnosticReport','copyControlDiagnostic','visibleResumeState','lastVisibleResume','recognizeCurrentResume','resumeStageBadge','resumeStepDetected','resumeStepImported','resumeStepAnalyzing','resumeStepCompleted','resumeRecovery','pluginVersion','actionTestState','lastActionTest','testRequestResume','testExchangePhone','testExchangeWechat','testInterview','exchangeConfirmState','lastExchangeConfirm','confirmExchangePhone','confirmExchangeWechat','productionActionState','lastProductionAction','draftTestState','lastDraftTest','fillTestDraft','sendTestState','lastSendTest','prepareCurrentSendTest','sendCurrentTestDraft','autoReplyTestResult','autoReplyTestState','autoReplyTestExpiry','autoReplyDiagnosticState','lastAutoReplyDiagnostic','diagnoseCurrentAutoReply','armCurrentAutoReplyTest','cancelCurrentAutoReplyTest','approvedDraftFillState','lastApprovedDraftFill','fillApprovedDraft','enabled','collect','forget','message','saveBackendUrl','backendUrl','deviceName','pairingToken','pageContext','openConsole'].map((id) => [id, document.getElementById(id)]));
 
 elements.pluginVersion.textContent = chrome.runtime.getManifest().version;
 
@@ -36,6 +36,12 @@ elements.copyCurrentTranscript.addEventListener('click', () => void busy(element
     show(`已复制 ${synced.messageCount} 条记录；后端导入状态未知，请查看后端日志。`, true);
   }
 }, '同步中…'));
+elements.copyAutoReplyTrace.addEventListener('click', () => void busy(elements.copyAutoReplyTrace, async () => {
+  const text = elements.autoReplyTraceLog.textContent?.trim();
+  if (!text || text === '尚无运行日志。') throw new Error('当前没有可复制的自动回复运行日志。');
+  await navigator.clipboard.writeText(text);
+  show('已复制自动回复运行日志，可直接发给我定位具体卡点。');
+}, '复制中…'));
 elements.collectJobs.addEventListener('click', () => void busy(elements.collectJobs, async () => {
   show('正在读取当前职位页并进行稳定性校验，请稍候…');
   const result = await send({ type: 'BRIDGE_COLLECT_JOBS_NOW' });
@@ -166,6 +172,10 @@ function render(status) {
   elements.continuousReplyBadge.textContent = status.singleAccountAutoReplyEnabled ? '运行中' : '已停止';
   elements.continuousReplyBadge.className = `badge ${status.singleAccountAutoReplyEnabled ? 'running' : 'paused'}`;
   elements.lastContinuousReply.textContent = status.lastSingleAccountAutoReplyAt ? `最近处理：${new Date(status.lastSingleAccountAutoReplyAt).toLocaleString('zh-CN')} · 已检查 ${status.singleAccountAutoReplyProcessedCount} 条` : '尚未处理消息';
+  const trace = Array.isArray(status.autoReplyTrace) ? status.autoReplyTrace : [];
+  elements.autoReplyTraceSummary.textContent = summarizeAutoReplyTrace(trace);
+  elements.autoReplyTraceLog.textContent = trace.length ? trace.map(formatAutoReplyTrace).join('\n') : '尚无运行日志。';
+  elements.copyAutoReplyTrace.disabled = trace.length === 0;
   elements.jobState.textContent = status.jobState; elements.lastJobSync.textContent = status.lastJobSyncAt ? `最近职位同步：${new Date(status.lastJobSyncAt).toLocaleString('zh-CN')} · ${status.jobTotal} 个` : '尚未同步职位管理页';
   elements.readinessState.textContent = status.readinessState; elements.lastReadiness.textContent = status.lastReadinessAt ? `最近检查：${new Date(status.lastReadinessAt).toLocaleString('zh-CN')}` : '尚未形成人工验收证据';
   elements.controlDiagnosticState.textContent = status.controlDiagnosticState; elements.lastControlDiagnostic.textContent = status.lastControlDiagnosticAt ? `最近识别：${new Date(status.lastControlDiagnosticAt).toLocaleString('zh-CN')}` : '尚未生成脱敏结构报告';
@@ -194,6 +204,47 @@ function render(status) {
   elements.pageContext.textContent = ({ CHAT: '当前在 BOSS 沟通页', JOB_LIST: '当前在 BOSS 职位列表', JOB_DETAIL: '当前在 BOSS 职位详情', OTHER_BOSS: '当前在其他 BOSS 页面', NO_BOSS_PAGE: '未识别 BOSS 工作页面' })[status.pageContext] || '未识别 BOSS 工作页面';
   const running = status.state === 'RUNNING'; const paused = ['PAUSED','ERROR'].includes(status.state);
   elements.stateBadge.textContent = running ? '只读运行中' : paused ? '已暂停' : status.paired ? '已配对' : '未配对'; elements.stateBadge.className = `badge ${running ? 'running' : paused ? 'paused' : ''}`;
+}
+function formatAutoReplyTrace(event) {
+  const time = event?.occurredAt ? new Date(event.occurredAt).toLocaleTimeString('zh-CN', { hour12: false }) : '--:--:--';
+  const run = event?.runId ? ` run=${event.runId}` : '';
+  const target = event?.chatDigest ? ` chat=${event.chatDigest}` : '';
+  const message = event?.messageDigest ? ` msg=${event.messageDigest}` : '';
+  const task = event?.taskId ? ` task=${event.taskId}` : '';
+  const queue = Number.isInteger(event?.queuePosition) ? ` queue#${event.queuePosition}` : '';
+  const attempt = Number.isInteger(event?.attempt) ? ` attempt=${event.attempt}` : '';
+  const elapsed = Number.isFinite(event?.elapsedMs) ? ` ${event.elapsedMs}ms` : '';
+  const reason = event?.reason ? ` · ${event.reason}` : '';
+  return `[${time}] ${event?.stage || 'UNKNOWN'} ${event?.outcome || 'INFO'}${run}${target}${message}${task}${queue}${attempt}${elapsed}${reason}`;
+}
+function summarizeAutoReplyTrace(trace) {
+  if (!trace.length) return '日志汇总：暂无';
+  const terminal = new Map();
+  let enqueued = 0;
+  let retries = 0;
+  let attachmentTimeouts = 0;
+  let bridgeConflicts = 0;
+  let queueLocateMisses = 0;
+  let queueDropped = 0;
+  for (const event of trace) {
+    const key = event?.taskId || [event?.chatDigest || '', event?.messageDigest || ''].join(':');
+    if (event?.stage === 'QUEUE_ENQUEUED') enqueued += 1;
+    if (event?.stage === 'AI_RETRY_SCHEDULED') retries += 1;
+    if (event?.stage === 'ATTACHMENT_TIMEOUT') attachmentTimeouts += 1;
+    if (event?.stage === 'BRIDGE_OBSERVATION_CONFLICT') bridgeConflicts += 1;
+    if (event?.stage === 'QUEUE_TARGET_NOT_FOUND') queueLocateMisses += 1;
+    if (event?.stage === 'QUEUE_DROPPED') queueDropped += 1;
+    if (!key || key === ':') continue;
+    if (['AI_QUEUED', 'AI_POLL_WAITING', 'AI_REQUESTED', 'AI_RETRY_SCHEDULED', 'AI_RETRY_PENDING', 'AI_POLL_ERROR', 'AI_REQUEST_FAILED', 'BRIDGE_OBSERVATION_CONFLICT', 'QUEUE_TARGET_NOT_FOUND'].includes(event?.stage)) terminal.set(key, 'WAITING');
+    if (event?.stage === 'QUEUE_DROPPED') terminal.set(key, 'DEFERRED');
+    if (['AI_READY', 'DRAFT_FILLED'].includes(event?.stage)) terminal.set(key, 'READY');
+    if (event?.stage === 'DECISION_SILENT' || event?.stage === 'SAFETY_SILENT' || event?.stage === 'NON_TEXT_MESSAGE' || event?.stage === 'INTERVIEW_HANDOFF') terminal.set(key, 'SILENT');
+    if (event?.stage === 'AI_FAILED' || event?.stage === 'AI_FINAL_FAILED' || event?.stage === 'LOOP_EXCEPTION' || event?.stage === 'RESULT_REPORT_FAILED') terminal.set(key, 'FAILED');
+    if (event?.stage === 'SEND_CONFIRMED') terminal.set(key, 'SENT');
+    if (event?.stage === 'SEND_UNKNOWN') terminal.set(key, 'UNKNOWN');
+  }
+  const count = (value) => [...terminal.values()].filter((item) => item === value).length;
+  return `日志汇总（最近 ${trace.length} 条）：入队 ${enqueued} · 重试 ${retries} · 已发送 ${count('SENT')} · 静默 ${count('SILENT')} · AI 失败 ${count('FAILED')} · 结果不明 ${count('UNKNOWN')} · 待处理 ${count('WAITING')} · 队列定位失败 ${queueLocateMisses} · 队列移出 ${queueDropped} · 简历超时 ${attachmentTimeouts} · 快照冲突 ${bridgeConflicts}`;
 }
 function renderResumePipeline(value) {
   const state = String(value || '');

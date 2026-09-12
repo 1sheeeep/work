@@ -5,6 +5,7 @@ import ai.xzkj.recruitment.boss.BossAccountRepository;
 import ai.xzkj.recruitment.jobs.JobPosition;
 import ai.xzkj.recruitment.jobs.JobPositionRepository;
 import ai.xzkj.recruitment.jobs.JobPositionStatus;
+import ai.xzkj.recruitment.candidates.ConversationTimelineService;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.ConcurrencyFailureException;
 import org.springframework.beans.factory.annotation.Value;
@@ -47,6 +48,7 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
     private final TransactionTemplate transactions;
     private final MeterRegistry meters;
     private final JdbcTemplate jdbc;
+    private final ConversationTimelineService timeline;
     private final ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
     private final InboundReplyExecutionCoordinator execution;
     private final SecureRandom random = new SecureRandom();
@@ -63,10 +65,12 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
                                BossAccountRepository accounts, JobPositionRepository jobs,
                                InboundJobReplyService replies, PlatformTransactionManager manager,
                                MeterRegistry meters, JdbcTemplate jdbc,
+                               ConversationTimelineService timeline,
                                @Value("${app.inbound-reply.model-concurrency:8}") int configuredModelConcurrency) {
         this.tasks = tasks; this.observations = observations; this.accounts = accounts; this.jobs = jobs; this.replies = replies;
         this.meters = meters;
         this.jdbc = jdbc;
+        this.timeline = timeline;
         this.execution = new InboundReplyExecutionCoordinator(configuredModelConcurrency);
         this.transactions = new TransactionTemplate(manager);
         this.transactions.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
@@ -140,7 +144,8 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
             InboundJobReplyService.Decision value = task.decision();
             decision = new InboundReplyDecisionResponse(value.replyAllowed(), value.category(), value.confidence(), value.content(), value.reason());
         }
-        return new InboundReplyTaskStatusResponse(task.getId(), task.getStatus(), decision);
+        return new InboundReplyTaskStatusResponse(task.getId(), task.getStatus(), decision,
+                task.getAttemptCount(), task.getNextAttemptAt(), task.getLastErrorCode(), task.getResultReason());
     }
 
     List<InboundAiReplyTask> recentSuccessfulSends() {
@@ -151,6 +156,9 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
     }
     List<InboundAiReplyTask> recentDecisions(Instant since) {
         return tasks.findTop500ByCompletedAtAfterOrderByCompletedAtDesc(since);
+    }
+    List<InboundAiReplyTask> recentEvents(Instant since) {
+        return tasks.findTop500ByUpdatedAtAfterOrderByUpdatedAtDesc(since);
     }
 
     @Override
@@ -223,6 +231,13 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
             try {
                 task.receiptSend(deviceId, request.outcome(), request.beforeStateDigest(), request.afterStateDigest(),
                         request.receiptDigest(), request.reason(), Instant.now());
+                try {
+                    JobPosition job = jobs.findWithDetailsById(task.getJobPositionId()).orElse(null);
+                    timeline.recordAiSendReceipt(task.getAccountId(), task.getJobPositionId(), task.getChatDigest(),
+                            task.getId(), request.outcome(), job);
+                } catch (RuntimeException timelineError) {
+                    meters.counter("recruitment.conversation.timeline.write.failure", "stage", "ai_receipt").increment();
+                }
                 meters.counter("recruitment.inbound.reply.send.receipt", "outcome", request.outcome()).increment();
                 return new InboundReplySendReceiptResponse(task.getId(), task.getSendStatus(), task.getSendCompletedAt());
             } catch (IllegalStateException conflict) {
@@ -299,11 +314,25 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
                                 .description("AI 理解与受控生成耗时").register(meters));
                     }
                     recordDecisionMetrics(evaluated);
+                    if (!evaluated.replyAllowed() && evaluated.retryable()) {
+                        String reason = "AI 输出质量问题，准备有限重试：" + evaluated.reason();
+                        meters.counter("recruitment.inbound.reply.decision.retryable",
+                                "reason", InboundReplyQualityGate.reasonCode(evaluated)).increment();
+                        retry(task.getId(), "AI_OUTPUT_INVALID", reason);
+                        continue;
+                    }
                     InboundJobReplyService.Decision decision = shadowEvaluationEnabled
                             ? evaluated.asShadowEvaluation()
                             : evaluated;
+                    Instant completedAt = Instant.now();
                     transactions.executeWithoutResult(status -> tasks.findById(task.getId())
-                            .ifPresent(value -> value.complete(decision, Instant.now())));
+                            .ifPresent(value -> value.complete(decision, completedAt)));
+                    try {
+                        timeline.recordAiReply(task.getAccountId(), task.getJobPositionId(), task.getChatDigest(),
+                                task.getId(), decision.replyAllowed(), decision.content(), completedAt, job);
+                    } catch (RuntimeException timelineError) {
+                        meters.counter("recruitment.conversation.timeline.write.failure", "stage", "ai_reply").increment();
+                    }
                     meters.counter("recruitment.inbound.reply.completed", "allowed", Boolean.toString(decision.replyAllowed())).increment();
                 } catch (Exception error) {
                     retry(task.getId(), errorCode(error), "AI 回复任务处理失败：" + safe(error));
@@ -382,6 +411,7 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
     }
     private void recordDecisionMetrics(InboundJobReplyService.Decision decision) {
         String outcome = decision.replyAllowed() ? "ALLOWED"
+                : decision.retryable() ? "RETRYABLE"
                 : decision.reason() != null && decision.reason().startsWith("正常静默：") ? "EXPECTED_SILENCE"
                 : "BLOCKED";
         meters.counter("recruitment.inbound.reply.decision",

@@ -12,5 +12,10 @@ public interface CandidateJobContactRepository extends JpaRepository<CandidateJo
     @EntityGraph(attributePaths = {"candidate", "candidate.company", "jobPosition", "jobPosition.company", "bossAccount", "bossAccount.capabilities", "assignedHr"})
     Optional<CandidateJobContact> findWithDetailsById(UUID id);
     Optional<CandidateJobContact> findByCandidateIdAndJobPositionId(UUID candidateId, UUID jobPositionId);
-    List<CandidateJobContact> findByCandidateId(UUID candidateId);
+    @EntityGraph(attributePaths = {"candidate", "candidate.company", "jobPosition", "jobPosition.company", "bossAccount", "assignedHr"})
+    List<CandidateJobContact> findByCandidateIdOrderByUpdatedAtDesc(UUID candidateId);
+
+    default List<CandidateJobContact> findByCandidateId(UUID candidateId) {
+        return findByCandidateIdOrderByUpdatedAtDesc(candidateId);
+    }
 }
