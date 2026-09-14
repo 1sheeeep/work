@@ -1,6 +1,9 @@
 package ai.xzkj.recruitment.localconnector;
 
+import ai.xzkj.recruitment.jobs.JobPosition;
+import ai.xzkj.recruitment.resumes.OpenAiProperties;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.ObjectMapper;
 
 import java.util.List;
 import java.util.Map;
@@ -8,10 +11,84 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class InboundJobReplyServiceTest {
     @Test
+    void detectsDeterministicHiringAndResumeLeadMessages() {
+        assertTrue(InboundJobReplyService.isHiringStatusInquiry("请问还招人吗"));
+        assertTrue(InboundJobReplyService.isResumePermissionOrJobInterest("可否给您发送简历，进一步沟通呢？"));
+        assertTrue(InboundJobReplyService.isResumePermissionOrJobInterest("我想应聘贵公司的AI应用开发助理，盼望回复，谢谢！"));
+        assertTrue(InboundJobReplyService.isResumePermissionOrJobInterest("小白可以吗，很感兴趣，并且会认真学习"));
+        assertTrue(InboundJobReplyService.isResumePermissionOrJobInterest("看到这个岗位接受新人，请考虑下我谢谢"));
+        assertEquals(false, InboundJobReplyService.isResumePermissionOrJobInterest("暂时不考虑这个岗位"));
+    }
+
+    @Test
+    void detectsPureGreetingAndDetailedFactQuestions() {
+        assertTrue(InboundJobReplyService.isPureGreeting("你好；"));
+        assertTrue(InboundJobReplyService.isPureGreeting("您好！"));
+        assertTrue(InboundJobReplyService.isPureAcknowledgement("好的！"));
+        assertEquals(false, InboundJobReplyService.isPureAcknowledgement("你好"));
+        assertTrue(InboundJobReplyService.isDetailedJobQuestion(
+                "您好，大专应届生，有国内电商运营助理实习。薪资无责4k是底薪吗？是否缴纳五险一金，是双休还是大小周？"));
+        assertEquals(false, InboundJobReplyService.isDetailedJobQuestion("请问这个岗位薪资是多少？"));
+    }
+
+    @Test
+    void detectsDeterministicFallbackQuestionsThatMustNotDependOnAi() {
+        assertTrue(InboundJobReplyService.isWorkTimeQuestion("上班时间到晚上吗"));
+        assertTrue(InboundJobReplyService.isRestDaysQuestion("月休几天"));
+        assertTrue(InboundJobReplyService.isPaydayQuestion("发薪日是几号"));
+        assertTrue(InboundJobReplyService.isCandidateDecline("办公地点较远，不在考虑范围内"));
+        assertTrue(InboundJobReplyService.isNoExperienceQuestion("我之前没有做过，你这边可以接受吗"));
+        assertTrue(InboundJobReplyService.isNoExperienceQuestion("小白可以吗"));
+        assertTrue(InboundJobReplyService.isInterviewCancellation("不好意思，明天的面试我先取消了"));
+        assertTrue(InboundJobReplyService.isInterviewCancellation("非常抱歉，因临时有事，无法按照定时间参加面试。"));
+        assertEquals(false, InboundJobReplyService.isInterviewCancellation("不好意思，刚看到您的消息"));
+        assertEquals(false, InboundJobReplyService.isInterviewCancellation("能安排面试吗"));
+        assertTrue(InboundJobReplyService.isDetailedResponsibilityQuestion("可以详细介绍一下这个岗位的工作内容和每天的工作流程吗？"));
+    }
+
+    @Test
+    void noExperienceAndInterviewCancellationUseSafeRepliesWithoutCallingTheModel() {
+        JobPosition job = mock(JobPosition.class);
+        when(job.isKnowledgeApproved()).thenReturn(true);
+        InboundJobReplyService service = new InboundJobReplyService(new OpenAiProperties(), new ObjectMapper());
+
+        InboundJobReplyService.Decision noExperience = service.decide(job, "我之前没有做过，你这边是可以接受的吗");
+        assertTrue(noExperience.replyAllowed());
+        assertEquals("JOB_INTEREST", noExperience.category());
+        assertTrue(noExperience.content().contains("简历"));
+
+        InboundJobReplyService.Decision cancellation = service.decide(job, "不好意思，明天的面试我先取消了");
+        assertTrue(cancellation.replyAllowed());
+        assertEquals("CANDIDATE_DECLINE", cancellation.category());
+        assertEquals("好的，感谢您的投递。", cancellation.content());
+
+        InboundJobReplyService.Decision cannotAttend = service.decide(job, "非常抱歉，因临时有事，无法按照定时间参加面试。");
+        assertTrue(cannotAttend.replyAllowed());
+        assertEquals("CANDIDATE_DECLINE", cannotAttend.category());
+        assertEquals("好的，感谢您的投递。", cannotAttend.content());
+    }
+
+    @Test
+    void roleConfirmationMustMatchTheCurrentJobBeforeUsingFixedReply() {
+        var job = mock(ai.xzkj.recruitment.jobs.JobPosition.class);
+        when(job.getTitle()).thenReturn("跨境电商运营助理");
+        when(job.getJobCategory()).thenReturn("电商运营");
+        when(job.getDescription()).thenReturn("负责店铺运营和数据整理");
+        assertTrue(InboundJobReplyService.isRoleConfirmationQuestion(job, "是运营是吗？"));
+        when(job.getTitle()).thenReturn("人事前台");
+        when(job.getJobCategory()).thenReturn("行政");
+        when(job.getDescription()).thenReturn("负责前台接待");
+        assertEquals(false, InboundJobReplyService.isRoleConfirmationQuestion(job, "是运营是吗？"));
+    }
+
+    @Test
     void detectsInterviewTimeCoordinationWithoutBlockingWorkHourQuestions() {
+        assertEquals(true, InboundJobReplyService.isInterviewCoordination("你好，什么时候方便过去面试呢？", ""));
         assertEquals(true, InboundJobReplyService.isInterviewCoordination("后天下午可以吗？", "HR：想约您来公司面试，时间我们再确认"));
         assertEquals(true, InboundJobReplyService.isInterviewCoordination("那个时间安排在4点可以不？", ""));
         assertEquals(true, InboundJobReplyService.isInterviewCoordination("面试改到明天上午方便吗？", ""));
@@ -139,14 +216,11 @@ class InboundJobReplyServiceTest {
     }
 
     @Test
-    void courtesyAcknowledgementsEndNaturallyInsteadOfLooping() {
-        InboundJobReplyService.ConversationMemory memory = InboundJobReplyService.summarizeConversation(
-                "HR：不客气，有问题随时联系。");
-        String reason = InboundJobReplyService.expectedSilenceReason(
-                new InboundJobReplyService.Topic("SOCIAL_ACKNOWLEDGEMENT", List.of(), true, .92, "REPLY", "LOW"),
-                memory);
-
-        assertEquals("候选人仅确认收到或自然结束，本轮不追加机械客套", reason);
+    void courtesyAcknowledgementsUseUniversalAck() {
+        assertTrue(InboundJobReplyService.isCourtesyIntent("SOCIAL_ACKNOWLEDGEMENT"));
+        assertEquals("好的", InboundJobReplyService.courtesyReply());
+        assertTrue(InboundJobReplyService.isCourtesyIntent("CONVERSATION_CLOSING"));
+        assertTrue(!InboundJobReplyService.isCourtesyIntent("CANDIDATE_CONSIDERING"));
     }
 
     @Test
@@ -172,12 +246,9 @@ class InboundJobReplyServiceTest {
     }
 
     @Test
-    void pureCourtesyStillUsesExpectedSilence() {
+    void pureCourtesyStillHasNoActionableRecruitmentSignal() {
         assertTrue(!InboundJobReplyService.hasActionableRecruitmentSignal("好的，谢谢您"));
-        String reason = InboundJobReplyService.expectedSilenceReason(
-                new InboundJobReplyService.Topic("SOCIAL_ACKNOWLEDGEMENT", List.of(), true, .92, "REPLY", "LOW"),
-                InboundJobReplyService.ConversationMemory.empty(), "好的，谢谢您");
-        assertEquals("候选人仅确认收到或自然结束，本轮不追加机械客套", reason);
+        assertTrue(InboundJobReplyService.isCourtesyIntent("SOCIAL_ACKNOWLEDGEMENT"));
     }
 
     @Test

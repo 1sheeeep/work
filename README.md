@@ -64,7 +64,7 @@ HR 使用 <http://localhost:8088/hr-login> 进入专用登录页，或在普通�
 
 HR 可在登录页勾选“保持登录 7 天”。该功能仅使用服务端可撤销的 HttpOnly Cookie，不保存密码、Cookie 原文或 localStorage token；不勾选时仍使用 8 小时会话。
 
-### 启用兼容 AI 简历分析（当前可使用通义千问/百炼）
+### 启用兼容 AI 简历分析（当前服务端使用 DeepSeek/OpenAI 兼容接口）
 
 默认关闭。完整接入步骤如下：
 
@@ -76,8 +76,9 @@ HR 可在登录页勾选“保持登录 7 天”。该功能仅使用服务端�
 ```bash
 APP_OPENAI_ENABLED=true
 OPENAI_API_KEY=你的服务端AI服务密钥
-OPENAI_MODEL=qwen3.8-flash
-OPENAI_BASE_URL=https://ws-ta1pzdoqfltt6o6o.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+# 按服务端实际开通的 DeepSeek 模型填写，例如 deepseek-chat
+OPENAI_MODEL=你的已开通模型
+OPENAI_BASE_URL=https://api.deepseek.com
 OPENAI_TIMEOUT=90s
 ```
 

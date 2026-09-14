@@ -297,7 +297,9 @@ record ResumeAnalysisResult(
             case "FOUND", "MATCH", "MATCHED", "PRESENT", "YES", "TRUE", "PASS", "符合", "匹配", "存在" -> "FOUND";
             case "NOT_FOUND", "MISS", "MISSING", "ABSENT", "NOT_PRESENT", "NO", "FALSE", "FAIL", "未找到", "不匹配", "缺失" -> "NOT_FOUND";
             case "UNCLEAR", "UNKNOWN", "UNDETERMINED", "UNCERTAIN", "NOT_SURE", "UNSURE", "不明确", "未知", "无法判断" -> "UNCLEAR";
-            default -> normalized;
+            // 兼容模型偶尔返回的未知状态，同时保持安全：未知值只能降级为待确认，
+            // 不能被当作 FOUND 或 NOT_FOUND。
+            default -> "UNCLEAR";
         };
     }
 

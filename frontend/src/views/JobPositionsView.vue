@@ -367,16 +367,6 @@ onUnmounted(() => {
   document.removeEventListener("visibilitychange", refreshVisibleJobs);
 });
 
-function showMetricsHelp() {
-  ElNotification({
-    title: '指标说明',
-    message: '<b>职位总数</b>：当前系统中维护的所有岗位<br/><b>页面同步</b>：从BOSS直聘页面实际采集的岗位数<br/><b>安全草稿就绪</b>：已具备完整资料可自动回复的岗位<br/><b>待完善草稿</b>：需要补充信息才能发布的岗位',
-    duration: 5000,
-    type: 'info',
-    dangerouslyUseHTMLString: true,
-  })
-}
-
 function showCompanyHelp() {
   ElNotification({
     title: '公司介绍说明',
@@ -409,11 +399,7 @@ function showJobsHelp() {
 <template>
   <div class="page-shell positions-page">
     <PageHeader>
-      <div>
-        <h1>岗位资料 · 运营面板</h1>
-        <p>同步、核对并维护当前实际招聘岗位。<el-button :icon="InfoFilled" size="small" type="text" @click="showMetricsHelp">查看说明</el-button></p>
-      </div>
-      <el-button :icon="Refresh" :loading="loading" @click="loadData()">刷新</el-button>
+      <div></div>
     </PageHeader>
     <AsyncState v-if="loading" state="loading" aria-label="正在加载岗位资料" />
     <AsyncState v-else-if="loadError" state="error" title="职位暂时无法加载" :message="loadError" retry-label="重新加载" @retry="loadData()">
@@ -883,18 +869,18 @@ function showJobsHelp() {
 .company-knowledge-state i { width:7px; height:7px; border-radius:50%; background:var(--warning); flex:0 0 auto; }.company-knowledge-state.ready i { background:var(--success); }
 .review-queue { background:linear-gradient(180deg, rgba(255,255,255,.72), rgba(247,249,250,.82)); }
 .review-cards { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; padding:20px 22px; }
-.review-cards article { padding:20px; border:0; border-radius:var(--radius-panel); background:linear-gradient(145deg, rgba(255,247,233,.94) 0%, rgba(255,255,255,.84) 100%); box-shadow:0 1px 2px rgba(17,28,45,.035), 0 4px 16px rgba(17,28,45,.05), inset 0 1px 0 rgba(255,255,255,.72), 2px 0 0 0 rgba(183,110,0,.12); transition:box-shadow var(--transition-fast), transform 280ms cubic-bezier(.2,0,0,1); }
+.review-cards article { padding:16px; border:0; border-radius:var(--radius-panel); background:linear-gradient(145deg, rgba(255,247,233,.94) 0%, rgba(255,255,255,.84) 100%); box-shadow:0 1px 2px rgba(17,28,45,.035), 0 4px 16px rgba(17,28,45,.05), inset 0 1px 0 rgba(255,255,255,.72), 2px 0 0 0 rgba(183,110,0,.12); transition:box-shadow var(--transition-fast), transform 280ms cubic-bezier(.2,0,0,1); }
 .review-cards article:hover { box-shadow:0 2px 4px rgba(17,28,45,.06), 0 12px 32px rgba(17,28,45,.12), inset 0 1px 0 rgba(255,255,255,.88), 2px 0 0 0 rgba(183,110,0,.18); transform:translateY(-3px); }
 .review-cards article:active { animation:card-press 180ms ease-out both; }
 .review-cards header,.review-cards footer { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .review-cards header > .job-identity { flex:1; min-width:0; }
-.review-steps { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:0; margin:16px 0; position:relative; }
+.review-steps { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:0; margin:10px 0; position:relative; }
 .review-steps::before { content:''; position:absolute; top:9px; left:calc(12.5%); right:calc(12.5%); height:2px; background:var(--border-strong); z-index:0; border-radius:1px; }
 .review-steps span { position:relative; display:flex; flex-direction:column; align-items:center; gap:8px; padding-top:0; border-bottom:0; color:var(--text-secondary); font-size:11px; z-index:1; }
 .review-steps span i { display:block; width:16px; height:16px; border-radius:50%; border:2px solid var(--border-strong); background:var(--surface); flex:0 0 auto; transition:border-color var(--transition-fast), background var(--transition-fast), box-shadow var(--transition-fast); }
 .review-steps span.done i { border-color:var(--success); background:var(--success); box-shadow:0 0 0 3px rgba(22,128,91,.12); }
 .review-steps span.done { color:var(--success); }
-.review-cards article > p,.internal-blocker { color:var(--warning); font-size:12px; line-height:1.6; }.review-cards article > p { margin:0 0 14px; }
+.review-cards article > p,.internal-blocker { color:var(--warning); font-size:12px; line-height:1.6; }.review-cards article > p { margin:0 0 10px; display:-webkit-box; -webkit-line-clamp:1; line-clamp:1; -webkit-box-orient:vertical; overflow:hidden; }
 .metrics-panel { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:18px; padding:12px 18px; margin-bottom:18px; border-radius:var(--radius-panel); border:1px solid var(--border-teal); background:linear-gradient(135deg, rgba(238,249,246/.92), rgba(255,255,255/.72)), var(--surface-teal); box-shadow:0 1px 2px rgba(17,28,45/.03), 0 4px 16px rgba(17,28,45/.06), inset 0 1px 0 rgba(255,255,255/.62); transition:background 300ms ease, border-color 300ms ease, box-shadow 280ms cubic-bezier(.2,0,0,1); position:relative; overflow:hidden; }
 .metrics-panel::before { content:''; position:absolute; inset:-80% auto auto 48%; width:420px; height:220px; border-radius:50%; background:radial-gradient(circle, rgba(20,184,166/.12), transparent 68%); pointer-events:none; }
 .metrics-panel > * { position:relative; z-index:1; }

@@ -62,6 +62,14 @@ public class GatewayOperationsController {
                        task.last_error_code,
                        COALESCE(NULLIF(task.send_result_reason, ''), NULLIF(task.result_reason, ''), NULLIF(task.last_error_code, '')),
                        CASE WHEN task.send_status = 'SUCCEEDED' THEN task.reply_content ELSE NULL END,
+                       LEFT(COALESCE(NULLIF(task.message_text, ''), (
+                           SELECT message.content
+                             FROM conversation_messages message
+                            WHERE message.external_message_id = CONCAT('boss:', task.message_digest)
+                              AND message.direction = 'INBOUND'
+                            ORDER BY message.created_at DESC
+                            LIMIT 1
+                       )), 1000),
                        task.created_at, task.updated_at, task.send_completed_at
                   FROM inbound_ai_reply_tasks task
                   JOIN boss_accounts account ON account.id = task.account_id
@@ -71,8 +79,8 @@ public class GatewayOperationsController {
                 """, (rs, rowNum) -> new InboundReplyEvent(
                 rs.getObject(1, UUID.class), rs.getString(2), rs.getString(3), rs.getString(4),
                 rs.getString(5), rs.getString(6), rs.getString(7), rs.getInt(8), rs.getString(9),
-                rs.getString(10), rs.getString(11), rs.getTimestamp(12).toInstant(), rs.getTimestamp(13).toInstant(),
-                rs.getTimestamp(14) == null ? null : rs.getTimestamp(14).toInstant()));
+                rs.getString(10), rs.getString(11), rs.getString(12), rs.getTimestamp(13).toInstant(),
+                rs.getTimestamp(14).toInstant(), rs.getTimestamp(15) == null ? null : rs.getTimestamp(15).toInstant()));
         return new OperationsSummary("READY", version, Boolean.TRUE.equals(immutable), activeDevices, staleDevices,
                 unreadObservations, unverifiedCaptures, activeDutyPolicies, queue, recentInboundReplyEvents,
                 Instant.now(), guard.snapshots());
@@ -91,6 +99,6 @@ public class GatewayOperationsController {
                                   boolean autoSendEnabled) {}
     public record InboundReplyEvent(UUID id,String accountName,String jobTitle,String anonymousChatKey,
                                     String taskStatus,String sendStatus,String category,int attemptCount,
-                                    String errorCode,String detail,String replyContent,
+                                    String errorCode,String detail,String replyContent,String messageText,
                                     Instant createdAt,Instant updatedAt,Instant completedAt) {}
 }

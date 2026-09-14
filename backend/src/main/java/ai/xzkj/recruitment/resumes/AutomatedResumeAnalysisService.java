@@ -1,10 +1,9 @@
 package ai.xzkj.recruitment.resumes;
 
 import ai.xzkj.recruitment.audit.AuditService;
+import ai.xzkj.recruitment.candidates.CandidateProfileRepository;
 import ai.xzkj.recruitment.common.ApiException;
-import ai.xzkj.recruitment.jobs.JobPosition;
-import ai.xzkj.recruitment.jobs.JobPositionRepository;
-import ai.xzkj.recruitment.jobs.JobPositionStatus;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.ObjectMapper;
 
@@ -12,31 +11,40 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.HexFormat;
-import java.util.List;
 
 @Service
 public class AutomatedResumeAnalysisService {
     private final AiAssistanceRunRepository runs;
-    private final ExternalResumeAiClient client;
-    private final JobPositionRepository jobs;
+    private final OpenAiResumeClient client;
     private final OpenAiProperties properties;
     private final ResumeAnalysisRetentionProperties retention;
     private final ObjectMapper mapper;
     private final AuditService audit;
+    private final CandidateProfileRepository candidates;
 
-    public AutomatedResumeAnalysisService(AiAssistanceRunRepository runs, ExternalResumeAiClient client, JobPositionRepository jobs,
+    public AutomatedResumeAnalysisService(AiAssistanceRunRepository runs, OpenAiResumeClient client,
                                           OpenAiProperties properties, ResumeAnalysisRetentionProperties retention,
                                           ObjectMapper mapper, AuditService audit) {
+        this(runs, client, properties, retention, mapper, audit, null);
+    }
+
+    @Autowired
+    public AutomatedResumeAnalysisService(AiAssistanceRunRepository runs, OpenAiResumeClient client,
+                                          OpenAiProperties properties, ResumeAnalysisRetentionProperties retention,
+                                          ObjectMapper mapper, AuditService audit, CandidateProfileRepository candidates) {
         this.runs = runs;
         this.client = client;
-        this.jobs = jobs;
         this.properties = properties;
         this.retention = retention;
         this.mapper = mapper;
         this.audit = audit;
+        this.candidates = candidates;
     }
 
-    /** The supplied text is consumed synchronously and is never stored by this service. */
+    /**
+     * BOSS 简历已经在入库时绑定了来源岗位。无人值守分析只调用该岗位，
+     * 不再把同一份简历发送到企业全部岗位做重复匹配。
+     */
     public void analyzeInMemory(ResumeIntake intake, String extractedText) {
         Instant now = Instant.now();
         if (!intake.getContact().getCandidate().getCompany().isAiAutoAnalysisEnabled()) {
@@ -50,24 +58,24 @@ public class AutomatedResumeAnalysisService {
             return;
         }
 
+        if (intake.getContact().getJobPosition() == null) {
+            intake.analysisUnavailable("FAILED", "RESUME_JOB_REQUIRED",
+                    "BOSS 简历未关联来源岗位，无法执行单岗位 AI 分析", now);
+            return;
+        }
+
         String inputHash = hash(extractedText);
         intake.analysisStarted();
         try {
-            List<JobPosition> activeJobs = jobs.findAllByStatusOrderByUpdatedAtDesc(JobPositionStatus.ACTIVE).stream()
-                    .filter(job -> job.getCompany().getId().equals(intake.getContact().getCandidate().getCompany().getId()))
-                    .toList();
-            if (activeJobs.isEmpty()) throw new ApiException(org.springframework.http.HttpStatus.CONFLICT, "ACTIVE_JOB_REQUIRED",
-                    "所属企业没有已启用岗位，无法进行简历对比");
-            ExternalResumeAiClient.ExternalResumeMatch match = client.match(activeJobs, extractedText,
-                    hash("unattended-company:" + intake.getContact().getCandidate().getCompany().getId()));
-            ResumeAnalysisResult result = match.analysis();
-            updateVerifiedCandidateName(intake, match.candidateName(), extractedText);
+            ResumeAnalysisResult result = client.analyze(intake.getContact().getJobPosition(), extractedText,
+                    hash("unattended-job:" + intake.getContact().getJobPosition().getId()));
+            updateVerifiedCandidateName(intake, result.candidateName(), extractedText);
             runs.save(AiAssistanceRun.unattendedSucceeded(intake, properties.getModel(), inputHash,
                     result.summary(), mapper.writeValueAsString(result), retention.expiresFrom(now)));
             intake.analysisSucceeded(Instant.now());
             audit.systemSuccess("AUTO_ANALYZE_RESUME", "RESUME_INTAKE", intake.getId(),
                     "简历摘要 " + intake.getResumeDigest().substring(0, 12),
-                    "公司级授权下完成自动 AI 分析；仅保存文本摘要与结构化结果，不保存简历正文");
+                    "公司级授权下按 BOSS 来源岗位完成单岗位 AI 分析；仅保存文本摘要与结构化结果，不保存简历正文");
         } catch (ApiException exception) {
             recordFailure(intake, inputHash, cleanCode(exception.getCode()), cleanReason(exception.getMessage()));
         } catch (Exception exception) {
@@ -76,9 +84,10 @@ public class AutomatedResumeAnalysisService {
     }
 
     private void recordFailure(ResumeIntake intake, String inputHash, String code, String reason) {
-        runs.save(AiAssistanceRun.unattendedFailed(intake, properties.getModel(), inputHash, code));
+        runs.save(AiAssistanceRun.unattendedFailed(intake, properties.getModel(), inputHash,
+                code + " · " + reason));
         intake.analysisUnavailable("FAILED", code, reason, Instant.now());
-        audit.systemSuccess("QUEUE_RESUME_ANALYSIS_EXCEPTION", "RESUME_INTAKE", intake.getId(),
+        audit.systemFailure("QUEUE_RESUME_ANALYSIS_EXCEPTION", "RESUME_INTAKE", intake.getId(),
                 "简历摘要 " + intake.getResumeDigest().substring(0, 12),
                 "自动 AI 分析失败并进入 HR 异常队列；原因代码 " + code + "；审计不包含简历正文");
     }
@@ -89,12 +98,15 @@ public class AutomatedResumeAnalysisService {
     }
 
     private void updateVerifiedCandidateName(ResumeIntake intake, String candidateName, String extractedText) {
-        String name = candidateName == null ? "" : candidateName.replace('\n', ' ').replace('\r', ' ').trim();
-        if (name.isBlank() || name.length() > 100) return;
-        String compactName = name.replaceAll("\\s+", "");
-        String compactText = extractedText == null ? "" : extractedText.replaceAll("\\s+", "");
-        if (!compactText.contains(compactName)) return;
-        intake.getContact().getCandidate().updateRecognizedName(name);
+        var candidate = intake.getContact().getCandidate();
+        if (candidate == null || !ResumeCandidateName.isAnonymousPlaceholder(candidate.getDisplayName())) return;
+        String name = ResumeCandidateName.verified(candidateName, extractedText);
+        if (name == null) return;
+        candidate.updateRecognizedName(name);
+        // The worker runs inside a transaction, but an explicit flush is intentional:
+        // the talent profile and the AI run must become visible together even when the
+        // analysis is executed from the asynchronous queue.
+        if (candidates != null) candidates.saveAndFlush(candidate);
     }
 
     private String cleanCode(String value) {

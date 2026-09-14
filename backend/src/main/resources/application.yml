@@ -94,6 +94,9 @@ app:
   inbound-reply:
     auto-send-enabled: ${APP_INBOUND_REPLY_AUTO_SEND_ENABLED:false}
     shadow-evaluation-enabled: ${APP_INBOUND_REPLY_SHADOW_EVALUATION_ENABLED:false}
+    # 已读且没有新消息的静默结果，至少间隔 10 秒才允许安全复核。
+    # 复核仍必须通过最新 chat/message digest、岗位归属和会话详情校验。
+    silent-revalidation-delay: ${APP_INBOUND_REPLY_SILENT_REVALIDATION_DELAY:PT10S}
     model-concurrency: ${APP_INBOUND_REPLY_MODEL_CONCURRENCY:8}
     max-pending-per-account: ${APP_INBOUND_REPLY_MAX_PENDING_PER_ACCOUNT:100}
     max-pending-global: ${APP_INBOUND_REPLY_MAX_PENDING_GLOBAL:1000}

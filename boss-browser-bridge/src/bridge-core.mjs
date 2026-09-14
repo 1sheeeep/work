@@ -1,4 +1,4 @@
-export const DEFAULT_BACKEND_URL = 'http://13.215.3.189:8088';
+export const DEFAULT_BACKEND_URL = 'http://localhost:8088';
 export const ALLOWED_BACKEND_HOSTS = new Set(['localhost', '127.0.0.1', '13.215.3.189']);
 export const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 export const MAX_CONVERSATIONS = 200;
@@ -274,7 +274,23 @@ export function validateSingleAccountBaseline(payload, limit = 500) {
     return entries;
   };
   if (!payload || typeof payload !== 'object') throw new Error('持续回复恢复基线无效。');
-  return { unread: validateEntries(payload.unread), selected: validateEntries(payload.selected) };
+  const validateLocators = (entries) => {
+    if (!Array.isArray(entries) || entries.length > 1000) throw new Error('持续回复会话定位标识无效。');
+    const keys = new Set();
+    return entries.map((entry) => {
+      if (!Array.isArray(entry) || entry.length !== 2 || !/^[a-f0-9]{64}$/.test(entry[0])
+          || keys.has(entry[0]) || !entry[1] || typeof entry[1] !== 'object') throw new Error('持续回复会话定位标识无效。');
+      const ratio = Number(entry[1].ratio);
+      const rowIndex = Number(entry[1].rowIndex);
+      const updatedAt = Number(entry[1].updatedAt);
+      if (!Number.isFinite(ratio) || ratio < 0 || ratio > 1 || !Number.isInteger(rowIndex)
+          || rowIndex < 0 || rowIndex > 200 || !Number.isFinite(updatedAt) || updatedAt <= 0) throw new Error('持续回复会话定位标识无效。');
+      keys.add(entry[0]);
+      return [entry[0], { ratio, rowIndex, updatedAt }];
+    });
+  };
+  return { unread: validateEntries(payload.unread), selected: validateEntries(payload.selected),
+    locators: validateLocators(payload.locators || []) };
 }
 
 export function nextConsecutiveFailureCount(previous, outcome) {

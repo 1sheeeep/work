@@ -80,8 +80,13 @@ public class AuditLog {
 
     public AuditLog(String actorName, String action, String targetType, String targetLabel,
                     AuditResult result, String details) {
+        this(actorName, action, targetType, null, targetLabel, result, details);
+    }
+
+    public AuditLog(String actorName, String action, String targetType, UUID targetId, String targetLabel,
+                    AuditResult result, String details) {
         this.id = UUID.randomUUID(); this.actorName = actorName; this.action = action; this.targetType = targetType;
-        this.targetLabel = targetLabel; this.result = result; this.details = details; this.occurredAt = Instant.now();
+        this.targetId = targetId; this.targetLabel = targetLabel; this.result = result; this.details = details; this.occurredAt = Instant.now();
         this.requestId = RequestTrace.currentId();
     }
 

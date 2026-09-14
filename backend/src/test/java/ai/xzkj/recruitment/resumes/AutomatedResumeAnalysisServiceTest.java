@@ -4,8 +4,6 @@ import ai.xzkj.recruitment.audit.AuditService;
 import ai.xzkj.recruitment.candidates.CandidateJobContact;
 import ai.xzkj.recruitment.candidates.CandidateProfile;
 import ai.xzkj.recruitment.jobs.JobPosition;
-import ai.xzkj.recruitment.jobs.JobPositionRepository;
-import ai.xzkj.recruitment.jobs.JobPositionStatus;
 import ai.xzkj.recruitment.organization.Company;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.ObjectMapper;
@@ -21,10 +19,10 @@ class AutomatedResumeAnalysisServiceTest {
     @Test
     void keepsExtractedTextInMemoryAndStoresSuccessfulStructuredResult() {
         Fixture f = new Fixture(true, true);
-        when(f.client.match(eq(List.of(f.job)), eq("Java 项目经验"), any())).thenReturn(new ExternalResumeAiClient.ExternalResumeMatch(
-                "", f.jobId, new ResumeAnalysisResult("", "NORMAL_VIEW", "具备相关项目经验",
+        when(f.client.analyze(eq(f.job), eq("Java 项目经验"), any())).thenReturn(new ResumeAnalysisResult(
+                "", "NORMAL_VIEW", "具备相关项目经验",
                 List.of(new ResumeAnalysisEvidence("Java", "简历中已体现", "FOUND")),
-                List.of(), List.of(), List.of("负责范围？", "项目规模？", "离职原因？"))));
+                List.of(), List.of(), List.of("负责范围？", "项目规模？", "离职原因？")));
 
         f.service.analyzeInMemory(f.intake, "Java 项目经验");
 
@@ -47,8 +45,7 @@ class AutomatedResumeAnalysisServiceTest {
 
     private static final class Fixture {
         final AiAssistanceRunRepository runs=mock(AiAssistanceRunRepository.class);
-        final ExternalResumeAiClient client=mock(ExternalResumeAiClient.class);
-        final JobPositionRepository jobs=mock(JobPositionRepository.class);
+        final OpenAiResumeClient client=mock(OpenAiResumeClient.class);
         final OpenAiProperties properties=mock(OpenAiProperties.class);
         final ResumeAnalysisRetentionProperties retention=mock(ResumeAnalysisRetentionProperties.class);
         final AuditService audit=mock(AuditService.class);
@@ -68,7 +65,6 @@ class AutomatedResumeAnalysisServiceTest {
             when(contact.getJobPosition()).thenReturn(job);
             when(job.getCompany()).thenReturn(company);
             when(job.getId()).thenReturn(jobId);
-            when(jobs.findAllByStatusOrderByUpdatedAtDesc(JobPositionStatus.ACTIVE)).thenReturn(List.of(job));
             when(properties.isEnabled()).thenReturn(configured);
             when(properties.getApiKey()).thenReturn(configured ? "configured" : "");
             when(properties.getModel()).thenReturn(configured ? "gpt-4o-mini" : "");
@@ -76,7 +72,7 @@ class AutomatedResumeAnalysisServiceTest {
             when(retention.expiresFrom(any())).thenReturn(Instant.now().plusSeconds(3600));
             when(runs.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
             intake = new ResumeIntake(contact, ResumeIntakeSource.BOSS_VISIBLE, "a".repeat(64), "BOSS 简历", Instant.now());
-            service = new AutomatedResumeAnalysisService(runs, client, jobs, properties, retention, new ObjectMapper(), audit);
+            service = new AutomatedResumeAnalysisService(runs, client, properties, retention, new ObjectMapper(), audit);
         }
     }
 }

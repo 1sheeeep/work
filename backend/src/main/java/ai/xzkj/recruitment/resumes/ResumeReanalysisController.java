@@ -10,5 +10,5 @@ class ResumeReanalysisController {
     private final ResumeAnalysisService analysis;
     ResumeReanalysisController(ResumeAnalysisService analysis) { this.analysis = analysis; }
     @PostMapping("/api/resume-intakes/{id}/reanalyze")
-    ResumeAnalysisResponse reanalyze(@PathVariable UUID id) { return analysis.reanalyzeStoredPdf(id); }
+    ResumeAnalysisResponse reanalyze(@PathVariable UUID id) { return analysis.reanalyzeStoredText(id); }
 }

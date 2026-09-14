@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Briefcase, Connection, DataAnalysis, DocumentChecked, Expand, Fold, Grid, Moon, Sunny, SwitchButton, UserFilled } from '@element-plus/icons-vue'
@@ -13,6 +13,11 @@ const mobileNavOpen = ref(false)
 const loggingOut = ref(false)
 const sidebarCollapsed = ref(false)
 const theme = ref<'light'|'dark'>('light')
+const topbarExpanded = ref(true)
+const topbarPointerInside = ref(false)
+const topbarFocusInside = ref(false)
+let topbarCollapseTimer: number | undefined
+let topbarInitialCollapseTimer: number | undefined
 const activePath = computed(() => route.path)
 const user = computed(() => authStore.state.user)
 const navigationGroups = computed(() => [
@@ -84,12 +89,79 @@ function cycleTheme() {
   applyTheme(theme.value === 'dark' ? 'light' : 'dark')
 }
 
+function clearTopbarTimers() {
+  if (topbarCollapseTimer !== undefined) {
+    window.clearTimeout(topbarCollapseTimer)
+    topbarCollapseTimer = undefined
+  }
+  if (topbarInitialCollapseTimer !== undefined) {
+    window.clearTimeout(topbarInitialCollapseTimer)
+    topbarInitialCollapseTimer = undefined
+  }
+}
+
+function isCompactViewport() {
+  return window.matchMedia('(max-width: 899px)').matches
+}
+
+function expandTopbar() {
+  clearTopbarTimers()
+  topbarExpanded.value = true
+}
+
+function scheduleTopbarCollapse() {
+  clearTopbarTimers()
+  if (isCompactViewport() || topbarPointerInside.value || topbarFocusInside.value) return
+  topbarCollapseTimer = window.setTimeout(() => {
+    if (!topbarPointerInside.value && !topbarFocusInside.value && !isCompactViewport()) {
+      topbarExpanded.value = false
+    }
+    topbarCollapseTimer = undefined
+  }, 1800)
+}
+
+function handleTopbarPointerEnter() {
+  topbarPointerInside.value = true
+  expandTopbar()
+}
+
+function handleTopbarPointerLeave() {
+  topbarPointerInside.value = false
+  scheduleTopbarCollapse()
+}
+
+function handleTopbarFocusIn() {
+  topbarFocusInside.value = true
+  expandTopbar()
+}
+
+function handleTopbarFocusOut(event: FocusEvent) {
+  const nextTarget = event.relatedTarget
+  if (nextTarget instanceof Node && (event.currentTarget as HTMLElement).contains(nextTarget)) return
+  topbarFocusInside.value = false
+  scheduleTopbarCollapse()
+}
+
+function handleWindowPointerMove(event: PointerEvent) {
+  if (event.clientY <= 12) expandTopbar()
+}
+
 onMounted(() => {
   try {
     applyTheme(localStorage.getItem('theme'))
   } catch {
     applyTheme('light')
   }
+  window.addEventListener('pointermove', handleWindowPointerMove, { passive: true })
+  topbarInitialCollapseTimer = window.setTimeout(() => {
+    scheduleTopbarCollapse()
+    topbarInitialCollapseTimer = undefined
+  }, 2600)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('pointermove', handleWindowPointerMove)
+  clearTopbarTimers()
 })
 
 async function handleLogout() {
@@ -143,21 +215,30 @@ async function handleLogout() {
     </aside>
 
     <section class="workspace">
-      <header class="topbar">
-        <button class="mobile-menu-button" type="button" aria-label="打开导航" @click="mobileNavOpen = true">
-          <el-icon :size="22"><Expand /></el-icon>
-        </button>
-        <div class="topbar-context"><span>招聘工作台</span><span class="breadcrumb-sep">/</span><strong>{{ workspaceLabel }}</strong></div>
-        <div class="topbar-right">
-          <span class="monitor-chip"><i></i>只读监测</span>
-          <NotificationBell />
-          <div class="user-area">
-            <div class="user-avatar" aria-hidden="true"><el-icon><UserFilled /></el-icon></div>
-            <div class="user-copy"><strong>{{ user?.displayName }}</strong><span>{{ roleLabel }}</span></div>
-            <el-button :loading="loggingOut" :icon="SwitchButton" text @click="handleLogout">退出</el-button>
+      <div
+        class="topbar-shell"
+        :class="{ 'topbar-shell--collapsed': !topbarExpanded }"
+        @mouseenter="handleTopbarPointerEnter"
+        @mouseleave="handleTopbarPointerLeave"
+        @focusin="handleTopbarFocusIn"
+        @focusout="handleTopbarFocusOut"
+      >
+        <header class="topbar">
+          <button class="mobile-menu-button" type="button" aria-label="打开导航" @click="mobileNavOpen = true">
+            <el-icon :size="22"><Expand /></el-icon>
+          </button>
+          <div class="topbar-context"><span>招聘工作台</span><span class="breadcrumb-sep">/</span><strong>{{ workspaceLabel }}</strong></div>
+          <div class="topbar-right">
+            <span class="monitor-chip"><i></i>只读监测</span>
+            <NotificationBell />
+            <div class="user-area">
+              <div class="user-avatar" aria-hidden="true"><el-icon><UserFilled /></el-icon></div>
+              <div class="user-copy"><strong>{{ user?.displayName }}</strong><span>{{ roleLabel }}</span></div>
+              <el-button :loading="loggingOut" :icon="SwitchButton" text @click="handleLogout">退出</el-button>
+            </div>
           </div>
-        </div>
-      </header>
+        </header>
+      </div>
       <main id="main-content" class="workspace-content" tabindex="-1">
         <RouterView v-slot="{ Component }">
           <Transition :name="transitionName" mode="out-in">
@@ -256,8 +337,11 @@ async function handleLogout() {
 .sidebar-collapsed .workspace::before { left:72px; }
 .workspace-content { position:relative; z-index:1; padding:30px 30px 50px; min-width:0; }
 
-/* ── 顶栏 ── */
-.topbar { position:sticky; top:0; z-index:15; display:flex; align-items:center; justify-content:space-between; gap:16px; min-height:56px; padding:9px 30px; border-bottom:1px solid color-mix(in srgb, var(--border) 78%, transparent); background:color-mix(in srgb, var(--surface) 84%, transparent); backdrop-filter:blur(18px) saturate(1.08); -webkit-backdrop-filter:blur(18px) saturate(1.08); box-shadow:0 1px 0 rgba(255,255,255,.5); }
+/* ── 顶栏：空闲时收缩到顶部 8px，靠近顶部或获取焦点时展开 ── */
+.topbar-shell { position:sticky; top:0; z-index:15; display:grid; grid-template-rows:56px; overflow:visible; transition:grid-template-rows 240ms cubic-bezier(.16,1,.3,1); }
+.topbar-shell--collapsed { grid-template-rows:8px; }
+.topbar { position:relative; display:flex; align-items:center; justify-content:space-between; width:100%; height:56px; min-height:0; gap:16px; padding:9px 30px; border-bottom:1px solid color-mix(in srgb, var(--border) 78%, transparent); background:color-mix(in srgb, var(--surface) 84%, transparent); backdrop-filter:blur(18px) saturate(1.08); -webkit-backdrop-filter:blur(18px) saturate(1.08); box-shadow:0 1px 0 rgba(255,255,255,.5); transform:translateY(0); transition:transform 240ms cubic-bezier(.16,1,.3,1), box-shadow 180ms ease, border-color 180ms ease; }
+.topbar-shell--collapsed .topbar { transform:translateY(calc(-100% + 8px)); border-bottom-color:transparent; box-shadow:none; }
 .topbar-context { display:flex; align-items:center; gap:10px; min-width:0; }
 .topbar-context span { color:var(--text-secondary); font-size:12px; }
 .breadcrumb-sep { color:var(--border); font-size:14px; }
@@ -271,8 +355,9 @@ async function handleLogout() {
 .mobile-menu-button { display:none; border:1px solid var(--border); background:var(--surface); border-radius:var(--radius-control); width:44px; height:44px; place-items:center; }
 
 /* ── 响应式 ── */
-@media(max-width:899px) { .sidebar { display:none; }.workspace,.sidebar-collapsed .workspace { margin-left:0; }.mobile-menu-button { display:grid; flex:0 0 auto; }.topbar { padding:10px 16px; gap:12px; }.topbar-context { margin-right:auto; }.topbar-context span,.topbar-context .breadcrumb-sep,.monitor-chip,.user-copy { display:none; }.topbar-context strong { border:0; padding:0; }.workspace-content { padding:20px 16px 36px; } }
+@media(max-width:899px) { .sidebar { display:none; }.workspace,.sidebar-collapsed .workspace { margin-left:0; }.mobile-menu-button { display:grid; flex:0 0 auto; }.topbar-shell,.topbar-shell--collapsed { grid-template-rows:56px; }.topbar-shell--collapsed .topbar { transform:none; border-bottom-color:color-mix(in srgb, var(--border) 78%, transparent); box-shadow:0 1px 0 rgba(255,255,255,.5); }.topbar { padding:10px 16px; gap:12px; }.topbar-context { margin-right:auto; }.topbar-context span,.topbar-context .breadcrumb-sep,.monitor-chip,.user-copy { display:none; }.topbar-context strong { border:0; padding:0; }.workspace-content { padding:20px 16px 36px; } }
 @media(max-width:460px) { .workspace-content { padding:18px 12px 30px; }.user-avatar { display:none; }.topbar-right,.user-area { gap:0; } }
+@media(prefers-reduced-motion:reduce) { .topbar-shell,.topbar { transition-duration:.01ms; } }
 
 /* ── 页面过渡 ── */
 .slide-left-enter-active,

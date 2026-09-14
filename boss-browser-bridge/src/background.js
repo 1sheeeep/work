@@ -51,13 +51,15 @@ async function initialise() {
   const stored = await chrome.storage.local.get(SETTINGS_KEY);
   if (!stored[SETTINGS_KEY]) {
     await chrome.storage.local.set({ [SETTINGS_KEY]: { backendUrl: DEFAULT_BACKEND_URL, enabled: true } });
-  } else if (['http://localhost:8088', 'http://127.0.0.1:8088'].includes(String(stored[SETTINGS_KEY].backendUrl || '').replace(/\/+$/, ''))
-      && stored[SETTINGS_KEY].backendUrlMigration !== 'production-v1') {
+  } else if (stored[SETTINGS_KEY].backendUrlMigration !== 'local-v1'
+      && String(stored[SETTINGS_KEY].backendUrl || '').replace(/\/+$/, '') !== DEFAULT_BACKEND_URL) {
     const { deviceId: _deviceId, deviceToken: _deviceToken, accountId: _accountId, accountName: _accountName, ...safeSettings } = stored[SETTINGS_KEY];
     await chrome.storage.local.set({ [SETTINGS_KEY]: {
-      ...safeSettings, backendUrl: DEFAULT_BACKEND_URL, backendUrlMigration: 'production-v1',
+      ...safeSettings, backendUrl: DEFAULT_BACKEND_URL, backendUrlMigration: 'local-v1',
     } });
     await chrome.storage.local.remove(RUNTIME_KEY);
+  } else if (stored[SETTINGS_KEY].backendUrlMigration !== 'local-v1') {
+    await chrome.storage.local.set({ [SETTINGS_KEY]: { ...stored[SETTINGS_KEY], backendUrlMigration: 'local-v1' } });
   }
   await recoverVerifiedInterviewEntryLock();
   await chrome.alarms.create(ALARM_NAME, { delayInMinutes: 0.1, periodInMinutes: 1 });
@@ -183,6 +185,9 @@ async function handleMessage(message, sender) {
     case 'BRIDGE_POLL_INBOUND_REPLY':
       if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的 AI 任务查询。');
       return pollInboundReply(message.payload);
+    case 'BRIDGE_RETRY_FAILED_INBOUND_REPLY':
+      if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的失败 AI 任务重试。');
+      return retryFailedInboundReply(message.payload);
     case 'BRIDGE_GET_PENDING_INBOUND_REPLIES':
       if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的待处理任务查询。');
       return pendingInboundReplies();
@@ -233,6 +238,7 @@ async function decideInboundReply(payload) {
       || typeof payload.messageText !== 'string' || !payload.messageText.trim()
       || payload.messageText.length > 1000 || !Number.isFinite(Date.parse(payload.messageAt))
       || (payload.conversationContext != null && (typeof payload.conversationContext !== 'string' || payload.conversationContext.length > 2400))
+      || (payload.pendingRowSignature != null && !/^[a-f0-9]{64}$/.test(payload.pendingRowSignature))
       || typeof payload.selectedUnread !== 'boolean' || !payload.conversationSignals
       || !Number.isFinite(Date.parse(payload.observedAt))) {
     throw new Error('候选人消息识别请求无效。');
@@ -240,8 +246,11 @@ async function decideInboundReply(payload) {
   const settings = await getSettings();
   if (!settings.deviceToken) throw new Error('请先完成本机账号配对。');
   const continuous = payload.continuous === true;
+  const resumeReceipt = payload.resumeReceipt === true;
   const decisionPayload = { ...payload };
   delete decisionPayload.continuous;
+  delete decisionPayload.resumeReceipt;
+  delete decisionPayload.pendingRowSignature;
   const messageKey = `${payload.chatDigest}:${payload.messageDigest}`;
   if (continuous) {
     const claim = await claimSingleAccountMessage(messageKey);
@@ -271,7 +280,10 @@ async function decideInboundReply(payload) {
       return { ok: true, pending: false, decision: accepted.decision };
     }
     if (!/^[0-9a-f-]{36}$/i.test(accepted?.taskId || '')) throw new Error('AI 队列未返回有效任务编号。');
-    await attachSingleAccountTask(messageKey, accepted.taskId, payload.chatDigest, payload.messageDigest);
+    await attachSingleAccountTask(messageKey, accepted.taskId, payload.chatDigest, payload.messageDigest, {
+      resumeReceipt,
+      pendingRowSignature: payload.pendingRowSignature,
+    });
     await setRuntime({ singleAccountAutoReplyState: 'AI 任务已入队，继续检查其他新消息…' });
     return { ok: true, pending: true, taskId: accepted.taskId };
   }
@@ -310,7 +322,7 @@ async function pollInboundReply(payload) {
   const runtime = await getRuntime();
   const tracked = (runtime.singleAccountProcessedMessages || [])
     .find((item) => item.key === key && item.taskId === payload.taskId && item.outcome === 'PROCESSING');
-  if (!tracked) return { ok: true, status: 'CANCELLED' };
+  if (!tracked && payload.retryable !== true) return { ok: true, status: 'CANCELLED' };
   let result;
   try {
     result = await request(settings.backendUrl, `/api/local-connector/runtime/inbound-reply-tasks/${payload.taskId}`, {
@@ -327,22 +339,80 @@ async function pollInboundReply(payload) {
     }
     throw error;
   }
-  if (!['COMPLETED', 'FAILED'].includes(result?.status)) return { ok: true, status: result?.status || 'QUEUED' };
+  if (!['COMPLETED', 'FAILED'].includes(result?.status)) {
+    return { ok: true, status: result?.status || 'QUEUED', sendStatus: result?.sendStatus || null };
+  }
   const decision = result.decision || { replyAllowed: false, category: 'UNCERTAIN', reason: 'AI 任务未返回有效结果。' };
   if (!decision.replyAllowed) await updateSingleAccountProcessedMessage(key, 'SILENT');
   await setRuntime({ singleAccountAutoReplyState: decision.replyAllowed
     ? `AI 已生成安全短回复（${Math.round(Number(decision.confidence || 0) * 100)}%），等待页面复核。`
     : `已静默跳过：${decision.reason || '消息不符合自动回复条件'}。` });
-  return { ok: true, status: result.status, decision };
+  return {
+    ok: true,
+    status: result.status,
+    decision,
+    sendStatus: result.sendStatus || null,
+    sendResultReason: result.sendResultReason || null,
+  };
+}
+
+async function retryFailedInboundReply(payload) {
+  if (!payload || !/^[0-9a-f-]{36}$/i.test(payload.taskId || '')
+      || !/^[a-f0-9]{64}$/.test(payload.chatDigest || '')
+      || !/^[a-f0-9]{64}$/.test(payload.messageDigest || '')
+      || typeof payload.messageText !== 'string' || !payload.messageText.trim() || payload.messageText.length > 1000
+      || (payload.conversationContext != null && (typeof payload.conversationContext !== 'string' || payload.conversationContext.length > 2400))
+      || !Number.isFinite(Date.parse(payload.messageAt)) || typeof payload.selectedUnread !== 'boolean'
+      || !payload.conversationSignals || !Number.isFinite(Date.parse(payload.observedAt))) throw new Error('失败 AI 任务重试参数无效。');
+  const settings = await getSettings();
+  if (!settings.deviceToken) throw new Error('请先完成本机账号配对。');
+  const observedAt = new Date().toISOString();
+  await request(settings.backendUrl, '/api/local-connector/runtime/selected-conversation', {
+    method: 'POST', token: settings.deviceToken, body: {
+      chatDigest: payload.chatDigest, messageDigest: payload.messageDigest, direction: 'INBOUND',
+      messageAt: payload.messageAt, selectedUnread: payload.selectedUnread,
+      conversationSignals: payload.conversationSignals, messageText: payload.messageText, observedAt,
+    }, timeoutMs: 8_000,
+  });
+  const result = await request(settings.backendUrl, `/api/local-connector/runtime/inbound-reply-tasks/${payload.taskId}/retry`, {
+    method: 'POST', token: settings.deviceToken, body: {
+      chatDigest: payload.chatDigest, messageDigest: payload.messageDigest,
+      messageText: payload.messageText, conversationContext: payload.conversationContext || null, observedAt,
+    }, timeoutMs: 8_000,
+  });
+  await attachSingleAccountTask(`${payload.chatDigest}:${payload.messageDigest}`, payload.taskId, payload.chatDigest, payload.messageDigest);
+  return result;
 }
 
 async function pendingInboundReplies() {
   const runtime = await getRuntime();
-  const tasks = (runtime.singleAccountProcessedMessages || [])
+  const tracked = (runtime.singleAccountProcessedMessages || [])
     .filter((item) => item.outcome === 'PROCESSING' && /^[0-9a-f-]{36}$/i.test(item.taskId || '')
       && /^[a-f0-9]{64}$/.test(item.chatDigest || '') && /^[a-f0-9]{64}$/.test(item.messageDigest || ''))
-    .map(({ taskId, chatDigest, messageDigest }) => ({ taskId, chatDigest, messageDigest }));
-  return { ok: true, tasks };
+    .map(({ taskId, chatDigest, messageDigest, resumeReceipt, pendingRowSignature }) => ({
+      taskId, chatDigest, messageDigest, resumeReceipt: resumeReceipt === true,
+      pendingRowSignature: /^[a-f0-9]{64}$/.test(pendingRowSignature || '') ? pendingRowSignature : null,
+    }));
+  const settings = await getSettings();
+  let retryable = [];
+  let retryableError = null;
+  if (settings.deviceToken) {
+    try {
+      retryable = await request(settings.backendUrl, '/api/local-connector/runtime/inbound-reply-tasks/retryable', {
+        method: 'GET', token: settings.deviceToken, timeoutMs: 8_000,
+      });
+    } catch (error) {
+      retryableError = safeError(error);
+    }
+  }
+  const byId = new Map(tracked.map((task) => [task.taskId, task]));
+  for (const task of Array.isArray(retryable) ? retryable : []) {
+    if (/^[0-9a-f-]{36}$/i.test(task?.taskId || '') && /^[a-f0-9]{64}$/.test(task?.chatDigest || '')
+        && /^[a-f0-9]{64}$/.test(task?.messageDigest || '')) {
+      byId.set(task.taskId, { taskId: task.taskId, chatDigest: task.chatDigest, messageDigest: task.messageDigest, retryable: true });
+    }
+  }
+  return { ok: true, tasks: [...byId.values()], retryableError };
 }
 
 async function singleAccountBaseline() {
@@ -350,15 +420,17 @@ async function singleAccountBaseline() {
   try {
     return { ok: true, ...validateSingleAccountBaseline({
       unread: runtime.singleAccountUnreadBaseline || [], selected: runtime.singleAccountSelectedMessageBaseline || [],
+      locators: runtime.singleAccountConversationLocators || [],
     }) };
   } catch (_error) {
-    return { ok: true, unread: [], selected: [] };
+    return { ok: true, unread: [], selected: [], locators: [] };
   }
 }
 
 async function saveSingleAccountBaseline(payload) {
   const baseline = validateSingleAccountBaseline(payload);
-  await setRuntime({ singleAccountUnreadBaseline: baseline.unread, singleAccountSelectedMessageBaseline: baseline.selected });
+  await setRuntime({ singleAccountUnreadBaseline: baseline.unread, singleAccountSelectedMessageBaseline: baseline.selected,
+    singleAccountConversationLocators: baseline.locators });
   return { ok: true };
 }
 
@@ -525,10 +597,12 @@ async function updateSingleAccountProcessedMessage(key, outcome) {
   });
 }
 
-async function attachSingleAccountTask(key, taskId, chatDigest, messageDigest) {
+async function attachSingleAccountTask(key, taskId, chatDigest, messageDigest, options = {}) {
   await mutateRuntime((runtime) => {
     const entries = (runtime.singleAccountProcessedMessages || []).filter((item) => item.key !== key);
-    entries.push({ key, taskId, chatDigest, messageDigest, outcome: 'PROCESSING', at: new Date().toISOString() });
+    entries.push({ key, taskId, chatDigest, messageDigest, resumeReceipt: options.resumeReceipt === true,
+      pendingRowSignature: /^[a-f0-9]{64}$/.test(options.pendingRowSignature || '') ? options.pendingRowSignature : null,
+      outcome: 'PROCESSING', at: new Date().toISOString() });
     return { singleAccountProcessedMessages: compactProcessedMessages(entries) };
   });
 }
@@ -1424,7 +1498,10 @@ async function requestMultipart(backendUrl, path, token, body, timeoutMs) {
 async function sendHeartbeatIfPaired(settings, state, reason, pageContext = 'NO_BOSS_PAGE') {
   if (!settings?.deviceToken) return;
   await request(settings.backendUrl, '/api/local-connector/runtime/heartbeat', {
-    method: 'POST', token: settings.deviceToken, body: { state, reason: String(reason).slice(0, 300), pageContext },
+    method: 'POST', token: settings.deviceToken, body: {
+      state, reason: String(reason).slice(0, 300), pageContext,
+      clientVersion: chrome.runtime.getManifest().version,
+    },
   }).catch(() => {});
 }
 

@@ -19,6 +19,8 @@ class BrowserDeviceHealthTest {
         Instant pausedAt = Instant.parse("2026-08-31T10:00:00Z");
         device.heartbeat("PAUSED", "BOSS 页面脚本尚未就绪", "CHAT", pausedAt);
         device.heartbeat("RUNNING", "页面重新打开", "CHAT", pausedAt.plusSeconds(10));
+        device.observeClientVersion("0.37.14");
+        assertThat(device.getClientVersion()).isEqualTo("0.37.14");
 
         assertThat(device.getRecoveryRequiredSince()).isEqualTo(pausedAt);
         assertThat(device.getLastRecoveredAt()).isNull();

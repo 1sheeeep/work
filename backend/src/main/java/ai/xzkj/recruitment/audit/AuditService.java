@@ -47,8 +47,13 @@ public class AuditService {
     }
 
     public void systemSuccess(String action, String targetType, UUID targetId, String targetLabel, String details) {
-        repository.save(new AuditLog("scheduler", action, targetType, sanitize(targetLabel, 160),
+        repository.save(new AuditLog("scheduler", action, targetType, targetId, sanitize(targetLabel, 160),
                 AuditResult.SUCCESS, sanitize(details, 1000)));
+    }
+
+    public void systemFailure(String action, String targetType, UUID targetId, String targetLabel, String details) {
+        repository.save(new AuditLog("scheduler", action, targetType, targetId, sanitize(targetLabel, 160),
+                AuditResult.FAILURE, sanitize(details, 1000)));
     }
 
     private String sanitize(String value, int max) {

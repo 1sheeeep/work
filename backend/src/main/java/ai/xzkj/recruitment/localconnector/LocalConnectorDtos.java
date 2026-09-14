@@ -3,7 +3,7 @@ package ai.xzkj.recruitment.localconnector;
 import jakarta.validation.Valid;import jakarta.validation.constraints.*;import java.time.Instant;import java.util.*;
 record CreatePairingRequest(@NotNull UUID accountId){}
 record PairDeviceRequest(@NotBlank@Size(max=200)String pairingToken,@NotBlank@Size(max=100)String deviceName,@NotBlank@Pattern(regexp="BROWSER_READONLY_BRIDGE")String clientType,@NotBlank@Pattern(regexp="[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?")@Size(max=32)String clientVersion){}
-record HeartbeatRequest(@NotBlank@Pattern(regexp="DISABLED|RUNNING|PAUSED|OFFLINE")String state,@Size(max=300)String reason,@NotBlank@Pattern(regexp="CHAT|JOB_LIST|JOB_DETAIL|OTHER_BOSS|NO_BOSS_PAGE")String pageContext){}
+record HeartbeatRequest(@NotBlank@Pattern(regexp="DISABLED|RUNNING|PAUSED|OFFLINE")String state,@Size(max=300)String reason,@NotBlank@Pattern(regexp="CHAT|JOB_LIST|JOB_DETAIL|OTHER_BOSS|NO_BOSS_PAGE")String pageContext,@Pattern(regexp="[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?")@Size(max=32)String clientVersion){}
 record PairingResponse(String pairingToken,Instant expiresAt,UUID accountId,String accountName){}
 record DeviceCredentialsResponse(UUID deviceId,String deviceToken,UUID accountId,String accountName){}
 record DutyAutomationControlResponse(boolean enabled,Instant endsAt,int responseTimeoutMinutes){}
@@ -22,7 +22,9 @@ record InboundReplyDecisionRequest(@NotBlank@Pattern(regexp="[a-f0-9]{64}")Strin
 record InboundReplyDecisionResponse(boolean replyAllowed,@NotBlank String category,double confidence,String content,@NotBlank String reason){}
 record InboundReplyTaskAcceptedResponse(UUID taskId,@NotBlank String status,InboundReplyDecisionResponse decision){}
 record InboundReplyTaskStatusResponse(@NotNull UUID taskId,@NotBlank String status,InboundReplyDecisionResponse decision,
-                                      int attemptCount,Instant nextAttemptAt,String lastErrorCode,String resultReason){}
+                                      int attemptCount,Instant nextAttemptAt,String lastErrorCode,String resultReason,
+                                      @NotBlank String sendStatus,String sendResultReason){}
+record InboundReplyRetryCandidateResponse(@NotNull UUID taskId,@NotBlank@Pattern(regexp="[a-f0-9]{64}")String chatDigest,@NotBlank@Pattern(regexp="[a-f0-9]{64}")String messageDigest,@NotBlank String lastErrorCode,int attemptCount,@NotNull Instant updatedAt){}
 record InboundReplyTaskDiscardRequest(@NotBlank@Pattern(regexp="[a-f0-9]{64}")String chatDigest,@NotBlank@Pattern(regexp="[a-f0-9]{64}")String messageDigest,@NotBlank@Pattern(regexp="[a-f0-9]{64}")String currentMessageDigest,@NotBlank@Size(max=300)String reason){}
 record InboundReplyTaskDiscardResponse(@NotNull UUID taskId,@NotBlank String sendStatus,Instant discardedAt){}
 record InboundReplySendClaimRequest(@NotNull UUID taskId,@NotBlank@Pattern(regexp="[a-f0-9]{64}")String chatDigest,@NotBlank@Pattern(regexp="[a-f0-9]{64}")String messageDigest,@NotBlank@Pattern(regexp="[a-f0-9]{64}")String beforeStateDigest){}
@@ -30,9 +32,9 @@ record InboundReplySendClaimResponse(boolean available,@NotNull UUID taskId,Stri
 record InboundReplySendReceiptRequest(@NotBlank@Size(max=200)String leaseToken,@NotBlank@Pattern(regexp="SUCCEEDED|FAILED|UNKNOWN")String outcome,@NotBlank@Pattern(regexp="[a-f0-9]{64}")String beforeStateDigest,@NotBlank@Pattern(regexp="[a-f0-9]{64}")String afterStateDigest,@NotBlank@Pattern(regexp="[a-f0-9]{64}")String receiptDigest,@NotBlank@Size(max=300)String reason){}
 record InboundReplySendReceiptResponse(@NotNull UUID taskId,@NotBlank String status,Instant completedAt){}
 record AiDutyReplyResponse(@NotNull UUID id,@NotNull UUID observationId,@NotBlank String anonymousKey,@NotBlank String accountName,@NotBlank String jobTitle,@NotBlank String category,@NotBlank String replyContent,@NotNull Instant sentAt,boolean needsFollowUp,String followUpReason){}
-record AiDutyEventResponse(@NotNull UUID id,@NotNull UUID observationId,@NotBlank String anonymousKey,@NotBlank String accountName,@NotBlank String jobTitle,String taskStatus,String sendStatus,String category,int attemptCount,String errorCode,String detail,String replyContent,Instant createdAt,@NotNull Instant updatedAt,Instant completedAt,boolean needsFollowUp,String followUpReason){}
-record AiDutyReviewRequiredResponse(@NotNull UUID id,@NotNull UUID observationId,@NotBlank String anonymousKey,@NotBlank String accountName,@NotBlank String jobTitle,@NotBlank String category,@NotBlank String reason,@NotNull Instant decidedAt){}
-record InboundReplyQualitySummaryResponse(int evaluated,int replyApproved,int sent,int expectedSilence,int reviewRequired,int shadowEvaluated,int failed,double averageConfidence,Map<String,Long> categories,Map<String,Long> outcomes,@NotNull Instant generatedAt){}
+record AiDutyEventResponse(@NotNull UUID id,@NotNull UUID observationId,@NotBlank String anonymousKey,@NotBlank String accountName,@NotBlank String jobTitle,String messageText,String taskStatus,String sendStatus,String category,int attemptCount,String errorCode,String detail,String replyContent,Instant createdAt,@NotNull Instant updatedAt,Instant completedAt,boolean needsFollowUp,String followUpReason){}
+record AiDutyReviewRequiredResponse(@NotNull UUID id,@NotNull UUID observationId,@NotBlank String anonymousKey,@NotBlank String accountName,@NotBlank String jobTitle,@NotBlank String category,@NotBlank String reason,@NotNull Instant decidedAt,String candidateName,boolean resumeReceived,String incomingMessage,String resumePipelineStatus){}
+record InboundReplyQualitySummaryResponse(int evaluated,int replyApproved,int sent,int expectedSilence,int reviewRequired,int shadowEvaluated,int failed,int unconfirmedSends,double averageConfidence,Map<String,Long> categories,Map<String,Long> outcomes,@NotNull Instant generatedAt){}
 record VisibleResumeTextRequest(@NotNull UUID observationId,@NotBlank@Pattern(regexp="[a-f0-9]{64}")String sourceEventDigest,@NotBlank@Size(min=100,max=30000)String resumeText){}
 record ObservationReviewRequest(@NotBlank@Pattern(regexp="APPROVED|REJECTED|HUMAN_TAKEOVER")String decision,@Size(max=2000)String content,@Size(max=300)String note){}
 record CycleTestStartRequest(@NotBlank@Size(max=2000)String content,@AssertTrue(message="必须明确确认只对当前已读会话启动完整周期测试")boolean confirmed){}

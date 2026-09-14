@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import PageHeader from '../components/PageHeader.vue'
 import AsyncState from '../components/AsyncState.vue'
-import MetricCard from '../components/MetricCard.vue'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { Check, Cpu, InfoFilled, Refresh, UploadFilled, Warning } from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
+import { Check, Cpu, UploadFilled, Warning } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, apiErrorMessage, ensureCsrf } from '../services/api'
 import { authStore } from '../stores/auth'
 import type {
@@ -95,6 +94,10 @@ const selectedCandidateId = computed(() => selectedIntake.value
   ? contacts.value.find((item) => item.id === selectedIntake.value?.contactId)?.candidateId
   : undefined)
 const selectedTalentDetail = computed(() => selectedCandidateId.value ? talentDetails.value[selectedCandidateId.value] : undefined)
+const selectedCandidateDisplayName = computed(() => selectedTalentDetail.value?.candidate.displayName
+  || (selectedIntake.value ? candidateNameForIntake(selectedIntake.value) : '')
+  || selectedIntake.value?.candidateName
+  || '')
 const candidateOptions = computed(() => contacts.value.filter((item) => item.privacyStatus === 'ACTIVE'))
 const canConfigureAutoAnalysis = computed(() => authStore.state.user?.role === 'SYSTEM_ADMIN')
 const canManageCandidateMerge = computed(() => ['SYSTEM_ADMIN', 'RECRUITMENT_ADMIN'].includes(authStore.state.user?.role ?? ''))
@@ -125,6 +128,13 @@ function latestAnalysis(id: string) {
   return analysisByIntake.value[id]?.[0]
 }
 
+function candidateNameForIntake(item: ResumeIntake) {
+  const candidateId = contacts.value.find((contact) => contact.id === item.contactId)?.candidateId
+  return (candidateId ? talentDetails.value[candidateId]?.candidate.displayName : undefined)
+    || talentPage.value?.items.find((candidate) => candidate.candidateId === candidateId)?.displayName
+    || item.candidateName
+}
+
 function processingLabel(item: ResumeIntake) {
   if (item.processingStatus === 'FAILED') return '提取失败'
   if (item.processingStatus === 'READY_FOR_AI') return `${item.documentType || '文本'} 已提取`
@@ -151,7 +161,7 @@ function analysisTagType(item: ResumeIntake): 'success' | 'warning' | 'danger' |
 
 function evidenceCoverage(result: ResumeAnalysisResult) {
   const items = displayEvidence(result)
-  return items.length ? Math.round(items.filter(item => item.status === 'FOUND').length / items.length * 100) : 0
+  return items.length ? Math.round(items.reduce((total, item) => total + evidencePercent(item.status), 0) / items.length) : 0
 }
 
 function displayEvidence(result: ResumeAnalysisResult) {
@@ -170,8 +180,58 @@ function displayEvidence(result: ResumeAnalysisResult) {
   return detailed.length ? detailed : result.evidence
 }
 
+function evidencePercent(status: 'FOUND' | 'NOT_FOUND' | 'UNCLEAR') {
+  if (status === 'FOUND') return 100
+  if (status === 'NOT_FOUND') return 0
+  return 50
+}
+
+function evidencePercentClass(status: 'FOUND' | 'NOT_FOUND' | 'UNCLEAR') {
+  return status === 'FOUND' ? 'match-percent--high' : status === 'NOT_FOUND' ? 'match-percent--low' : 'match-percent--mid'
+}
+
+function comparisonMatchPercent(comparison: NonNullable<ResumeAnalysisResult['jobComparisons']>[number]) {
+  const items = [
+    ...(comparison.responsibilities || []).map((item) => item.status),
+    ...(comparison.skillMatches || []).map((item) => item.status),
+  ]
+  return items.length ? Math.round(items.reduce((total, status) => total + evidencePercent(status), 0) / items.length) : 0
+}
+
 function selectIntake(id: string) {
   selectedIntakeId.value = id
+}
+
+type TalentResumeSummary = TalentCandidateDetail['resumes'][number]
+
+function talentResumeSourceLabel(resume: TalentResumeSummary) {
+  return resume.source === 'BOSS_VISIBLE' ? 'BOSS 简历' : '外部/人工简历'
+}
+
+function talentResumeStatusLabel(resume: TalentResumeSummary) {
+  if (resume.processingStatus === 'FAILED' || resume.failureCode) return '提取失败'
+  if (resume.analysisStatus === 'SUCCEEDED') return 'AI 已完成'
+  if (resume.analysisStatus === 'FAILED' || resume.analysisFailureCode) return 'AI 失败'
+  if (resume.analysisStatus === 'ANALYZING' || resume.analysisQueueStatus === 'PROCESSING') return 'AI 分析中'
+  if (resume.analysisQueueStatus === 'QUEUED' || resume.analysisQueueStatus === 'RETRY_WAIT') return 'AI 排队中'
+  if (resume.processingStatus === 'READY_FOR_AI') return '文本已提取'
+  return resume.status === 'PENDING_REVIEW' ? '待确认' : '已接收'
+}
+
+function talentResumeStatusType(resume: TalentResumeSummary): 'success' | 'warning' | 'danger' | 'info' {
+  const status = talentResumeStatusLabel(resume)
+  if (status === 'AI 已完成' || status === '文本已提取') return 'success'
+  if (status === 'AI 分析中' || status === 'AI 排队中' || status === '待确认') return 'warning'
+  if (status === '提取失败' || status === 'AI 失败') return 'danger'
+  return 'info'
+}
+
+function selectTalentResume(resume: TalentResumeSummary) {
+  if (intakes.value.some((item) => item.id === resume.id)) {
+    selectIntake(resume.id)
+    return
+  }
+  ElMessage.info('该历史简历暂未载入当前列表，请刷新后再查看')
 }
 
 async function loadTalentDetail(candidateId: string) {
@@ -534,7 +594,7 @@ async function reanalyzeStored(item: ResumeIntake) {
   try {
     await ensureCsrf()
     await api.post(`/resume-intakes/${item.id}/reanalyze`, undefined, { timeout: 120_000 })
-    ElMessage.success('已使用后端保存的 PDF 重新分析')
+    ElMessage.success('已使用数据库保存的简历文本重新分析')
     await loadAnalysis(intakes.value)
     await load()
   } catch (error) {
@@ -641,57 +701,18 @@ onMounted(() => {
   }, 2000)
 })
 onBeforeUnmount(() => window.clearInterval(refreshTimer))
-
-function showPageHelp() {
-  ElNotification({
-    title: '决策面板说明',
-    message: '候选人决策面板提供从简历接收到AI辅助结论的完整工作流程。左侧队列展示所有简历，右侧工作区用于查看分析结果和进行HR复核。BOSS来源的简历支持拖拽到分析区。',
-    duration: 5000,
-    type: 'info',
-  })
-}
-
-function showQueueHelp() {
-  ElNotification({
-    title: '简历队列说明',
-    message: '简历队列按接收时间排序，BOSS来源的简历可以拖拽到右侧分析工作区。点击卡片可以查看简历的处理状态和分析结果。',
-    duration: 5000,
-    type: 'info',
-  })
-}
-
-function showAnalysisHelp() {
-  ElNotification({
-    title: 'AI分析说明',
-    message: 'AI分析结果包含推荐建议、证据覆盖度和建议追问。HR需要根据实际情况进行复核，可以选择采纳、修正或不采用AI结论。',
-    duration: 5000,
-    type: 'info',
-  })
-}
 </script>
 
 <template>
   <div class="page-shell resume-page">
     <PageHeader>
-      <div>
-        <span class="page-kicker">简历处理与人工复核</span>
-        <h1>候选人决策面板</h1>
-        <p>从简历接收到 AI 辅助结论，在同一工作区完成核对与复核。<el-button :icon="InfoFilled" size="small" type="text" @click="showPageHelp">查看说明</el-button></p>
-      </div>
+      <div></div>
       <div class="heading-actions">
-        <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
         <el-button v-if="canManageCandidateMerge" :loading="duplicateLoading" @click="openDuplicateScan">重复档案</el-button>
         <el-button type="primary" :icon="UploadFilled" @click="openCreate">人工补录</el-button>
       </div>
     </PageHeader>
     <div class="sr-only" aria-live="polite" aria-atomic="true">当前 {{ pending.length }} 份简历待 HR 处理，{{ processing.length }} 份分析中，{{ exceptionCount }} 份需要关注。</div>
-
-    <section class="external-pdf-drop card-entity" :class="{ 'external-pdf-drop--active': externalDragOver, 'external-pdf-drop--loading': externalSubmitting }" role="button" tabindex="0" :aria-busy="externalSubmitting" aria-label="拖入或选择外部 PDF 简历并立即进行 AI 岗位匹配" @click="chooseExternalPdf" @keydown.enter="chooseExternalPdf" @keydown.space.prevent="chooseExternalPdf" @dragenter.prevent="externalDragOver = true" @dragover.prevent="externalDragOver = true" @dragleave.self="externalDragOver = false" @drop.prevent="dropExternalPdf">
-      <input ref="externalFileInput" class="external-pdf-input" type="file" accept=".pdf,application/pdf" tabindex="-1" @change="handleExternalFileChange" />
-      <span class="external-pdf-drop__icon"><el-icon><UploadFilled /></el-icon></span>
-      <div><strong>{{ externalSubmitting ? '正在识别姓名并匹配岗位…' : externalDragOver ? '松开后立即开始 AI 分析' : '拖入外部 PDF 简历' }}</strong><small>从 PDF 识别姓名，并与当前权限内的已启用岗位匹配；不长期保存原文件。</small></div>
-      <el-button type="primary" :loading="externalSubmitting" @click.stop="chooseExternalPdf">{{ externalSubmitting ? '分析中' : '选择 PDF' }}</el-button>
-    </section>
 
     <AsyncState v-if="loading" state="loading" aria-label="正在加载简历分析" />
     <AsyncState v-else-if="errorMessage" state="error" title="简历分析暂时无法加载" :message="errorMessage" @retry="load">
@@ -699,20 +720,17 @@ function showAnalysisHelp() {
     </AsyncState>
 
     <template v-else>
-      <section class="metrics analysis-pipeline" aria-label="简历处理流程概览">
-        <MetricCard class="metric-card metric-card--teal" label="BOSS 已接收" :value="bossIntakes" description="可拖入右侧分析区" tone="teal"><template #icon><el-icon><UploadFilled /></el-icon></template></MetricCard>
-        <MetricCard class="metric-card metric-card--blue" label="待 HR 处理" :value="pending.length" description="待复核或待授权" tone="blue"><template #icon><el-icon><Check /></el-icon></template></MetricCard>
-        <MetricCard class="metric-card metric-card--violet" label="分析处理中" :value="processing.length" description="提取与 AI 任务" tone="violet"><template #icon><el-icon><Cpu /></el-icon></template></MetricCard>
-        <MetricCard class="metric-card" :class="[exceptionCount ? 'metric-card--red' : 'metric-card--green', { 'metric-card--active': !exceptionCount && analyzed > 0 }]" :label="exceptionCount ? '需要关注' : '已完成分析'" :value="exceptionCount || analyzed" :description="exceptionCount ? '提取或分析异常' : '等待 HR 复核'" :tone="exceptionCount ? 'rose' : 'green'">
-          <template #icon><el-icon><Warning v-if="exceptionCount" /><Check v-else /></el-icon></template>
-        </MetricCard>
-      </section>
-
       <AsyncState v-if="!intakes.length" state="empty" title="尚未收到简历" message="收到 BOSS 简历或完成人工补录后，将在这里进入分析队列。"><template #icon><el-icon><UploadFilled /></el-icon></template><el-button type="primary" @click="openCreate">人工补录</el-button></AsyncState>
 
       <section v-else class="analysis-workspace">
         <aside class="surface-panel section-card card-panel resume-queue-panel">
-          <div class="section-title-row queue-heading"><div><span class="section-kicker">待选择</span><h2>简历队列</h2><p>{{ talentPage?.total ?? 0 }} 位候选人 · {{ intakes.length }} 份简历 · BOSS 简历可拖拽<el-button :icon="InfoFilled" size="small" type="text" @click="showQueueHelp">查看说明</el-button></p></div></div>
+          <div class="section-title-row queue-heading"><div><span class="section-kicker">待选择</span><h2>简历队列</h2><p>{{ talentPage?.total ?? 0 }} 位候选人 · {{ intakes.length }} 份简历</p></div></div>
+          <div class="queue-metrics-row">
+            <span class="queue-metric-pill queue-metric-pill--teal"><b>{{ bossIntakes }}</b> BOSS</span>
+            <span class="queue-metric-pill queue-metric-pill--blue"><b>{{ pending.length }}</b> 待处理</span>
+            <span class="queue-metric-pill queue-metric-pill--violet"><b>{{ processing.length }}</b> 分析中</span>
+            <span class="queue-metric-pill" :class="exceptionCount ? 'queue-metric-pill--red' : 'queue-metric-pill--green'"><b>{{ exceptionCount || analyzed }}</b> {{ exceptionCount ? '需关注' : '已完成' }}</span>
+          </div>
           <div class="ai-service-inline" :class="{ 'ai-service-inline--ready': aiStatus?.ready }" aria-label="AI 分析服务状态">
             <span class="ai-service-inline__mark"><el-icon><Cpu /></el-icon></span>
             <div>
@@ -739,30 +757,31 @@ function showAnalysisHelp() {
               :draggable="item.source === 'BOSS_VISIBLE'"
               role="button"
               tabindex="0"
-              :aria-label="`查看 ${item.candidateName} 的简历分析`"
+              :aria-label="`查看 ${candidateNameForIntake(item)} 的简历分析`"
               @click="selectIntake(item.id)"
               @keydown.enter="selectIntake(item.id)"
               @keydown.space.prevent="selectIntake(item.id)"
               @dragstart="startDrag($event, item)"
               @dragend="endDrag"
             >
-              <div class="ticket-topline">
-                <span class="source-badge" :class="item.source === 'BOSS_VISIBLE' ? 'source-badge--boss' : 'source-badge--manual'">
-                  {{ item.source === 'BOSS_VISIBLE' ? 'BOSS 收到' : item.displayLabel.startsWith('外部 PDF') ? '外部 PDF' : '人工补录' }}
-                </span>
-                <span v-if="item.source === 'BOSS_VISIBLE'" class="drag-hint">拖到右侧 ···</span>
-              </div>
               <div class="ticket-person">
-                <div class="candidate-avatar">{{ item.candidateName.slice(0, 1) }}</div>
-                <div><strong>{{ item.candidateName }}</strong><span>{{ item.jobTitle }}</span></div>
+                <strong>{{ candidateNameForIntake(item) }}</strong>
+                <span class="ticket-job" :title="item.jobTitle">{{ item.jobTitle }}</span>
               </div>
               <div class="ticket-tags">
                 <el-tag size="small" :type="item.processingStatus === 'FAILED' ? 'danger' : item.processingStatus === 'READY_FOR_AI' ? 'success' : 'info'">{{ processingLabel(item) }}</el-tag>
                 <el-tag size="small" :type="analysisTagType(item)">{{ analysisLabel(item) }}</el-tag>
+                <span v-if="item.source === 'BOSS_VISIBLE'" class="drag-hint">拖动可关联</span>
               </div>
               <footer><span>{{ item.accountName }}</span><time>{{ formatDate(item.receivedAt) }}</time></footer>
             </article>
           </div>
+          <section class="external-pdf-drop card-entity" :class="{ 'external-pdf-drop--active': externalDragOver, 'external-pdf-drop--loading': externalSubmitting }" role="button" tabindex="0" :aria-busy="externalSubmitting" aria-label="拖入或选择外部 PDF 简历并立即进行 AI 岗位匹配" @click="chooseExternalPdf" @keydown.enter="chooseExternalPdf" @keydown.space.prevent="chooseExternalPdf" @dragenter.prevent="externalDragOver = true" @dragover.prevent="externalDragOver = true" @dragleave.self="externalDragOver = false" @drop.prevent="dropExternalPdf">
+            <input ref="externalFileInput" class="external-pdf-input" type="file" accept=".pdf,application/pdf" tabindex="-1" @change="handleExternalFileChange" />
+            <span class="external-pdf-drop__icon"><el-icon><UploadFilled /></el-icon></span>
+            <div><strong>{{ externalSubmitting ? '识别中…' : externalDragOver ? '松开开始分析' : '拖入外部 PDF' }}</strong><small>识别姓名并匹配岗位</small></div>
+            <el-button type="primary" size="small" :loading="externalSubmitting" @click.stop="chooseExternalPdf">{{ externalSubmitting ? '分析中' : '选择' }}</el-button>
+          </section>
         </aside>
 
         <main
@@ -775,7 +794,7 @@ function showAnalysisHelp() {
         >
           <div class="analysis-dropzone" :class="{ 'analysis-dropzone--active': dragOver }">
             <div>
-              <strong>{{ dragOver ? '松开即可放入分析工作区' : '简历分析工作区' }}</strong><el-button :icon="InfoFilled" size="small" type="text" @click="showAnalysisHelp">查看说明</el-button>
+              <strong>{{ dragOver ? '松开即可放入分析工作区' : '简历分析工作区' }}</strong>
             </div>
             <el-tag v-if="selectedIntake" type="success" effect="light">已选择 1 份</el-tag>
           </div>
@@ -788,10 +807,10 @@ function showAnalysisHelp() {
 
           <template v-else>
             <header class="candidate-header">
-              <div class="candidate-avatar candidate-avatar--large">{{ selectedIntake.candidateName.slice(0, 1) }}</div>
+              <div class="candidate-avatar candidate-avatar--large">{{ selectedCandidateDisplayName.slice(0, 1) }}</div>
               <div class="candidate-title">
                 <span>{{ selectedIntake.source === 'BOSS_VISIBLE' ? 'BOSS 简历' : selectedIntake.displayLabel.startsWith('外部 PDF') ? '外部 PDF' : '人工补录' }}</span>
-                <h2>{{ selectedIntake.candidateName }}</h2>
+                <h2>{{ selectedCandidateDisplayName }}</h2>
                 <p>{{ selectedIntake.jobTitle }} · {{ selectedIntake.accountName }}</p>
               </div>
               <div class="candidate-status">
@@ -800,25 +819,63 @@ function showAnalysisHelp() {
               </div>
             </header>
 
-            <section class="talent-profile-strip" aria-label="人才档案摘要">
-              <div class="talent-profile-strip__heading">
+            <div class="analysis-actionbar" aria-label="当前简历操作">
+              <div class="analysis-actionbar__info"><strong>{{ selectedCandidateDisplayName }}</strong><span>{{ analysisLabel(selectedIntake) }}</span></div>
+              <div class="analysis-actionbar__buttons">
+                <template v-if="selectedIntake.status === 'PENDING_REVIEW'">
+                  <el-button @click="review(selectedIntake, 'REJECTED')">拒绝登记</el-button>
+                  <el-button :icon="Check" type="primary" @click="review(selectedIntake, 'APPROVED_FOR_AI')">确认来源</el-button>
+                </template>
+                <template v-else-if="selectedAnalysis?.status === 'SUCCEEDED'">
+                  <el-button :loading="analyzingId === selectedIntake.id" @click="reanalyzeStored(selectedIntake)">重新分析</el-button>
+                  <el-button v-if="selectedAnalysis" type="primary" @click="openFeedback(selectedAnalysis)">记录 HR 复核</el-button>
+                </template>
+                <template v-else-if="selectedIntake.status === 'APPROVED_FOR_AI'">
+                  <el-button :icon="Cpu" :loading="analyzingId === selectedIntake.id" @click="openTextAnalysis(selectedIntake)">粘贴文本</el-button>
+                  <el-button type="primary" @click="selectedAnalysis?.status === 'FAILED' ? reanalyzeStored(selectedIntake) : openFileAnalysis(selectedIntake)">{{ selectedAnalysis?.status === 'FAILED' ? '重新分析该简历' : '上传文件分析' }}</el-button>
+                </template>
+              </div>
+            </div>
+
+            <details class="talent-profile-strip" aria-label="人才档案摘要">
+              <summary class="talent-profile-strip__toggle">
                 <div>
                   <span class="section-kicker">人才档案</span>
-                  <strong>{{ selectedTalentDetail?.candidate.currentTitle || selectedIntake.candidateName }}</strong>
+                  <strong>{{ selectedTalentDetail?.candidate.currentTitle || selectedCandidateDisplayName }}</strong>
                 </div>
-                <el-tag v-if="selectedTalentDetail" type="success" effect="light">已关联人才库</el-tag>
-                <el-tag v-else-if="talentDetailLoading" type="info" effect="light">档案加载中</el-tag>
-                <el-tag v-else type="warning" effect="light">暂未加载档案</el-tag>
-              </div>
+                <el-tag v-if="selectedTalentDetail" type="success" effect="light" size="small">已关联</el-tag>
+                <el-tag v-else-if="talentDetailLoading" type="info" effect="light" size="small">加载中</el-tag>
+                <el-tag v-else type="warning" effect="light" size="small">未加载</el-tag>
+              </summary>
               <div v-if="selectedTalentDetail" class="talent-profile-strip__meta">
                 <span>关联岗位 {{ selectedTalentDetail.contacts.length }} 个</span>
                 <span>简历版本 {{ selectedTalentDetail.resumes.length }} 份</span>
                 <span>沟通记录 {{ selectedTalentDetail.timeline.filter((event) => event.type === 'CONVERSATION').length }} 条</span>
               </div>
+              <div v-if="selectedTalentDetail?.resumes.length" class="talent-resume-list" aria-label="已关联简历">
+                <div class="talent-resume-list__heading">
+                  <span>已关联简历</span>
+                  <small>点击记录可切换查看对应分析</small>
+                </div>
+                <button
+                  v-for="resume in selectedTalentDetail.resumes"
+                  :key="resume.id"
+                  type="button"
+                  class="talent-resume-item"
+                  :class="{ 'talent-resume-item--active': selectedIntake?.id === resume.id }"
+                  @click="selectTalentResume(resume)"
+                >
+                  <span class="talent-resume-item__main">
+                    <strong>{{ resume.displayLabel || '候选人简历' }}</strong>
+                    <small>{{ talentResumeSourceLabel(resume) }}<template v-if="resume.documentType"> · {{ resume.documentType }}</template> · {{ formatDate(resume.receivedAt) }}</small>
+                  </span>
+                  <el-tag size="small" :type="talentResumeStatusType(resume)" effect="light">{{ talentResumeStatusLabel(resume) }}</el-tag>
+                </button>
+              </div>
               <p v-if="selectedTalentDetail?.candidate.skillsSummary" class="talent-profile-strip__skills">技能摘要：{{ selectedTalentDetail.candidate.skillsSummary }}</p>
               <p v-else-if="talentDetailError" class="talent-profile-strip__error">{{ talentDetailError }}</p>
-              <p v-else class="talent-profile-strip__empty">人才档案将随当前简历关联后显示。</p>
-            </section>
+              <p v-else-if="!selectedTalentDetail && !talentDetailLoading" class="talent-profile-strip__empty">人才档案将随当前简历关联后显示。</p>
+            </details>
 
             <div v-if="selectedIntake.processingStatus === 'FAILED' || selectedIntake.analysisFailureCode" class="decision-card decision-card--danger card-emphasis card-emphasis--danger status-alert status-alert--danger">
               <strong>此简历需要处理</strong>
@@ -833,7 +890,7 @@ function showAnalysisHelp() {
             <section v-else-if="selectedAnalysis?.status === 'SUCCEEDED' && selectedAnalysis.result" class="analysis-content">
               <div class="decision-card card-emphasis recommendation-card">
                 <div><span>AI 辅助结论</span><h3>{{ recommendationMeta[selectedAnalysis.result.recommendation].label }}</h3></div>
-                <div class="evidence-coverage"><span>证据覆盖度 {{ evidenceCoverage(selectedAnalysis.result) }}%</span><el-progress :percentage="evidenceCoverage(selectedAnalysis.result)" :show-text="false" :stroke-width="7" /></div>
+                <div class="evidence-coverage"><span>总体匹配度 {{ evidenceCoverage(selectedAnalysis.result) }}%</span><el-progress :percentage="evidenceCoverage(selectedAnalysis.result)" :show-text="false" :stroke-width="7" /></div>
 
               </div>
               <div class="summary-card">
@@ -845,14 +902,20 @@ function showAnalysisHelp() {
                 </div>
               </div>
               <section v-if="selectedAnalysis.result.jobComparisons?.length" class="job-comparison-section" aria-label="逐岗位职责匹配">
-                <div class="comparison-heading"><div><span>逐岗位职责匹配</span><p>逐项对照岗位职责与简历中的可见证据，未发现不等于候选人不具备。</p></div><strong>{{ selectedAnalysis.result.jobComparisons.length }} 个岗位</strong></div>
+                <div class="comparison-heading"><div><span>逐岗位职责匹配</span><p>逐项对照岗位职责与简历中的可见证据；100% 证据匹配，50% 证据待确认，0% 暂无匹配证据。</p></div><strong>{{ selectedAnalysis.result.jobComparisons.length }} 个岗位</strong></div>
                 <details v-for="(comparison, index) in selectedAnalysis.result.jobComparisons" :key="`${comparison.jobId || comparison.jobTitle}-${index}`" class="job-comparison-card" :open="index === 0">
-                  <summary><span class="comparison-summary-title">{{ comparison.jobTitle }}</span><span class="comparison-summary-count">{{ comparison.responsibilities.length }} 项职责</span></summary>
+                  <summary><span class="comparison-summary-title">{{ comparison.jobTitle }}</span><span class="comparison-summary-count">{{ comparisonMatchPercent(comparison) }}% · {{ comparison.responsibilities.length + (comparison.skillMatches?.length || 0) }} 项职责/技能</span></summary>
                   <p class="comparison-summary">{{ comparison.summary }}</p>
                   <ul class="responsibility-list">
                     <li v-for="(item, itemIndex) in comparison.responsibilities" :key="`${item.responsibility}-${itemIndex}`" :class="`responsibility--${item.status.toLowerCase()}`">
                       <div><strong>{{ item.responsibility }}</strong><p>{{ item.resumeEvidence }}</p></div>
-                      <el-tag size="small" :type="item.status === 'FOUND' ? 'success' : item.status === 'NOT_FOUND' ? 'danger' : 'info'">{{ item.status === 'FOUND' ? '符合' : item.status === 'NOT_FOUND' ? '未发现' : '待确认' }}</el-tag>
+                      <span class="match-percent" :class="evidencePercentClass(item.status)">{{ evidencePercent(item.status) }}%</span>
+                    </li>
+                  </ul>
+                  <ul v-if="comparison.skillMatches?.length" class="responsibility-list skill-match-list">
+                    <li v-for="(item, itemIndex) in comparison.skillMatches" :key="`${item.skill}-${itemIndex}`" :class="`responsibility--${item.status.toLowerCase()}`">
+                      <div><strong>{{ item.skill }}</strong><p>岗位要求：{{ item.requirement }}；简历依据：{{ item.resumeEvidence }}</p></div>
+                      <span class="match-percent" :class="evidencePercentClass(item.status)">{{ evidencePercent(item.status) }}%</span>
                     </li>
                   </ul>
                   <div v-if="comparison.gaps.length || comparison.risks.length" class="comparison-flags">
@@ -867,7 +930,7 @@ function showAnalysisHelp() {
                   <ul>
                     <li v-for="evidence in displayEvidence(selectedAnalysis.result)" :key="`${evidence.criterion}-${evidence.finding}`">
                       <div><strong>{{ evidence.criterion }}</strong><p>{{ evidence.finding }}</p></div>
-                      <el-tag size="small" :type="evidence.status === 'FOUND' ? 'success' : evidence.status === 'NOT_FOUND' ? 'danger' : 'info'">{{ evidence.status === 'FOUND' ? '已发现' : evidence.status === 'NOT_FOUND' ? '未发现' : '待确认' }}</el-tag>
+                      <span class="match-percent" :class="evidencePercentClass(evidence.status)">{{ evidencePercent(evidence.status) }}%</span>
                     </li>
                   </ul>
                 </article>
@@ -913,23 +976,6 @@ function showAnalysisHelp() {
               <span>{{ selectedIntake.displayLabel }}</span>
               <span>摘要 {{ selectedIntake.anonymousKey }}</span>
               <span>接收于 {{ formatDate(selectedIntake.receivedAt) }}</span>
-            </footer>
-            <footer class="analysis-actionbar" aria-label="当前简历操作">
-              <div><strong>当前处理</strong><span>{{ selectedIntake.candidateName }} · {{ analysisLabel(selectedIntake) }}</span></div>
-              <div class="analysis-actionbar__buttons">
-                <template v-if="selectedIntake.status === 'PENDING_REVIEW'">
-                  <el-button @click="review(selectedIntake, 'REJECTED')">拒绝登记</el-button>
-                  <el-button :icon="Check" type="primary" @click="review(selectedIntake, 'APPROVED_FOR_AI')">确认来源</el-button>
-                </template>
-                <template v-else-if="selectedAnalysis?.status === 'SUCCEEDED'">
-                  <el-button :loading="analyzingId === selectedIntake.id" @click="openFileAnalysis(selectedIntake)">重新分析</el-button>
-                  <el-button v-if="selectedAnalysis" type="primary" @click="openFeedback(selectedAnalysis)">记录 HR 复核</el-button>
-                </template>
-                <template v-else-if="selectedIntake.status === 'APPROVED_FOR_AI'">
-                  <el-button :icon="Cpu" :loading="analyzingId === selectedIntake.id" @click="openTextAnalysis(selectedIntake)">粘贴文本</el-button>
-                  <el-button type="primary" @click="selectedAnalysis?.status === 'FAILED' ? reanalyzeStored(selectedIntake) : openFileAnalysis(selectedIntake)">{{ selectedAnalysis?.status === 'FAILED' ? '重新分析该简历' : '上传文件分析' }}</el-button>
-                </template>
-              </div>
             </footer>
           </template>
         </main>
@@ -1087,14 +1133,14 @@ function showAnalysisHelp() {
 .heading-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .skeleton, .error { margin-top: 20px; }
 .external-pdf-input { display: none; }
-.external-pdf-drop { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 14px; margin: 16px 0 18px; padding: 16px 18px; border: 1px dashed var(--border-teal); border-radius: var(--radius-panel); background:linear-gradient(135deg, rgba(238,249,246,.82), rgba(255,255,255,.76)); box-shadow:var(--shadow-raised), inset 0 1px 0 rgba(255,255,255,.62); cursor: pointer; transition:border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast), background var(--transition-fast); }
-.external-pdf-drop:hover { border-color:var(--primary); box-shadow:var(--shadow-floating); transform:translateY(-1px); }
-.external-pdf-drop__icon { display: grid; width: 44px; height: 44px; place-items: center; border-radius: var(--radius-control); background:linear-gradient(145deg, var(--surface-teal), rgba(255,255,255,.7)); color: var(--primary); font-size: 22px; box-shadow:inset 0 1px 0 rgba(255,255,255,.65), 0 6px 16px rgba(13,148,136,.08); }
-.external-pdf-drop strong, .external-pdf-drop small { display: block; }
-.external-pdf-drop strong { color: var(--text-main); font-size: 14px; }
-.external-pdf-drop small { margin-top: 4px; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
-.external-pdf-drop--active { border-color: var(--primary); background: var(--surface-teal); box-shadow: 0 0 0 4px rgba(13,148,136,.1); }
-.external-pdf-drop--loading { cursor: wait; opacity: .82; }
+.external-pdf-drop { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:10px; margin:8px; padding:10px 14px; border:1px dashed var(--border-teal); border-radius:var(--radius-control); background:linear-gradient(135deg, rgba(238,249,246,.72), rgba(255,255,255,.66)); cursor:pointer; transition:border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast), background var(--transition-fast); }
+.external-pdf-drop:hover { border-color:var(--primary); box-shadow:0 0 0 2px rgba(13,148,136,.08); transform:translateY(-1px); }
+.external-pdf-drop__icon { display:grid; width:32px; height:32px; place-items:center; border-radius:var(--radius-control); background:linear-gradient(145deg, var(--surface-teal), rgba(255,255,255,.7)); color:var(--primary); font-size:16px; }
+.external-pdf-drop strong, .external-pdf-drop small { display:block; }
+.external-pdf-drop strong { color:var(--text-main); font-size:12px; }
+.external-pdf-drop small { margin-top:2px; color:var(--text-secondary); font-size:11px; line-height:1.4; }
+.external-pdf-drop--active { border-color:var(--primary); background:var(--surface-teal); box-shadow:0 0 0 3px rgba(13,148,136,.1); }
+.external-pdf-drop--loading { cursor:wait; opacity:.82; }
 .skeleton { padding: 26px; }
 .error { display: grid; justify-items: center; gap: 10px; padding: 48px; color: var(--text-secondary); }
 .error svg { font-size: 28px; color: var(--danger); }
@@ -1108,13 +1154,26 @@ function showAnalysisHelp() {
 .metrics .metric-card--red { --metric-accent:var(--danger); --indicator-accent:var(--danger); --indicator-surface:var(--surface-rose); --indicator-border:var(--border-rose); }
 .metric-card span, .metric-card small { position: relative; z-index: 1; display: block; color: var(--text-secondary); font-size: 12px; }
 .metric-card strong { position: relative; z-index: 1; display: block; margin: 7px 0 4px; font-size: 29px; line-height: 1; }
-.analysis-workspace { display:grid; grid-template-columns:320px minmax(0,1fr); gap:20px; align-items:stretch; }
+.analysis-workspace { display:grid; grid-template-columns:360px minmax(0,1fr); gap:20px; align-items:stretch; }
 .analysis-workspace > * { min-width: 0; }
 .resume-queue-panel, .analysis-board { overflow: hidden; }
 .resume-queue-panel { background: var(--glass-bg); box-shadow:var(--shadow-raised); }
 .analysis-board { position:relative; background: var(--glass-bg); box-shadow:var(--shadow-raised); }
 .analysis-board > * { position:relative; z-index:1; }
-.queue-heading { padding: 18px 20px; }
+.queue-heading { padding: 14px 18px; }
+.queue-metrics-row { display:flex; flex-wrap:wrap; gap:6px; padding:0 18px 12px; }
+.queue-metric-pill { display:inline-flex; align-items:center; gap:4px; padding:3px 10px; border-radius:var(--radius-pill); font-size:11px; font-weight:600; color:var(--text-secondary); transition:background var(--transition-fast), color var(--transition-fast); }
+.queue-metric-pill b { font-size:13px; font-variant-numeric:tabular-nums; }
+.queue-metric-pill--teal { background:var(--surface-teal); color:var(--brand-800); }
+.queue-metric-pill--teal b { color:var(--primary); }
+.queue-metric-pill--blue { background:var(--surface-blue); color:#1e40af; }
+.queue-metric-pill--blue b { color:#326fc1; }
+.queue-metric-pill--violet { background:var(--surface-violet); color:#5b21b6; }
+.queue-metric-pill--violet b { color:#7253a6; }
+.queue-metric-pill--green { background:#eff9f3; color:#166534; }
+.queue-metric-pill--green b { color:var(--success); }
+.queue-metric-pill--red { background:var(--surface-rose); color:#991b1b; }
+.queue-metric-pill--red b { color:var(--danger); }
 .ai-service-inline { display:grid; grid-template-columns:32px minmax(0,1fr); align-items:center; gap:10px; margin:0; padding:16px 20px; border-bottom:1px solid var(--border); background:linear-gradient(180deg, var(--surface-soft), rgba(255,255,255,.56)); }
 .ai-service-inline > div { min-width: 0; margin-right: auto; }
 .ai-service-inline--ready { background:var(--surface-soft); }
@@ -1127,7 +1186,7 @@ function showAnalysisHelp() {
 .authorization-checks { display: grid; gap: 12px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface-muted); }
 .authorization-checks .el-checkbox { height: auto; margin: 0; white-space: normal; }
 .resume-queue { display:grid; align-content:start; max-height:760px; overflow:auto; padding:8px; gap:6px; scrollbar-width:thin; }
-.resume-ticket { min-width:0; padding:16px 18px; border:0; border-radius:var(--radius-panel); background:linear-gradient(135deg, rgba(255,255,255,.88) 0%, rgba(255,255,255,.72) 100%); cursor:pointer; transition:background 180ms ease, box-shadow 280ms cubic-bezier(.2,0,0,1), transform 280ms cubic-bezier(.2,0,0,1); position:relative; box-shadow:0 1px 2px rgba(17,28,45,.03), 0 2px 8px rgba(17,28,45,.04), inset 0 1px 0 rgba(255,255,255,.72); }
+.resume-ticket { min-width:0; padding:12px 14px; border:0; border-radius:var(--radius-panel); background:linear-gradient(135deg, rgba(255,255,255,.88) 0%, rgba(255,255,255,.72) 100%); cursor:pointer; transition:background 180ms ease, box-shadow 280ms cubic-bezier(.2,0,0,1), transform 280ms cubic-bezier(.2,0,0,1); position:relative; box-shadow:0 1px 2px rgba(17,28,45,.03), 0 2px 8px rgba(17,28,45,.04), inset 0 1px 0 rgba(255,255,255,.72); }
 .resume-ticket:nth-child(even) { background:linear-gradient(135deg, rgba(247,249,250,.88) 0%, rgba(247,249,250,.72) 100%); }
 .resume-ticket--boss { cursor: grab; }
 .resume-ticket:hover { background:linear-gradient(135deg, rgba(255,255,255,.96) 0%, rgba(255,255,255,.84) 100%); transform:translateY(-2px); box-shadow:0 2px 4px rgba(17,28,45,.05), 0 8px 24px rgba(17,28,45,.10), inset 0 1px 0 rgba(255,255,255,.88), 2px 0 0 0 rgba(13,148,136,.12); }
@@ -1136,21 +1195,17 @@ function showAnalysisHelp() {
 .resume-ticket--dragging { opacity: .5; cursor: grabbing; transform:rotate(1.5deg) scale(.97); }
 .resume-ticket--pending { background:linear-gradient(135deg, var(--surface-amber) 0%, rgba(255,255,255,.78) 100%); box-shadow:0 1px 2px rgba(17,28,45,.03), 0 2px 8px rgba(17,28,45,.04), inset 0 1px 0 rgba(255,255,255,.72), 2px 0 0 0 rgba(183,110,0,.12); }
 .resume-ticket--rejected { background:linear-gradient(135deg, var(--surface-rose) 0%, rgba(255,255,255,.78) 100%); box-shadow:0 1px 2px rgba(17,28,45,.03), 0 2px 8px rgba(17,28,45,.04), inset 0 1px 0 rgba(255,255,255,.72), 2px 0 0 0 rgba(180,35,24,.10); }
-.ticket-topline, .ticket-person, .ticket-tags, .resume-ticket footer, .candidate-header, .candidate-status, .recommendation-card, .insight-card header, .feedback-heading { display: flex; align-items: center; }
-.ticket-topline, .resume-ticket footer, .recommendation-card, .insight-card header, .feedback-heading { justify-content: space-between; }
-.source-badge { display: inline-flex; align-items: center; min-height: 24px; padding: 0 9px; border-radius: var(--radius-pill); font-size: 11px; font-weight: 750; }
-.source-badge--boss { background: var(--surface-teal); color: var(--brand-800); }
-.source-badge--manual { background: var(--surface-slate); color: var(--text-tertiary); }
-.drag-hint { color: var(--text-tertiary); font-size: 11px; }
-.ticket-person { min-width: 0; gap: 11px; margin: 14px 0; }
+.ticket-tags, .resume-ticket footer, .candidate-header, .candidate-status, .recommendation-card, .insight-card header, .feedback-heading { display: flex; align-items: center; }
+.resume-ticket footer, .recommendation-card, .insight-card header, .feedback-heading { justify-content: space-between; }
+.drag-hint { margin-left: auto; color: var(--text-tertiary); font-size: 11px; }
+.ticket-person { display: grid; min-width: 0; gap: 4px; margin: 0; }
 .candidate-avatar { display: grid; flex: 0 0 auto; width: 38px; height: 38px; place-items: center; border-radius: 12px; background:linear-gradient(145deg, #14b8a6 0%, #0d9488 40%, #0f766e 100%); color: white; font-weight: 800; box-shadow:0 3px 10px rgba(13,148,136,.18), 0 1px 2px rgba(0,0,0,.06), inset 0 1px 0 rgba(255,255,255,.16); }
 .candidate-avatar--large { width: 54px; height: 54px; border-radius: 16px; font-size: 20px; }
 .ticket-person > div:last-child, .candidate-title { min-width: 0; }
-.ticket-person strong, .ticket-person span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ticket-person strong { margin-bottom: 4px; font-size: 15px; }
-.ticket-person span, .resume-ticket footer { color: var(--text-secondary); font-size: 12px; }
+.ticket-person strong { overflow: hidden; color: var(--text-main); font-size: 15px; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
+.ticket-job { display: -webkit-box; overflow: hidden; color: var(--text-secondary); font-size: 12px; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .ticket-tags, .candidate-status { flex-wrap: wrap; gap: 6px; }
-.resume-ticket footer { gap: 10px; margin-top: 13px; padding-top: 12px; }
+.resume-ticket footer { gap: 10px; margin-top: 11px; padding-top: 9px; border-top: 1px solid var(--border-subtle); }
 .resume-ticket footer span, .resume-ticket footer time { min-width: 0; overflow-wrap: anywhere; }
 .resume-ticket footer time { text-align: right; }
 .analysis-board { min-height: 640px; transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease; }
@@ -1202,7 +1257,11 @@ function showAnalysisHelp() {
 .responsibility-list li > div { min-width:0; }
 .responsibility-list strong { font-size:12px; }
 .responsibility-list p { margin:4px 0 0; color:var(--text-secondary); font-size:12px; line-height:1.5; overflow-wrap:anywhere; }
-.responsibility-list .el-tag { flex:none; margin-top:1px; }
+.responsibility-list .match-percent { flex:none; margin-top:1px; }
+.match-percent { min-width:48px; padding:4px 7px; border:1px solid transparent; border-radius:999px; text-align:center; font-size:11px; font-weight:800; line-height:1.1; }
+.match-percent--high { color:#087f5b; background:#e9f8f1; border-color:#b7ead3; }
+.match-percent--mid { color:#8a6500; background:#fff6da; border-color:#f2dda0; }
+.match-percent--low { color:#c0392b; background:#fff0ed; border-color:#f3c4bc; }
 .comparison-flags { display:flex; flex-wrap:wrap; gap:6px; padding:2px 16px 14px 44px; }
 .summary-flags { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 13px; }
 .flag { display: inline-flex; max-width: 100%; padding: 4px 8px; border-radius: 6px; font-size: 11px; overflow-wrap: anywhere; line-height:1.45; }
@@ -1236,12 +1295,11 @@ function showAnalysisHelp() {
 .analysis-footnote { color: var(--text-secondary); font-size: 11px; line-height: 1.6; }
 .intake-details { display: flex; flex-wrap: wrap; gap: 8px 16px; padding: 14px 22px; border-top: 1px solid var(--border); background: var(--surface-soft); color: var(--text-secondary); font-size: 11px; }
 .intake-details span { max-width: 100%; overflow-wrap: anywhere; }
-.analysis-actionbar { position: sticky; z-index: 5; bottom: 0; display: flex; min-height: 72px; align-items: center; justify-content: space-between; gap: 18px; padding: 13px 22px; border-top: 1px solid var(--border-teal); background:color-mix(in srgb, var(--surface) 88%, transparent); backdrop-filter:blur(14px) saturate(1.08); -webkit-backdrop-filter:blur(14px) saturate(1.08); box-shadow: 0 -12px 30px rgba(17,28,45,.07); }
-.analysis-actionbar > div:first-child { min-width: 0; }
-.analysis-actionbar strong, .analysis-actionbar span { display: block; }
-.analysis-actionbar strong { color: var(--text-main); font-size: 12px; }
-.analysis-actionbar span { margin-top: 4px; overflow: hidden; color: var(--text-secondary); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.analysis-actionbar__buttons { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; gap: 8px; }
+.analysis-actionbar { position:sticky; z-index:5; top:0; display:flex; min-height:48px; align-items:center; justify-content:space-between; gap:14px; padding:10px 22px; border-bottom:1px solid var(--border-teal); background:color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter:blur(14px) saturate(1.08); -webkit-backdrop-filter:blur(14px) saturate(1.08); }
+.analysis-actionbar__info { display:flex; align-items:center; gap:8px; min-width:0; }
+.analysis-actionbar__info strong { color:var(--text-main); font-size:13px; }
+.analysis-actionbar__info span { color:var(--text-secondary); font-size:11px; }
+.analysis-actionbar__buttons { display:flex; flex:0 0 auto; align-items:center; justify-content:flex-end; gap:8px; }
 .intake-form { margin-top: 18px; }
 .intake-form .el-select { width: 100%; }
 .intake-form small { display: block; margin-top: 5px; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
@@ -1250,11 +1308,24 @@ function showAnalysisHelp() {
 .evidence-coverage :deep(.el-progress-bar__outer) { background:var(--border); }
 .evidence-coverage :deep(.el-progress-bar__inner) { background:var(--primary); }
 .recommendation-card { flex-wrap:wrap; }
-.talent-profile-strip { display:grid; gap:9px; margin:0 22px 4px; padding:14px 16px; border:1px solid rgba(13,148,136,.16); border-radius:var(--radius-control); background:linear-gradient(135deg,rgba(238,249,246,.76),rgba(255,255,255,.82)); }
-.talent-profile-strip__heading, .talent-profile-strip__meta { display:flex; align-items:center; justify-content:space-between; gap:12px; }
-.talent-profile-strip__heading strong { display:block; margin-top:4px; color:var(--text-main); font-size:14px; }
-.talent-profile-strip__meta { justify-content:flex-start; flex-wrap:wrap; color:var(--text-secondary); font-size:12px; }
-.talent-profile-strip__skills, .talent-profile-strip__empty, .talent-profile-strip__error { margin:0; color:var(--text-secondary); font-size:12px; line-height:1.55; }
+.talent-profile-strip { display:grid; gap:9px; margin:0 22px 4px; border:1px solid rgba(13,148,136,.16); border-radius:var(--radius-control); background:linear-gradient(135deg,rgba(238,249,246,.76),rgba(255,255,255,.82)); }
+.talent-profile-strip__toggle { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 16px; cursor:pointer; list-style:none; transition:background var(--transition-fast); }
+.talent-profile-strip__toggle::-webkit-details-marker { display:none; }
+.talent-profile-strip__toggle::before { content:'›'; color:var(--primary); font-size:16px; line-height:1; transition:transform var(--transition-fast); margin-right:6px; }
+.talent-profile-strip[open] .talent-profile-strip__toggle::before { transform:rotate(90deg); }
+.talent-profile-strip[open] .talent-profile-strip__toggle { border-bottom:1px dashed rgba(13,148,136,.2); }
+.talent-profile-strip__toggle strong { display:block; margin-top:2px; color:var(--text-main); font-size:13px; }
+.talent-profile-strip__meta { display:flex; align-items:center; justify-content:flex-start; flex-wrap:wrap; gap:12px; padding:8px 16px; color:var(--text-secondary); font-size:12px; }
+.talent-resume-list { display:grid; gap:7px; margin:0; padding:8px 16px; border-top:1px dashed rgba(13,148,136,.2); }
+.talent-resume-list__heading { display:flex; align-items:center; justify-content:space-between; gap:10px; color:var(--text-main); font-size:12px; font-weight:800; }
+.talent-resume-list__heading small { color:var(--text-tertiary); font-size:11px; font-weight:500; }
+.talent-resume-item { display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%; padding:9px 10px; border:1px solid var(--border); border-radius:10px; background:rgba(255,255,255,.58); color:inherit; text-align:left; cursor:pointer; transition:border-color .18s ease, background .18s ease, transform .18s ease; }
+.talent-resume-item:hover, .talent-resume-item--active { border-color:var(--border-teal); background:var(--surface-teal); transform:translateY(-1px); }
+.talent-resume-item__main { display:grid; min-width:0; gap:3px; }
+.talent-resume-item__main strong, .talent-resume-item__main small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.talent-resume-item__main strong { color:var(--text-main); font-size:12px; }
+.talent-resume-item__main small { color:var(--text-secondary); font-size:11px; }
+.talent-profile-strip__skills, .talent-profile-strip__empty, .talent-profile-strip__error { margin:0; padding:6px 16px 10px; color:var(--text-secondary); font-size:12px; line-height:1.55; }
 .talent-profile-strip__error { color:var(--danger); }
 .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
 .merge-dialog-summary { display:flex; align-items:baseline; flex-wrap:wrap; gap:8px 18px; margin-bottom:16px; padding:12px 14px; border:1px solid var(--border-teal); border-radius:var(--radius-control); background:var(--surface-teal); color:var(--text-secondary); font-size:12px; }
@@ -1289,11 +1360,11 @@ function showAnalysisHelp() {
 .merge-warning ul { margin:6px 0 0; padding-left:18px; }
 .merge-preview-safe { margin:0; padding:12px 14px; border-radius:var(--radius-control); background:var(--surface-teal); color:var(--brand-800); font-size:12px; line-height:1.6; }
 @media(min-width:1181px) {
- .analysis-workspace { height:calc(100dvh - 100px); min-height:620px; }
+ .analysis-workspace { height:calc(100dvh - 80px); min-height:620px; }
  .resume-queue-panel { display:flex; flex-direction:column; min-height:0; }.resume-queue { flex:1; max-height:none; min-height:0; }.analysis-board { overflow-y:auto; overscroll-behavior:contain; }
 }
 @media(max-width:1180px) { .analysis-workspace { grid-template-columns:1fr; }.resume-queue { grid-template-columns:repeat(2,minmax(0,1fr)); max-height:400px; }.insight-grid { grid-template-columns:1fr; }.analysis-actionbar { position:static; flex-wrap:wrap; }.candidate-status { justify-content:flex-start; } }
-@media(max-width:600px) { .external-pdf-drop { grid-template-columns:40px minmax(0,1fr); }.external-pdf-drop > .el-button { grid-column:1/-1; width:100%; }.resume-queue { grid-template-columns:1fr; }.candidate-header,.analysis-content,.analysis-dropzone,.intake-details,.analysis-actionbar { padding:16px; }.candidate-title { flex-basis:calc(100% - 80px); }.candidate-status { flex-basis:100%; }.analysis-actionbar__buttons { flex-wrap:wrap; width:100%; }.analysis-actionbar__buttons .el-button { flex:1; margin:0; }.recommendation-card { padding:16px; }.evidence-coverage { flex-basis:100%; margin:0; }.board-empty { padding:24px 16px; min-height:280px; }.talent-profile-strip { margin-inline:16px; }.duplicate-workspace { grid-template-columns:1fr; }.duplicate-groups { grid-template-columns:repeat(2,minmax(0,1fr)); max-height:180px; }.duplicate-group small { display:none; }.merge-preview-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }.merge-preview-grid > div:last-child { grid-column:1/-1; } }
+@media(max-width:600px) { .external-pdf-drop { grid-template-columns:32px minmax(0,1fr); }.external-pdf-drop > .el-button { grid-column:1/-1; width:100%; }.resume-queue { grid-template-columns:1fr; }.candidate-header,.analysis-content,.analysis-dropzone,.intake-details,.analysis-actionbar { padding:16px; }.candidate-title { flex-basis:calc(100% - 80px); }.candidate-status { flex-basis:100%; }.analysis-actionbar__buttons { flex-wrap:wrap; width:100%; }.analysis-actionbar__buttons .el-button { flex:1; margin:0; }.recommendation-card { padding:16px; }.evidence-coverage { flex-basis:100%; margin:0; }.board-empty { padding:24px 16px; min-height:280px; }.talent-profile-strip { margin-inline:16px; }.duplicate-workspace { grid-template-columns:1fr; }.duplicate-groups { grid-template-columns:repeat(2,minmax(0,1fr)); max-height:180px; }.duplicate-group small { display:none; }.merge-preview-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }.merge-preview-grid > div:last-child { grid-column:1/-1; } }
 
 :root[data-theme="dark"] .metrics .metric-card--green {
   --indicator-surface: var(--surface-green);

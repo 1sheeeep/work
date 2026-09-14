@@ -11,6 +11,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import jakarta.annotation.PreDestroy;
 
 import java.time.Instant;
+import java.time.Duration;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -29,6 +30,7 @@ public class ResumeAnalysisQueueService {
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final AtomicBoolean draining = new AtomicBoolean();
     @Value("${app.resume.analysis-queue.enabled:true}") private boolean enabled;
+    @Value("${app.resume.analysis-queue.max-reply-priority-wait:60s}") private Duration maxReplyPriorityWait = Duration.ofSeconds(60);
 
     public ResumeAnalysisQueueService(ResumeIntakeRepository intakes,
                                       AutomatedResumeAnalysisService analysis,
@@ -76,7 +78,7 @@ public class ResumeAnalysisQueueService {
             var due = intakes.findDueForAnalysis(now, PageRequest.of(0, 1));
             if (due.isEmpty()) return null;
             ResumeIntake intake = due.get(0);
-            intake.claimAnalysis(now);
+            if (!intake.claimAnalysis(now)) return null;
             return intake.getId();
         });
     }
@@ -87,7 +89,10 @@ public class ResumeAnalysisQueueService {
             processed = transactions.execute(status -> {
                 ResumeIntake intake = intakes.findWithDetailsById(intakeId).orElse(null);
                 if (intake == null) return true;
-                if (replyWork.hasPendingWork(intake.getContact().getBossAccount().getId())) return false;
+                Instant now = Instant.now();
+                boolean insideReplyPriorityWindow = intake.getAnalysisQueueQueuedAt() != null
+                        && intake.getAnalysisQueueQueuedAt().plus(maxReplyPriorityWait).isAfter(now);
+                if (insideReplyPriorityWindow && replyWork.hasPendingWork(intake.getContact().getBossAccount().getId())) return false;
                 String text = intake.getExtractedText();
                 if (text == null || text.isBlank()) {
                     intake.analysisUnavailable("FAILED", "RESUME_TEXT_NOT_AVAILABLE", "简历提取文本不存在，无法进行 AI 分析", Instant.now());
@@ -96,16 +101,28 @@ public class ResumeAnalysisQueueService {
                 }
                 return true;
             });
-        } catch (RuntimeException ignored) {
-            // 最终状态在独立事务中记录，避免 worker 因一次异常停止。
+        } catch (RuntimeException error) {
+            // 不能把异常任务当成普通 defer，否则会绕过 attempt 上限形成无限循环。
+            transactions.execute(status -> {
+                ResumeIntake intake = intakes.findById(intakeId).orElse(null);
+                if (intake != null) {
+                    intake.analysisUnavailable("FAILED", "RESUME_ANALYSIS_WORKER_EXCEPTION",
+                            "简历分析 worker 异常：" + safe(error), Instant.now());
+                }
+                return null;
+            });
+            finalizeTask(intakeId);
+            return true;
         }
         if (!Boolean.TRUE.equals(processed)) {
             transactions.execute(status -> {
                 ResumeIntake intake = intakes.findById(intakeId).orElse(null);
-                if (intake != null) intake.deferAnalysis(Instant.now());
+                if (intake != null) intake.deferAnalysisForReplyPriority(Instant.now());
                 return null;
             });
-            return false;
+            // Continue with another due intake. The deferred item is hidden for
+            // five seconds and its attempt budget was restored.
+            return true;
         }
         finalizeTask(intakeId);
         return true;
@@ -121,7 +138,8 @@ public class ResumeAnalysisQueueService {
             } else if ("NOT_AUTHORIZED".equals(intake.getAnalysisStatus())
                     || "NOT_CONFIGURED".equals(intake.getAnalysisStatus())
                     || "ACTIVE_JOB_REQUIRED".equals(intake.getAnalysisFailureCode())
-                    || "RESUME_TEXT_NOT_AVAILABLE".equals(intake.getAnalysisFailureCode())) {
+                    || "RESUME_TEXT_NOT_AVAILABLE".equals(intake.getAnalysisFailureCode())
+                    || isNonRetryableProviderFailure(intake.getAnalysisFailureCode())) {
                 intake.failAnalysisQueue(intake.getAnalysisFailureReason(), now);
             } else if (!intake.retryAnalysisQueue(
                     intake.getAnalysisFailureReason() == null ? "AI 分析未完成" : intake.getAnalysisFailureReason(), now)) {
@@ -129,6 +147,21 @@ public class ResumeAnalysisQueueService {
             }
             return null;
         });
+    }
+
+    private boolean isNonRetryableProviderFailure(String code) {
+        return switch (code == null ? "" : code) {
+            case "OPENAI_NOT_CONFIGURED", "OPENAI_CONFIGURATION_REQUIRED", "OPENAI_AUTH_FAILED",
+                    "OPENAI_MODEL_INVALID", "OPENAI_BASE_URL_INVALID" -> true;
+            default -> false;
+        };
+    }
+
+    private String safe(Exception error) {
+        String value = error == null ? "未知异常" : error.getMessage();
+        if (value == null || value.isBlank()) value = error == null ? "未知异常" : error.getClass().getSimpleName();
+        value = value.replace('\n', ' ').replace('\r', ' ').trim();
+        return value.substring(0, Math.min(240, value.length()));
     }
 
     @PreDestroy

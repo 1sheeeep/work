@@ -136,7 +136,7 @@ describe('ResumeIntakesView', () => {
       if (url === '/organization/companies') return { data: [] }
       if (url === '/talent-candidates/page?page=0&pageSize=100') return { data: { items: [{ candidateId: 'candidate-profile', company: { id: 'company-1', name: '新知科技集团', code: 'XINZHI' }, source: 'BOSS', sourceReference: 'BOSS · source', displayName: '候选人甲', privacyStatus: 'ACTIVE', resumeCount: 1, relatedJobs: [{ id: 'job-1', title: 'Java 开发' }], createdAt: '2026-08-31T08:00:00Z', updatedAt: '2026-08-31T08:00:00Z' }], page: 0, pageSize: 100, total: 1, counts: { total: 1, withResume: 1, analyzed: 0, processing: 0, failed: 0 } } }
       if (url === '/resume-intakes/intake-profile/analysis-runs') return { data: [] }
-      if (url === '/talent-candidates/candidate-profile') return { data: { candidate: { candidateId: 'candidate-profile', company: { id: 'company-1', name: '新知科技集团', code: 'XINZHI' }, source: 'BOSS', sourceReference: 'BOSS · source', displayName: '候选人甲', currentTitle: 'Java 开发工程师', skillsSummary: 'Java、Spring', privacyStatus: 'ACTIVE', resumeCount: 1, relatedJobs: [{ id: 'job-1', title: 'Java 开发' }], createdAt: '2026-08-31T08:00:00Z', updatedAt: '2026-08-31T08:00:00Z' }, contacts: [{ id: 'contact-profile', jobPositionId: 'job-1', jobTitle: 'Java 开发', bossAccountId: 'account-1', accountName: '主招聘账号', status: 'SCREENING', humanTakenOver: false }], resumes: [], analyses: [], timeline: [] } }
+      if (url === '/talent-candidates/candidate-profile') return { data: { candidate: { candidateId: 'candidate-profile', company: { id: 'company-1', name: '新知科技集团', code: 'XINZHI' }, source: 'BOSS', sourceReference: 'BOSS · source', displayName: '候选人甲', currentTitle: 'Java 开发工程师', skillsSummary: 'Java、Spring', privacyStatus: 'ACTIVE', resumeCount: 1, relatedJobs: [{ id: 'job-1', title: 'Java 开发' }], createdAt: '2026-08-31T08:00:00Z', updatedAt: '2026-08-31T08:00:00Z' }, contacts: [{ id: 'contact-profile', jobPositionId: 'job-1', jobTitle: 'Java 开发', bossAccountId: 'account-1', accountName: '主招聘账号', status: 'SCREENING', humanTakenOver: false }], resumes: [{ id: 'intake-profile', contactId: 'contact-profile', source: 'BOSS_VISIBLE', displayLabel: '候选人已提供附件简历', receivedAt: '2026-08-31T08:00:00Z', status: 'APPROVED_FOR_AI', processingStatus: 'READY_FOR_AI', documentType: 'PDF', analysisStatus: 'NOT_REQUESTED', analysisQueueAttempts: 0 }], analyses: [], timeline: [] } }
       return { data: [] }
     })
 
@@ -146,6 +146,8 @@ describe('ResumeIntakesView', () => {
 
     expect(wrapper.text()).toContain('已关联人才库')
     expect(wrapper.text()).toContain('关联岗位 1 个')
+    expect(wrapper.text()).toContain('已关联简历')
+    expect(wrapper.text()).toContain('候选人已提供附件简历')
     expect(wrapper.text()).toContain('技能摘要：Java、Spring')
   })
 

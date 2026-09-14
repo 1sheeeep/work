@@ -10,6 +10,7 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
@@ -18,6 +19,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -47,6 +49,25 @@ class InboundJobReplyHttpIntegrationTest {
     }
 
     @Test
+    void disablesDeepSeekThinkingForStructuredReplyGeneration() throws Exception {
+        AtomicReference<JsonNode> requestPayload = new AtomicReference<>();
+        start(exchange -> {
+            requestPayload.set(new ObjectMapper().readTree(exchange.getRequestBody()));
+            respond(exchange, 200, completion("""
+                    {"primaryIntent":"SALARY","secondaryIntents":[],"relevant":true,"confidence":0.98,"action":"REPLY","riskLevel":"LOW",
+                     "reply":"您好，招聘页面标注薪资为 8-13K。","evidenceKeys":["SALARY"]}
+                    """));
+        });
+
+        InboundJobReplyService.Decision result = service(Duration.ofSeconds(2), true)
+                .decide(job(), "请问薪资是多少？");
+
+        assertTrue(result.replyAllowed());
+        assertEquals("disabled", requestPayload.get().path("thinking").path("type").stringValue());
+        assertFalse(requestPayload.get().has("enable_thinking"));
+    }
+
+    @Test
     void acceptsCompatibleEvidenceObjectsWithoutWeakeningFactValidation() throws Exception {
         start(exchange -> respond(exchange, 200, completion("""
                 {"primaryIntent":"SALARY","secondaryIntents":[],"relevant":true,"confidence":0.98,"action":"REPLY","riskLevel":"LOW",
@@ -60,7 +81,7 @@ class InboundJobReplyHttpIntegrationTest {
     }
 
     @Test
-    void ignoresNegativeEvidenceObjectsAndFailsClosed() throws Exception {
+    void rejectsNegativeEvidenceObjectsAndAllowsOneSafeRevalidation() throws Exception {
         start(exchange -> respond(exchange, 200, completion("""
                 {"primaryIntent":"SALARY","secondaryIntents":[],"relevant":true,"confidence":0.98,"action":"REPLY","riskLevel":"LOW",
                  "reply":"您好，招聘页面标注薪资为 8-13K。","evidence":[{"criterion":"薪资","status":"MISS"}]}
@@ -69,7 +90,7 @@ class InboundJobReplyHttpIntegrationTest {
         InboundJobReplyService.Decision result = service(Duration.ofSeconds(2)).decide(job(), "请问薪资是多少？");
 
         assertFalse(result.replyAllowed());
-        assertFalse(result.retryable());
+        assertTrue(result.retryable());
         assertTrue(result.reason().contains("模型未提供事实证据字段"));
     }
 
@@ -202,7 +223,8 @@ class InboundJobReplyHttpIntegrationTest {
 
         assertTrue(result.replyAllowed());
         assertEquals("SOCIAL_THANKS", result.category());
-        assertTrue(result.reason().contains("低风险社交回复校验"));
+        assertEquals("好的", result.content());
+        assertTrue(result.reason().contains("礼貌性消息统一回复"));
     }
 
     @Test
@@ -233,7 +255,7 @@ class InboundJobReplyHttpIntegrationTest {
     }
 
     @Test
-    void treatsPureAcknowledgementAsExpectedSilence() throws Exception {
+    void repliesToPureAcknowledgementWithUniversalAck() throws Exception {
         start(exchange -> respond(exchange, 200, completion("""
                 {"primaryIntent":"SOCIAL_ACKNOWLEDGEMENT","secondaryIntents":[],"relevant":true,"confidence":0.96,"action":"REPLY","riskLevel":"LOW",
                  "reply":"好的，有问题随时告诉我。","evidenceKeys":[]}
@@ -241,8 +263,9 @@ class InboundJobReplyHttpIntegrationTest {
 
         InboundJobReplyService.Decision result = service(Duration.ofSeconds(2)).decide(job(), "好的，收到");
 
-        assertFalse(result.replyAllowed());
-        assertTrue(result.reason().startsWith("正常静默："));
+        assertTrue(result.replyAllowed());
+        assertEquals("好的", result.content());
+        assertTrue(result.reason().contains("礼貌性消息统一回复"));
     }
 
     @Test
@@ -261,7 +284,7 @@ class InboundJobReplyHttpIntegrationTest {
     }
 
     @Test
-    void blocksModelFromRequestingResumeAfterTrustedReceipt() throws Exception {
+    void acknowledgesTrustedResumeReceiptWithoutRequestingItAgain() throws Exception {
         start(exchange -> respond(exchange, 200, completion("""
                 {"primaryIntent":"JOB_INTEREST","secondaryIntents":[],"relevant":true,"confidence":0.97,"action":"REQUEST_RESUME","riskLevel":"LOW",
                  "reply":"可以聊聊，您可以先发一份简历。","evidenceKeys":["NEXT_STEP"]}
@@ -271,8 +294,9 @@ class InboundJobReplyHttpIntegrationTest {
                 job(), "我对这个岗位感兴趣", "",
                 new InboundJobReplyService.ConversationRuntime("RESUME_RECEIVED", true, false, false, false));
 
-        assertFalse(result.replyAllowed());
-        assertTrue(result.reason().contains("简历已经收到"));
+        assertTrue(result.replyAllowed());
+        assertEquals("RESUME_SENT", result.category());
+        assertEquals("我已收到简历，具体了解后再回复。", result.content());
     }
 
     @Test
@@ -280,9 +304,21 @@ class InboundJobReplyHttpIntegrationTest {
         start(exchange -> respond(exchange, 429, "{\"error\":{\"message\":\"rate limited\"}}"));
 
         ApiException error = assertThrows(ApiException.class,
-                () -> service(Duration.ofSeconds(2)).decide(job(), "这个岗位还招人吗？"));
+                () -> service(Duration.ofSeconds(2)).decide(job(), "请问这个岗位的薪资是多少？"));
 
-        assertEquals("INBOUND_REPLY_AI_REQUEST_FAILED", error.getCode());
+        assertEquals("INBOUND_REPLY_AI_RATE_LIMITED", error.getCode());
+        assertTrue(error.getMessage().contains("HTTP 429"));
+    }
+
+    @Test
+    void turnsAuthenticationFailureIntoNonRetryableQueueError() throws Exception {
+        start(exchange -> respond(exchange, 401, "{\"error\":{\"message\":\"invalid api key\"}}"));
+
+        ApiException error = assertThrows(ApiException.class,
+                () -> service(Duration.ofSeconds(2)).decide(job(), "请问这个岗位的薪资是多少？"));
+
+        assertEquals("INBOUND_REPLY_AI_AUTH_FAILED", error.getCode());
+        assertTrue(error.getMessage().contains("HTTP 401"));
     }
 
     @Test
@@ -345,9 +381,14 @@ class InboundJobReplyHttpIntegrationTest {
     }
 
     private InboundJobReplyService service(Duration timeout) {
+        return service(timeout, false);
+    }
+
+    private InboundJobReplyService service(Duration timeout, boolean deepSeekEndpoint) {
         int port = server.getAddress().getPort();
         OpenAiProperties properties = new OpenAiProperties() {
             @Override public boolean isConfigured() { return true; }
+            @Override public boolean isDeepSeekEndpoint() { return deepSeekEndpoint; }
         };
         properties.setEnabled(true);
         properties.setApiKey("test-only-key");

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import PageHeader from '../components/PageHeader.vue'
 import AsyncState from '../components/AsyncState.vue'
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ChatDotRound, CircleCheck, Clock, Close, InfoFilled, Refresh } from '@element-plus/icons-vue'
+import { ChatDotRound, CircleCheck, Clock, Close, InfoFilled, Location, Refresh } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, apiErrorMessage, ensureCsrf } from '../services/api'
 import { useNotificationCenter } from '../composables/useNotificationCenter'
@@ -13,6 +13,7 @@ const router = useRouter(); const notify = useNotificationCenter(); const loadin
 const policies = ref<AutoReplyPolicy[]>([]); const devices = ref<BrowserDevice[]>([]); const observations = ref<BrowserUnreadObservation[]>([])
 const dutyReplies = ref<AiDutyEvent[]>([])
 const dutyReviewRequired = ref<AiDutyReviewRequired[]>([])
+const locatingObservationId = ref<string | null>(null)
 const qualitySummary = ref<AiReplyQualitySummary | null>(null)
 const reviewExpanded = ref(true); const reviewRequiredExpanded = ref(true)
 const lastRefreshed = ref<Date>(new Date()); const autoRefreshEnabled = ref(true); const refreshIntervalSec = ref(15)
@@ -39,48 +40,60 @@ const ordered = (items: BrowserUnreadObservation[]) => [...items].sort((a,b) => 
 const unread = computed(() => ordered(observations.value.filter(x => x.unread && x.resolutionStatus === 'UNRESOLVED')))
 const drafts = computed(() => unread.value.filter(x => x.draftQualification === 'KNOWLEDGE_READY').length)
 
-const funnelPct = computed(() => {
-  if (!qualitySummary.value || !qualitySummary.value.evaluated) return { sent: 0, review: 0, silence: 0, failed: 0 }
+const funnelSegments = computed(() => {
   const q = qualitySummary.value
-  return {
-    sent: (q.sent / q.evaluated) * 100,
-    review: (q.reviewRequired / q.evaluated) * 100,
-    silence: (q.expectedSilence / q.evaluated) * 100,
-    failed: (q.failed / q.evaluated) * 100,
-  }
+  if (!q || !q.evaluated) return []
+  const classified = q.sent + q.unconfirmedSends + q.reviewRequired + q.expectedSilence + q.failed
+  const rows = [
+    { key: 'sent', label: '发送成功', value: q.sent },
+    { key: 'unconfirmed', label: '待确认', value: q.unconfirmedSends },
+    { key: 'review', label: '待人工', value: q.reviewRequired },
+    { key: 'silence', label: '正常静默', value: q.expectedSilence },
+    { key: 'failed', label: '失败', value: q.failed },
+    { key: 'other', label: '其他', value: Math.max(0, q.evaluated - classified) },
+  ]
+  return rows.filter(row => row.value > 0).map(row => ({ ...row, pct: (row.value / q.evaluated) * 100 }))
 })
-const confPct = computed(() => qualitySummary.value ? Math.round(qualitySummary.value.averageConfidence * 100) : 0)
-const confDash = computed(() => {
-  const r = 15.9155
-  const pct = confPct.value
-  return `${(pct / 100) * (2 * Math.PI * r)} ${2 * Math.PI * r}`
+const funnelSummary = computed(() => funnelSegments.value.map(seg => `${seg.label} ${seg.value}`).join('，'))
+const confPct = computed(() => {
+  const value = qualitySummary.value?.averageConfidence
+  return typeof value === 'number' && Number.isFinite(value) ? Math.round(value * 100) : 0
 })
-const catMax = computed(() => {
-  if (!qualitySummary.value?.categories) return 1
-  const vals = Object.values(qualitySummary.value.categories)
-  const outVals = qualitySummary.value.outcomes ? Object.values(qualitySummary.value.outcomes) : []
-  return Math.max(...vals, ...outVals, 1)
-})
-
 const qualityLabels: Record<string, string> = {
-  technical: '技术能力',
-  experience: '工作经验',
-  education: '学历背景',
-  communication: '沟通表达',
-  culture_fit: '文化匹配',
-  salary: '薪资期望',
-  stability: '稳定性',
-  job_relevance: '岗位相关性',
-  greeting: '问候沟通',
-  thanks: '感谢回应',
-  considering: '考虑中',
-  resume: '简历意向',
-  approved: '建议回复',
-  rejected: '不建议回复',
-  silence: '建议静默',
-  review: '需人工复核',
-  failed: '处理失败',
+  // 意图类别：与后端 category 枚举（AiDutyReviewRequired.category）保持一致
+  greeting: '问候',
+  social_greeting: '社交问候',
+  social_thanks: '致谢',
+  social_acknowledgement: '礼貌回应',
+  candidate_considering: '考虑中',
+  candidate_decline: '候选人婉拒',
+  conversation_closing: '会话结束',
+  resume_will_send: '将发简历',
+  resume_sent: '已收简历',
+  job_interest: '求职意向',
+  job_status: '在招咨询',
+  location: '地点',
+  salary: '薪资',
+  experience: '经验要求',
+  education: '学历要求',
+  responsibilities: '工作内容',
+  general_job_consultation: '岗位咨询',
+  clarification_required: '需澄清',
+  interview_coordination: '面试协调',
+  human_handoff: '转人工',
+  true_off_topic: '无关话题',
+  unrelated: '非招聘相关',
+  sensitive: '敏感内容',
+  uncertain: '无法判定',
+  other_recruitment: '其他招聘相关',
+  superseded: '已作废',
+  // 结果分布：与后端 outcome 取值保持一致
   sent: '已发送',
+  ready: '待发送',
+  expected_silence: '正常静默',
+  review_required: '待人工复核',
+  shadow: '影子评测',
+  failed: '处理失败',
   other: '其他',
 }
 
@@ -93,9 +106,58 @@ function qualityLabel(key: string): string {
   return `其他（${raw}）`
 }
 
-function showQueueHelp() {
-  ElMessage.info('消息队列已移除，现在您可以直接在左右卡片中查看 AI 值守回顾和待复核会话。')
+// 「需要关注」区：待确认发送结果 + 待 HR 复核会话，两者共同构成行动入口
+const attentionUnconfirmed = computed(() => qualitySummary.value?.unconfirmedSends ?? 0)
+const attentionReview = computed(() => dutyReviewRequired.value.length)
+const attentionTotal = computed(() => attentionUnconfirmed.value + attentionReview.value)
+const reviewRequiredSection = ref<HTMLElement | null>(null)
+const qualityDetailPanel = ref<HTMLDetailsElement | null>(null)
+
+function revealUnconfirmedSends() {
+  if (qualityDetailPanel.value) qualityDetailPanel.value.open = true
 }
+
+function revealReviewRequired() {
+  reviewRequiredExpanded.value = true
+  void nextTick(() => reviewRequiredSection.value?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+}
+
+// 类别分布：把模型的原始细分类别归并为人可读的语义组，组内以词云呈现（字号表达量级）
+const QUALITY_CATEGORY_GROUPS: { key: string; label: string; members: string[] }[] = [
+  { key: 'intent', label: '求职意向', members: ['job_interest', 'resume_will_send', 'resume_sent', 'candidate_considering', 'candidate_decline', 'conversation_closing'] },
+  { key: 'consult', label: '岗位咨询', members: ['salary', 'location', 'benefits', 'work_time', 'experience', 'education', 'responsibilities', 'job_status', 'general_job_consultation', 'clarification_required'] },
+  { key: 'social', label: '社交寒暄', members: ['greeting', 'social_greeting', 'social_thanks', 'social_acknowledgement'] },
+  { key: 'flow', label: '流程协作', members: ['interview_coordination', 'human_handoff', 'superseded'] },
+  { key: 'review', label: '需人工判断', members: ['uncertain', 'true_off_topic', 'unrelated', 'sensitive', 'other_recruitment'] },
+]
+
+const categoryTotal = computed(() => Object.values(qualitySummary.value?.categories ?? {}).reduce((sum, count) => sum + count, 0))
+
+// 类别分布：把模型的细分类别归并为 5 个语义组，避免把 19 个原始类别直接铺给 HR
+const categoryRows = computed(() => {
+  const categories = qualitySummary.value?.categories ?? {}
+  const total = categoryTotal.value || 1
+  const buckets = QUALITY_CATEGORY_GROUPS.map(group => ({ key: group.key, label: group.label, members: group.members, count: 0 }))
+  const fallback = { key: 'fallback', label: '其他', members: [] as string[], count: 0 }
+  for (const [raw, count] of Object.entries(categories)) {
+    const normalized = raw.toLowerCase().replace(/[\s-]+/g, '_')
+    const bucket = buckets.find(group => group.members.includes(normalized)) ?? fallback
+    bucket.count += count
+  }
+  return [...buckets, fallback]
+    .filter(row => row.count > 0)
+    .sort((a, b) => b.count - a.count)
+    .map(row => ({ key: row.key, label: row.label, count: row.count, pct: Math.round((row.count / total) * 100) }))
+})
+
+const outcomeTotal = computed(() => Object.values(qualitySummary.value?.outcomes ?? {}).reduce((sum, count) => sum + count, 0))
+const outcomeRows = computed(() => {
+  const outcomes = qualitySummary.value?.outcomes ?? {}
+  const total = outcomeTotal.value || 1
+  return Object.entries(outcomes)
+    .sort((a, b) => b[1] - a[1])
+    .map(([key, count]) => ({ key, label: qualityLabel(key), count, pct: Math.round((count / total) * 100) }))
+})
 
 async function load(silent = false){
   if (!silent) { loading.value = true; loadError.value = '' }
@@ -151,14 +213,25 @@ function dutyEventState(event:AiDutyEvent){
   if(event.sendStatus==='READY')return {label:'等待页面发送',tone:'warning' as const}
   if(event.sendStatus==='CLAIMED')return {label:'正在发送',tone:'info' as const}
   if(event.taskStatus==='PROCESSING')return {label:'AI 处理中',tone:'info' as const}
+  if(event.sendStatus==='SKIPPED' && event.detail?.startsWith('正常静默：'))return {label:'正常静默',tone:'neutral' as const}
   if(event.sendStatus==='SKIPPED')return {label:'已安全跳过',tone:'neutral' as const}
   return {label:'等待处理',tone:'neutral' as const}
 }
 
 function dutyEventTime(event:AiDutyEvent){return event.completedAt||event.updatedAt}
 
-function openDutyReviewRequired(item:AiDutyReviewRequired){
-  ElMessage.info(`需人工复核: ${item.jobTitle}`)
+async function locateBossConversation(item:AiDutyReviewRequired){
+  if (locatingObservationId.value) return
+  locatingObservationId.value = item.observationId
+  try {
+    await ensureCsrf()
+    const { data } = await api.post<{ reason?: string }>(`/local-connector/observations/${item.observationId}/locate`)
+    ElMessage.success(data?.reason || '定位请求已发送，请稍候')
+  } catch (e) {
+    ElMessage.error(apiErrorMessage(e, 'BOSS 会话定位失败，请确认扩展已配对'))
+  } finally {
+    locatingObservationId.value = null
+  }
 }
 
 function dismissNotice(){noticeDismissed.value=true;if(noticeTimer){clearTimeout(noticeTimer);noticeTimer=null}}
@@ -207,10 +280,7 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
 <template>
   <div class="page-shell duty-page">
     <PageHeader>
-      <div>
-        <h1>今天的招聘值守</h1>
-        <p>开启后立即处理符合安全条件的未读消息，并持续监测新来信。<el-button :icon="InfoFilled" size="small" link @click="showQueueHelp">查看说明</el-button></p>
-      </div>
+      <div></div>
     </PageHeader>
 
     <AsyncState v-if="loading" state="loading" :rows="8" aria-label="正在加载今日值守" />
@@ -248,67 +318,68 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
             <el-icon :size="13"><Clock /></el-icon>
             {{ refreshAgo }}
           </span>
-          <el-button :icon="Refresh" size="small" :loading="loading" @click="load()">刷新</el-button>
         </div>
       </section>
 
       <section v-if="qualitySummary" class="quality-strip" aria-labelledby="quality-strip-title">
-        <div class="quality-strip__intro">
-          <span>过去 24 小时</span>
+        <div class="quality-strip__head">
           <h2 id="quality-strip-title">AI 回复质量</h2>
+          <span class="quality-strip__period">过去 24 小时</span>
+          <span v-if="qualitySummary.shadowEvaluated" class="quality-strip__shadow">影子评测 {{ qualitySummary.shadowEvaluated }}</span>
         </div>
-        <div class="quality-strip__body">
-          <div class="quality-funnel" role="img" :aria-label="`发送 ${qualitySummary.sent}，待人工 ${qualitySummary.reviewRequired}，静默 ${qualitySummary.expectedSilence}，失败 ${qualitySummary.failed}`">
-            <div class="quality-funnel__track">
-              <span class="quality-funnel__seg quality-funnel__seg--sent" :style="{ width: funnelPct.sent + '%' }" aria-hidden="true"></span>
-              <span class="quality-funnel__seg quality-funnel__seg--review" :style="{ width: funnelPct.review + '%' }" aria-hidden="true"></span>
-              <span class="quality-funnel__seg quality-funnel__seg--silence" :style="{ width: funnelPct.silence + '%' }" aria-hidden="true"></span>
-              <span class="quality-funnel__seg quality-funnel__seg--failed" :style="{ width: funnelPct.failed + '%' }" aria-hidden="true"></span>
-            </div>
-            <div class="quality-funnel__legend">
-              <span class="quality-funnel__label quality-funnel__label--sent">发送成功 {{ qualitySummary.sent }}</span>
-              <span class="quality-funnel__label quality-funnel__label--review">待人工 {{ qualitySummary.reviewRequired }}</span>
-              <span class="quality-funnel__label quality-funnel__label--silence">正常静默 {{ qualitySummary.expectedSilence }}</span>
-              <span v-if="qualitySummary.failed" class="quality-funnel__label quality-funnel__label--failed">失败 {{ qualitySummary.failed }}</span>
-            </div>
-          </div>
-          <div class="quality-strip__stats">
-            <div class="quality-stat"><dt>已评估</dt><dd>{{ qualitySummary.evaluated }}</dd></div>
-            <div class="quality-stat"><dt>建议回复</dt><dd>{{ qualitySummary.replyApproved }}</dd></div>
-            <div class="quality-confidence" role="meter" :aria-valuenow="confPct" aria-valuemin="0" aria-valuemax="100" aria-label="平均置信度">
-              <div class="quality-confidence__visual">
-                <svg viewBox="0 0 36 36" class="quality-confidence__ring">
-                  <circle cx="18" cy="18" r="15.9155" fill="none" stroke="var(--border-subtle)" stroke-width="3"/>
-                  <circle cx="18" cy="18" r="15.9155" fill="none" :stroke="confPct >= 80 ? 'var(--success)' : confPct >= 60 ? 'var(--warning)' : 'var(--danger)'" stroke-width="3" :stroke-dasharray="confDash" stroke-linecap="round" transform="rotate(-90 18 18)"/>
-                </svg>
-                <span class="quality-confidence__value">{{ confPct }}%</span>
-              </div>
-              <span class="quality-confidence__label">置信度</span>
-            </div>
+        <div class="quality-metrics">
+          <span class="quality-metric"><b>{{ qualitySummary.evaluated ?? 0 }}</b>24h 决策</span>
+          <span class="quality-metric"><b>{{ qualitySummary.sent ?? 0 }}</b>已发送</span>
+          <span class="quality-metric"><b>{{ qualitySummary.reviewRequired ?? 0 }}</b>待人工</span>
+          <span v-if="qualitySummary.unconfirmedSends" class="quality-metric quality-metric--alert"><b>{{ qualitySummary.unconfirmedSends }}</b>待确认</span>
+          <span v-if="qualitySummary.failed" class="quality-metric quality-metric--alert"><b>{{ qualitySummary.failed }}</b>失败</span>
+          <span class="quality-metric"><b>{{ confPct }}%</b>置信度</span>
+        </div>
+        <div v-if="funnelSegments.length" class="quality-funnel" role="img" :aria-label="funnelSummary">
+          <div class="quality-funnel__track">
+            <span
+              v-for="seg in funnelSegments"
+              :key="seg.key"
+              class="quality-funnel__seg"
+              :class="`quality-funnel__seg--${seg.key}`"
+              :style="{ width: seg.pct + '%' }"
+              :title="`${seg.label} ${seg.value}`"
+              aria-hidden="true"
+            ></span>
           </div>
         </div>
-        <span v-if="qualitySummary.shadowEvaluated" class="quality-strip__shadow">影子评测 {{ qualitySummary.shadowEvaluated }}</span>
-        <details v-if="Object.keys(qualitySummary.categories || {}).length || Object.keys(qualitySummary.outcomes || {}).length" class="quality-strip__detail">
-          <summary class="quality-strip__detail-toggle">分类与结果分布</summary>
+        <p v-else class="quality-strip__empty">近 24 小时暂无 AI 决策记录</p>
+        <div id="attention-panel" class="quality-strip__foot">
+          <span v-if="attentionTotal" class="quality-strip__attention">需要关注 <b>{{ attentionTotal }}</b></span>
+          <span v-else class="quality-strip__clear">近 24 小时无需人工介入</span>
+          <button v-if="attentionUnconfirmed" type="button" class="quality-strip__action" @click="revealUnconfirmedSends">发送结果未确认 {{ attentionUnconfirmed }}</button>
+          <button v-if="attentionReview" type="button" class="quality-strip__action" @click="revealReviewRequired">待复核会话 {{ attentionReview }}</button>
+        </div>
+        <details ref="qualityDetailPanel" v-if="categoryRows.length || outcomeRows.length" class="quality-strip__detail">
+          <summary class="quality-strip__detail-toggle">分类与结果明细</summary>
           <div class="quality-detail-grid">
-            <div v-if="Object.keys(qualitySummary.categories).length" class="quality-detail-col">
-              <h3>类别分布</h3>
-              <div v-for="(count, cat) in qualitySummary.categories" :key="cat" class="quality-detail-row">
-                <span class="quality-detail-row__name" :title="cat">{{ qualityLabel(cat) }}</span>
-                <div class="quality-detail-row__track"><div class="quality-detail-row__fill" :style="{ width: (count / catMax * 100) + '%' }"></div></div>
-                <strong>{{ count }}</strong>
+            <div v-if="categoryRows.length" class="quality-detail-col">
+              <h3>类别分布 · 共 {{ categoryTotal }} 条</h3>
+              <div v-for="row in categoryRows" :key="row.key" class="quality-detail-row">
+                <span class="quality-detail-row__name">{{ row.label }}</span>
+                <span class="quality-detail-row__track"><i :style="{ width: row.pct + '%' }"></i></span>
+                <b class="quality-detail-row__num">{{ row.count }}</b>
               </div>
             </div>
-            <div v-if="Object.keys(qualitySummary.outcomes).length" class="quality-detail-col">
-              <h3>结果分布</h3>
-              <div v-for="(count, outcome) in qualitySummary.outcomes" :key="outcome" class="quality-detail-row">
-                <span class="quality-detail-row__name" :title="outcome">{{ qualityLabel(outcome) }}</span>
-                <div class="quality-detail-row__track"><div class="quality-detail-row__fill quality-detail-row__fill--outcome" :style="{ width: (count / catMax * 100) + '%' }"></div></div>
-                <strong>{{ count }}</strong>
+            <div v-if="outcomeRows.length" class="quality-detail-col">
+              <h3>结果分布 · 共 {{ outcomeTotal }} 条</h3>
+              <div v-for="row in outcomeRows" :key="row.key" class="quality-detail-row">
+                <span class="quality-detail-row__name">{{ row.label }}</span>
+                <span class="quality-detail-row__track"><i :style="{ width: row.pct + '%' }"></i></span>
+                <b class="quality-detail-row__num">{{ row.count }}</b>
               </div>
             </div>
           </div>
         </details>
+      </section>
+      <section v-else-if="loading" class="quality-strip quality-strip--loading" aria-hidden="true">
+        <span class="quality-strip__skeleton-line"></span>
+        <span class="quality-strip__skeleton-bar"></span>
       </section>
 
       <!-- ── 通知条（可关闭 + 15s 自动消失） ── -->
@@ -332,10 +403,10 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
                 aria-label="展开/折叠 AI 值守回顾"
               ><span class="duty-review__eyebrow">最近 7 天</span></button>
               <h2 id="duty-review-title">AI 值守回顾</h2>
-              <p>仅展示已收到浏览器成功回执的回复，不包含候选人原始消息。</p>
+              <p>展示最近 7 天 AI 处理过的全部消息，包括成功、静默、失败和重试。</p>
             </div>
             <div class="duty-review__header-right">
-              <span class="duty-review__count"><b>{{ dutyReplies.length }}</b> 次已回复</span>
+              <span class="duty-review__count"><b>{{ dutyReplies.length }}</b> 条已处理</span>
             </div>
           </header>
           <div v-show="reviewExpanded" class="duty-review__body">
@@ -351,14 +422,16 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
                     <time :datetime="dutyEventTime(reply)">{{ new Date(dutyEventTime(reply)).toLocaleTimeString('zh-CN', { hour:'2-digit', minute:'2-digit' }) }}</time>
                   </div>
                   <small>{{ reply.accountName }} · {{ reply.category || '未分类' }}</small>
-                  <p v-if="reply.sendStatus === 'SUCCEEDED' && reply.replyContent">{{ reply.replyContent }}</p>
+                  <p v-if="reply.messageText" class="duty-reply-item__incoming">候选人：{{ reply.messageText }}</p>
+                  <p class="duty-reply-item__reason">{{ dutyEventState(reply).label }} · {{ reply.detail || '暂无处理原因' }}</p>
+                  <p v-if="reply.replyContent" class="duty-reply-item__outgoing">回复：{{ reply.replyContent }}</p>
                 </div>
               </button>
             </div>
           </div>
         </section>
 
-        <section class="card-panel duty-review duty-review--required" aria-labelledby="duty-review-required-title">
+        <section ref="reviewRequiredSection" class="card-panel duty-review duty-review--required" aria-labelledby="duty-review-required-title">
           <header class="duty-review__header">
             <div>
               <button
@@ -368,29 +441,37 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
                 aria-label="展开/折叠已读未回复"
               ><span class="duty-review__eyebrow">过去 24 小时</span></button>
               <h2 id="duty-review-required-title">已读未回复 · 待 HR 复核</h2>
-              <p>收录面试时间协商、无关或敏感内容、含义不清及事实校验未通过的会话。</p>
+              <p>收录收到简历、面试协商、无关或敏感内容、含义不清及事实校验未通过的会话。</p>
             </div>
             <div class="duty-review__header-right">
               <span class="duty-review__count duty-review__count--warning"><b>{{ dutyReviewRequired.length }}</b> 条待复核</span>
             </div>
           </header>
           <div v-show="reviewRequiredExpanded" class="duty-review__body">
-            <AsyncState v-if="!dutyReviewRequired.length" state="empty" embedded title="暂无已读未回复会话" message="AI 安全跳过的无关消息会出现在这里。">
+            <AsyncState v-if="!dutyReviewRequired.length" state="empty" embedded title="暂无待跟进会话" message="收到简历或 AI 安全跳过的会话会出现在这里。">
               <template #icon><el-icon><CircleCheck /></el-icon></template>
             </AsyncState>
             <div v-else ref="dutyReviewRequiredListRef" class="duty-review__vertical-list">
-              <button v-for="item in dutyReviewRequired" :key="item.id" class="duty-reply-item duty-reply-item--required" type="button" @click="openDutyReviewRequired(item)">
+              <article v-for="item in dutyReviewRequired" :key="item.id" class="duty-reply-item duty-reply-item--required">
                 <span class="duty-reply-item__status followup"></span>
                 <div class="duty-reply-item__content">
                   <div class="duty-reply-item__header">
-                    <strong>匿名求职者</strong>
+                    <strong>{{ item.candidateName || `匿名求职者 ${item.anonymousKey}` }}</strong>
                     <time :datetime="item.decidedAt">{{ new Date(item.decidedAt).toLocaleTimeString('zh-CN', { hour:'2-digit', minute:'2-digit' }) }}</time>
                   </div>
                   <small>{{ item.jobTitle }} · {{ item.accountName }}</small>
+                  <span v-if="item.resumeReceived" class="duty-reply-item__resume-tag">已收到简历<span v-if="item.resumePipelineStatus"> · {{ item.resumePipelineStatus === 'SUCCEEDED' ? '已入库' : item.resumePipelineStatus === 'FAILED' ? '分析失败' : '待处理' }}</span></span>
+                  <p v-if="item.incomingMessage" class="duty-reply-item__incoming">候选人：{{ item.incomingMessage }}</p>
                   <p>{{ item.reason }}</p>
-                  <em class="duty-reply-item__note">AI 未回复，需人工判断</em>
+                  <div class="duty-reply-item__actions">
+                    <em class="duty-reply-item__note">{{ item.resumeReceived ? '简历会话，待 HR 跟进' : 'AI 未回复，需人工判断' }}</em>
+                    <button class="duty-reply-item__locate" type="button" :disabled="locatingObservationId === item.observationId" @click.stop="locateBossConversation(item)" :aria-label="`定位 ${item.candidateName || '该候选人'} 的 BOSS 会话`">
+                      <el-icon><Location /></el-icon>
+                      {{ locatingObservationId === item.observationId ? '定位中…' : '定位 BOSS 会话' }}
+                    </button>
+                  </div>
                 </div>
-              </button>
+              </article>
             </div>
           </div>
         </section>
@@ -560,72 +641,87 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
 .refresh-indicator--stale { color: var(--warning); }
 .dashboard-bar--active .refresh-indicator { color: rgba(255,255,255,.5); }
 
+/* ═══ AI 回复质量（摘要数字 + 漏斗 + 明细表） ═══
+   字号仅 4 档：20 / 13 / 12 / 11
+   间距仅 4 档：4 / 8 / 12 / 16
+   文字色仅 3 种：正文、次要、危险（折叠开关用主色） */
 .quality-strip {
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 12px 20px;
+  flex-direction: column;
+  gap: 12px;
   margin-bottom: 16px;
-  padding: 14px 18px;
+  padding: 16px 18px;
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-card);
-  background: linear-gradient(110deg, color-mix(in srgb, var(--surface-teal) 60%, white), rgba(255,255,255,.78));
+  border-radius: var(--radius-panel);
+  background: var(--surface);
   box-shadow: var(--shadow-sm);
 }
-.quality-strip__intro { flex: 0 0 auto; min-width: 112px; }
-.quality-strip__intro span { color: var(--primary); font-size: 10px; font-weight: 700; letter-spacing: .08em; }
-.quality-strip__intro h2 { margin: 2px 0 0; font-size: 15px; }
-.quality-strip__body { display: flex; flex: 1; min-width: 0; gap: 18px; align-items: center; }
-.quality-strip__stats { display: flex; gap: 16px; align-items: center; flex-shrink: 0; }
-.quality-stat { padding: 0 12px; border-left: 1px solid var(--border-subtle); }
-.quality-stat:first-child { border-left: 0; padding-left: 0; }
-.quality-stat dt { color: var(--text-tertiary); font-size: 10px; }
-.quality-stat dd { margin: 3px 0 0; color: var(--text-primary); font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.quality-strip__shadow { flex: 0 0 auto; padding: 5px 9px; border-radius: var(--radius-pill); background: var(--surface-amber); color: var(--warning); font-size: 11px; font-weight: 600; }
+.quality-strip__head { display: flex; align-items: baseline; gap: 8px; }
+.quality-strip__head h2 { margin: 0; color: var(--text-primary); font-size: 13px; font-weight: 600; }
+.quality-strip__period { color: var(--text-secondary); font-size: 11px; }
+.quality-strip__shadow { margin-left: auto; color: var(--text-secondary); font-size: 11px; }
 
-.quality-funnel { flex: 1; min-width: 0; }
-.quality-funnel__track { display: flex; height: 8px; padding: 2px; box-sizing: border-box; border: 1px solid var(--border-subtle); border-radius: var(--radius-pill); overflow: hidden; background: color-mix(in srgb, var(--surface-muted) 72%, transparent); box-shadow: inset 0 1px 2px rgba(15, 23, 42, .06); }
+/* 指标胶囊：与顶部仪表条的 .metric-pill 同规范 */
+.quality-metrics { display: flex; flex-wrap: wrap; gap: 8px; }
+.quality-metric { display: inline-flex; align-items: baseline; gap: 4px; min-height: 32px; padding: 5px 13px; border: 1px solid var(--border-subtle); border-radius: var(--radius-pill); background: var(--surface-soft); color: var(--text-secondary); font-size: 12px; }
+.quality-metric b { color: var(--text-primary); font-size: 20px; font-weight: 700; line-height: 1; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.quality-metric--alert { border-color: var(--border-rose); background: var(--surface-rose); }
+.quality-metric--alert b { color: var(--danger); }
+
+.quality-funnel { min-width: 0; }
+.quality-funnel__track { display: flex; height: 8px; padding: 2px; box-sizing: border-box; border: 1px solid var(--border-subtle); border-radius: var(--radius-pill); overflow: hidden; background: var(--surface-muted); }
 .quality-funnel__seg { display: block; flex: 0 0 auto; min-width: 0; height: 100%; transition: width .4s cubic-bezier(.16,1,.3,1); }
 .quality-funnel__seg + .quality-funnel__seg { box-shadow: inset 1px 0 rgba(255,255,255,.5); }
-.quality-funnel__seg--sent { background: color-mix(in srgb, var(--success) 84%, white); }
-.quality-funnel__seg--review { background: color-mix(in srgb, var(--warning) 84%, white); }
-.quality-funnel__seg--silence { background: color-mix(in srgb, var(--text-tertiary) 60%, white); }
-.quality-funnel__seg--failed { background: color-mix(in srgb, var(--danger) 84%, white); }
-.quality-funnel__legend { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 6px; }
-.quality-funnel__label { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-secondary); }
-.quality-funnel__label::before { content: ''; width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 12%, transparent); }
-.quality-funnel__label--sent::before { background: var(--success); }
-.quality-funnel__label--review::before { background: var(--warning); }
-.quality-funnel__label--silence::before { background: var(--text-tertiary); opacity: .55; }
-.quality-funnel__label--failed::before { background: var(--danger); }
+.quality-funnel__seg--sent { background: var(--success); }
+.quality-funnel__seg--unconfirmed { background: var(--danger); }
+.quality-funnel__seg--review { background: var(--warning); }
+.quality-funnel__seg--silence { background: var(--text-tertiary); }
+.quality-funnel__seg--failed { background: var(--danger); }
+.quality-funnel__seg--other { background: var(--border-strong); }
+.quality-strip__empty { margin: 0; color: var(--text-secondary); font-size: 12px; }
 
-.quality-confidence { display: flex; flex: 0 0 68px; flex-direction: column; align-items: center; gap: 3px; min-height: 72px; }
-.quality-confidence__visual { position: relative; width: 48px; height: 48px; display: grid; place-items: center; }
-.quality-confidence__ring { width: 48px; height: 48px; }
-.quality-confidence__value { position: absolute; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text-primary); }
-.quality-confidence__label { position: static; font-size: 10px; line-height: 1; color: var(--text-tertiary); white-space: nowrap; }
+/* 关注行：一行文字 + 可点胶囊（同时作为 /candidates 落点 #attention-panel） */
+.quality-strip__foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.quality-strip__attention { color: var(--text-secondary); font-size: 12px; }
+.quality-strip__attention b { margin-left: 4px; color: var(--danger); font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.quality-strip__clear { color: var(--text-secondary); font-size: 12px; }
+.quality-strip__action { padding: 4px 12px; border: 1px solid var(--border-subtle); border-radius: var(--radius-pill); background: var(--surface); color: var(--text-primary); font-size: 12px; cursor: pointer; transition: background var(--transition-fast), border-color var(--transition-fast); }
+.quality-strip__action:hover { border-color: var(--border); background: var(--surface-row); }
+.quality-strip__action:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; }
 
-.quality-strip__detail { flex-basis: 100%; margin-top: 4px; }
-.quality-strip__detail-toggle { display: inline-flex; align-items: center; gap: 4px; padding: 4px 0; border: 0; background: none; color: var(--primary); font-size: 12px; font-weight: 600; cursor: pointer; list-style: none; }
-.quality-strip__detail-toggle::before { content: ''; display: inline-block; width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid var(--primary); transition: transform .2s ease; }
-.quality-strip__detail[open] .quality-strip__detail-toggle::before { transform: rotate(180deg); }
-.quality-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-top: 10px; padding: 12px 14px; border-radius: var(--radius-control); background: var(--surface-soft); }
-.quality-detail-col h3 { margin: 0 0 8px; font-size: 12px; color: var(--text-secondary); }
-.quality-detail-row { display: grid; grid-template-columns: 96px 1fr 32px; gap: 6px; align-items: center; margin-bottom: 5px; }
-.quality-detail-row__name { font-size: 11px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.quality-detail-row__track { height: 6px; border-radius: 3px; background: var(--border-subtle); overflow: hidden; }
-.quality-detail-row__fill { height: 100%; border-radius: 3px; background: var(--success); transition: width .4s cubic-bezier(.16,1,.3,1); }
-.quality-detail-row__fill--outcome { background: var(--primary); }
-.quality-detail-row strong { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text-primary); text-align: right; }
-
-@media (max-width: 980px) {
-  .quality-strip__body { flex-direction: column; align-items: stretch; }
-  .quality-strip__stats { justify-content: flex-start; }
+/* ── 加载骨架：形状与最终布局一致，避免数据到达时跳动 ── */
+.quality-strip--loading { gap: 12px; }
+.quality-strip__skeleton-line,
+.quality-strip__skeleton-bar {
+  display: block;
+  border-radius: var(--radius-control);
+  background: linear-gradient(90deg, var(--surface-muted) 25%, var(--surface-soft) 50%, var(--surface-muted) 75%);
+  background-size: 200% 100%;
+  animation: quality-skeleton 1.4s ease-in-out infinite;
 }
+.quality-strip__skeleton-line { flex: 0 0 auto; width: 112px; height: 34px; }
+.quality-strip__skeleton-bar { flex: 1; min-width: 0; height: 46px; }
+@keyframes quality-skeleton {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+.quality-strip__detail { margin-top: 0; }
+.quality-strip__detail-toggle { display: inline-flex; align-items: center; gap: 4px; padding: 4px 0; border: 0; background: none; color: var(--primary); font-size: 12px; cursor: pointer; list-style: none; }
+.quality-strip__detail-toggle::before { content: ''; display: inline-block; width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid currentColor; transition: transform .2s ease; }
+.quality-strip__detail[open] .quality-strip__detail-toggle::before { transform: rotate(180deg); }
+.quality-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-top: 8px; padding: 12px 14px; border-radius: var(--radius-control); background: var(--surface-soft); }
+.quality-detail-col h3 { margin: 0 0 8px; color: var(--text-secondary); font-size: 12px; font-weight: 600; }
+.quality-detail-row { display: grid; grid-template-columns: minmax(0, 88px) minmax(0, 1fr) 32px; gap: 8px; align-items: center; margin-bottom: 4px; }
+.quality-detail-row__name { overflow: hidden; color: var(--text-secondary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.quality-detail-row__track { height: 6px; border-radius: 3px; background: var(--border-subtle); overflow: hidden; }
+.quality-detail-row__track i { display: block; height: 100%; border-radius: 3px; background: var(--primary); }
+.quality-detail-row__num { color: var(--text-primary); font-size: 12px; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
+
 @media (max-width: 560px) {
-  .quality-strip__stats { flex-wrap: wrap; gap: 10px; }
-  .quality-stat { border-left: 0; padding: 0; }
+  .quality-strip { gap: 8px; padding: 12px; }
   .quality-detail-grid { grid-template-columns: 1fr; }
+  .quality-strip__shadow { margin-left: 0; }
 }
 
 /* ── 通知条 ── */
@@ -670,10 +766,10 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
 }
 .notice-bar__close:hover { background: var(--surface-muted); color: var(--text-primary); }
 
-.duty-review { margin-bottom:18px; padding:0; overflow:hidden; }
-.duty-review__header { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:18px 20px; border-bottom:2px solid transparent; border-image:linear-gradient(90deg, transparent, var(--border-subtle) 15%, var(--border-subtle) 85%, transparent) 1; background:linear-gradient(180deg, rgba(255,255,255,.64), transparent); }
-.duty-review__header h2 { margin:2px 0 0; }
-.duty-review__header p { margin:4px 0 0; color:var(--text-secondary); font-size:12px; }
+.duty-review { margin-bottom:14px; padding:0; overflow:hidden; }
+.duty-review__header { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:14px 18px; border-bottom:2px solid transparent; border-image:linear-gradient(90deg, transparent, var(--border-subtle) 15%, var(--border-subtle) 85%, transparent) 1; background:linear-gradient(180deg, rgba(255,255,255,.64), transparent); }
+.duty-review__header h2 { margin:0; font-size:15px; }
+.duty-review__header p { margin:3px 0 0; color:var(--text-secondary); font-size:12px; }
 .duty-review__eyebrow { color:var(--primary); font-size:11px; font-weight:700; }
 .duty-review__header-right { display:flex; align-items:center; gap:10px; flex-shrink:0; }
 .duty-review__count { flex:0 0 auto; padding:6px 10px; border-radius:var(--radius-pill); background:var(--surface-teal); color:var(--text-secondary); font-size:12px; }
@@ -892,8 +988,8 @@ h2 { margin: 0; font-size: 16px; }
 .duty-reply-item {
   display: flex;
   align-items: flex-start;
-  gap: 14px;
-  padding: 20px 24px;
+  gap: 12px;
+  padding: 12px 20px;
   border: 0;
   background: transparent;
   text-align: left;
@@ -916,7 +1012,7 @@ h2 { margin: 0; font-size: 16px; }
 
 .duty-reply-item:hover {
   background: rgba(255, 255, 255, 0.4);
-  padding-left: 28px;
+  padding-left: 24px;
 }
 
 .duty-reply-item__status {
@@ -944,7 +1040,7 @@ h2 { margin: 0; font-size: 16px; }
   justify-content: space-between;
   align-items: baseline;
   gap: 8px;
-  margin-bottom: 6px;
+  margin-bottom: 3px;
 }
 
 .duty-reply-item__header strong {
@@ -966,28 +1062,64 @@ h2 { margin: 0; font-size: 16px; }
   display: block;
   font-size: 12px;
   color: var(--text-secondary);
-  margin-bottom: 10px;
+  margin-bottom: 4px;
   opacity: 0.8;
 }
 
 .duty-reply-item__content p {
-  font-size: 14px;
+  font-size: 13px;
   color: var(--text-primary);
-  line-height: 1.6;
+  line-height: 1.5;
   margin: 0;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
   -webkit-box-orient: vertical;
   overflow: hidden;
   opacity: 0.9;
+}
+
+.duty-reply-item__incoming {
+  color: var(--text-secondary) !important;
+}
+
+.duty-reply-item--required {
+  cursor: default;
+}
+
+.duty-reply-item--required:hover {
+  padding-left: 20px;
+}
+
+.duty-reply-item__resume-tag {
+  display: inline-flex;
+  align-items: center;
+  margin: 3px 0 4px;
+  padding: 2px 7px;
+  border: 1px solid color-mix(in srgb, var(--success) 34%, transparent);
+  border-radius: 999px;
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 9%, transparent);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.duty-reply-item__reason {
+  margin-top: 6px !important;
+  color: var(--text-tertiary) !important;
+  font-size: 12px !important;
+}
+
+.duty-reply-item__outgoing {
+  margin-top: 6px !important;
+  color: var(--primary) !important;
 }
 
 .duty-reply-item__note {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-top: 10px;
+  margin-top: 6px;
   padding: 2px 8px;
   background: var(--surface-amber);
   border-radius: 4px;
@@ -997,6 +1129,45 @@ h2 { margin: 0; font-size: 16px; }
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.02em;
+}
+
+.duty-reply-item__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.duty-reply-item__actions .duty-reply-item__note {
+  margin-top: 0;
+}
+
+.duty-reply-item__locate {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 5px 9px;
+  border: 1px solid color-mix(in srgb, var(--primary) 28%, var(--border));
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), opacity var(--transition-fast);
+}
+
+.duty-reply-item__locate:hover:not(:disabled) {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 8%, var(--surface));
+}
+
+.duty-reply-item__locate:disabled {
+  cursor: wait;
+  opacity: .6;
 }
 
 /* 渐变装饰 */
@@ -1027,9 +1198,9 @@ h2 { margin: 0; font-size: 16px; }
   }
 }
 
-.duty-review__header { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:18px 20px; border-bottom:2px solid transparent; border-image:linear-gradient(90deg, transparent, var(--border-subtle) 15%, var(--border-subtle) 85%, transparent) 1; background:linear-gradient(180deg, rgba(255,255,255,.64), transparent); }
-.duty-review__header h2 { margin:2px 0 0; }
-.duty-review__header p { margin:4px 0 0; color:var(--text-secondary); font-size:12px; }
+.duty-review__header { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:14px 18px; border-bottom:2px solid transparent; border-image:linear-gradient(90deg, transparent, var(--border-subtle) 15%, var(--border-subtle) 85%, transparent) 1; background:linear-gradient(180deg, rgba(255,255,255,.64), transparent); }
+.duty-review__header h2 { margin:0; font-size:15px; }
+.duty-review__header p { margin:3px 0 0; color:var(--text-secondary); font-size:12px; }
 .duty-review__eyebrow { color:var(--primary); font-size:11px; font-weight:700; }
 .duty-review__header-right { display:flex; align-items:center; gap:10px; flex-shrink:0; }
 .duty-review__count { flex:0 0 auto; padding:6px 10px; border-radius:var(--radius-pill); background:var(--surface-teal); color:var(--text-secondary); font-size:12px; }
@@ -1281,6 +1452,16 @@ h2 { margin: 0; font-size: 16px; }
 /* ═══════════════════════════════════════
    暗色模式适配
    ═══════════════════════════════════════ */
+:root[data-theme="dark"] .quality-metric { background: var(--surface-muted); }
+:root[data-theme="dark"] .quality-metric--alert { background: color-mix(in srgb, var(--surface-rose) 82%, var(--surface-raised)); }
+:root[data-theme="dark"] .quality-strip__action { background: var(--surface-raised); }
+:root[data-theme="dark"] .quality-strip__action:hover { background: var(--surface-row); }
+:root[data-theme="dark"] .quality-funnel__seg--sent { background: color-mix(in srgb, var(--success) 72%, var(--surface-page)); }
+:root[data-theme="dark"] .quality-funnel__seg--unconfirmed { background: color-mix(in srgb, var(--danger) 68%, var(--surface-page)); }
+:root[data-theme="dark"] .quality-funnel__seg--review { background: color-mix(in srgb, var(--warning) 72%, var(--surface-page)); }
+:root[data-theme="dark"] .quality-funnel__seg--silence { background: color-mix(in srgb, var(--text-tertiary) 58%, var(--surface-page)); }
+:root[data-theme="dark"] .quality-funnel__seg--failed { background: color-mix(in srgb, var(--danger) 72%, var(--surface-page)); }
+:root[data-theme="dark"] .quality-funnel__seg--other { background: color-mix(in srgb, var(--border-strong) 58%, var(--surface-page)); }
 :root[data-theme="dark"] .dashboard-bar:not(.dashboard-bar--active) {
   background: linear-gradient(135deg, rgba(13,148,136,.08), rgba(13,148,136,.04));
 }
@@ -1357,6 +1538,10 @@ h2 { margin: 0; font-size: 16px; }
   .metric-pill b { animation: none; }
   .dashboard-bar--active { transition: none; animation: none; }
   .detail-empty__icon { animation: none; }
+  .quality-strip__skeleton-line,
+  .quality-strip__skeleton-bar { animation: none; }
+  .quality-strip__action { transition: none; }
+  .quality-funnel__seg { transition: none; }
   .detail-fade-enter-active,
   .detail-fade-leave-active { transition: none; }
 }

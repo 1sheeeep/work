@@ -177,4 +177,35 @@ describe('DashboardView', () => {
     expect(wrapper.text()).toContain('AI 判定该消息与当前岗位无关')
     expect(wrapper.text()).toContain('匿名求职者')
   })
+
+  it('renders the AI reply quality card with a readable legend and an actionable attention panel', async () => {
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [{ id:'r1', observationId:'o1', anonymousKey:'needhr01', accountName:'主招聘账号', jobTitle:'短视频剪辑师', category:'GENERAL_JOB_CONSULTATION', reason:'意图识别置信度不足，已转人工', decidedAt:'2026-09-12T15:00:00Z' }] })
+      .mockResolvedValueOnce({ data: {
+        evaluated: 64, replyApproved: 21, sent: 41, expectedSilence: 12,
+        reviewRequired: 5, shadowEvaluated: 3, failed: 1, unconfirmedSends: 5,
+        averageConfidence: 0.82,
+        categories: { SOCIAL_GREETING: 3, JOB_INTEREST: 2 },
+        outcomes: { EXPECTED_SILENCE: 2, REVIEW_REQUIRED: 4 },
+        generatedAt: '2026-09-12T15:00:00Z',
+      } })
+
+    const wrapper = mount(DashboardView)
+    await flushPromises()
+
+    expect(wrapper.find('#attention-panel').exists()).toBe(true)
+    expect(wrapper.text()).toContain('AI 回复质量')
+    expect(wrapper.text()).toContain('24h 决策')
+    expect(wrapper.text()).toContain('发送结果未确认')
+    expect(wrapper.text()).toContain('待复核会话')
+    expect(wrapper.find('.quality-funnel__seg--unconfirmed').exists()).toBe(true)
+    expect(wrapper.text()).toContain('社交寒暄')
+    expect(wrapper.text()).toContain('求职意向')
+    expect(wrapper.text()).toContain('正常静默')
+    expect(wrapper.text()).not.toContain('其他（SOCIAL_GREETING）')
+  })
 })

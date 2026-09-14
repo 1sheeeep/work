@@ -2,7 +2,7 @@
 import PageHeader from '../components/PageHeader.vue'
 import AsyncState from '../components/AsyncState.vue'
 import StatusBadge from '../components/StatusBadge.vue'
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import { Connection, InfoFilled, MoreFilled, Plus, Refresh } from '@element-plus/icons-vue'
@@ -218,16 +218,6 @@ function showConnectionHelp() {
   })
 }
 
-function showStatusHelp() {
-  ElNotification({
-    title: '状态说明',
-    message: '<b>桥接在线</b>：浏览器已成功连接并运行中<br/><b>桥接暂停</b>：浏览器已暂停，需手动恢复<br/><b>桥接离线</b>：浏览器未连接或已断开<br/><br/>采集健康状态反映沟通页数据同步情况。',
-    duration: 5000,
-    type: 'info',
-    dangerouslyUseHTMLString: true,
-  })
-}
-
 function showFilterHelp() {
   ElNotification({
     title: '筛选说明',
@@ -243,13 +233,16 @@ function formatDate(value?: string) {
 }
 
 onMounted(loadData)
+onUnmounted(() => { document.removeEventListener('visibilitychange', onVisChange) })
+function onVisChange() { if (document.visibilityState === 'visible') void loadData() }
+document.addEventListener('visibilitychange', onVisChange)
 </script>
 
 <template>
   <div class="page-shell accounts-page">
     <PageHeader>
-      <div><h1>多账号运营中心</h1><p>一眼查看账号的连接、采集与待恢复状态。<el-button :icon="InfoFilled" size="small" type="text" @click="showStatusHelp">查看说明</el-button></p></div>
-      <div class="heading-actions"><el-button :icon="Refresh" :loading="loading" @click="loadData">刷新</el-button><el-button v-if="canManage" type="primary" :icon="Plus" @click="openCreate">新增账号</el-button></div>
+      <div></div>
+      <div class="heading-actions"><el-button v-if="canManage" type="primary" :icon="Plus" @click="openCreate">新增账号</el-button></div>
     </PageHeader>
 
     <AsyncState v-if="loading" state="loading" aria-label="正在加载招聘账号" />
@@ -282,16 +275,16 @@ onMounted(loadData)
       <section v-else-if="filteredAccounts.length" class="account-grid" :class="{ 'account-grid--single': filteredAccounts.length === 1 }">
         <article v-for="account in filteredAccounts" :key="account.id" class="entity-card account-card" aria-label="招聘账号运行状态">
           <header><span class="account-avatar">{{ account.displayName.slice(0, 1) }}</span><div><strong>{{ account.displayName }}</strong><small>{{ account.externalIdentifier }}</small></div><StatusBadge :label="connectionState(account).label" :tone="connectionState(account).type" /></header>
-          <div class="bridge-state" :class="connectionState(account).tone"><span class="status-dot"></span><div><strong>{{ pageContextLabel(activeDevice(account.id)) }}</strong><small>最近心跳 {{ formatDate(activeDevice(account.id)?.lastHeartbeatAt) }}</small></div></div>
-          <section class="collection-health" :class="`collection-health--${collectionState(account).tone}`">
-            <header><strong>采集健康</strong><StatusBadge compact :label="collectionState(account).label" :tone="collectionState(account).type" /></header>
+          <div class="bridge-state" :class="connectionState(account).tone"><span class="status-dot"></span><div><strong>{{ pageContextLabel(activeDevice(account.id)) }}</strong><small>最近心跳 {{ formatDate(activeDevice(account.id)?.lastHeartbeatAt) }}</small></div><StatusBadge compact class="bridge-collection-badge" :label="collectionState(account).label" :tone="collectionState(account).type" /></div>
+          <div class="account-facts" aria-label="账号同步数据"><span><b>{{ unreadTotal(account.id) }}</b> 条未读</span><span><b>{{ syncedJobCount(account.id) }}</b> 个同步岗位</span><span><b>{{ draftJobCount(account.id) }}</b> 个待核对岗位</span><span class="account-facts__sync">最后同步 {{ lastSuccessfulSync(activeDevice(account.id)) }}</span></div>
+          <details class="collection-health" :class="`collection-health--${collectionState(account).tone}`">
+            <summary><strong>采集详情</strong><small>{{ activeDevice(account.id)?.runtimeState === 'RUNNING' ? '最近暂停原因' : '暂停原因' }}：{{ pauseReason(activeDevice(account.id)) }}</small></summary>
             <dl>
               <div><dt>最后成功同步</dt><dd>{{ lastSuccessfulSync(activeDevice(account.id)) }}</dd></div>
               <div><dt>{{ activeDevice(account.id)?.runtimeState === 'RUNNING' ? '最近暂停原因' : '暂停原因' }}</dt><dd>{{ pauseReason(activeDevice(account.id)) }}</dd></div>
               <div><dt>恢复后重采集</dt><dd>{{ recoveryEvidence(activeDevice(account.id)) }}</dd></div>
             </dl>
-          </section>
-          <div class="account-facts" aria-label="账号同步数据"><span><b>{{ unreadTotal(account.id) }}</b> 条未读</span><span><b>{{ syncedJobCount(account.id) }}</b> 个同步岗位</span><span><b>{{ draftJobCount(account.id) }}</b> 个待核对岗位</span></div>
+          </details>
           <footer>
             <el-button type="primary" plain @click="openConnection(account)">{{ activeDevice(account.id) ? '查看桥接' : '连接浏览器' }}</el-button>
             <el-dropdown v-if="canManage" trigger="click" @command="handleAccountCommand(account, $event as 'edit' | 'toggle')">
@@ -334,8 +327,8 @@ onMounted(loadData)
 .overview-heading > div { min-width:0; }
 .overview-heading span,.overview-heading strong { display:block; }
 .overview-heading span { color:var(--text-secondary); font-size:12px; }
-.overview-heading strong { margin-top:8px; font-size:22px; line-height:1.4; font-variant-numeric:tabular-nums; }
-.connection-overview .overview-heading strong { font-size:32px; }
+.overview-heading strong { margin-top:4px; font-size:18px; line-height:1.3; font-variant-numeric:tabular-nums; }
+.connection-overview .overview-heading strong { font-size:24px; }
 .overview-heading .overview-state { display:flex; align-items:center; gap:6px; font-size:11px; flex-shrink:0; }
 .overview-state i,.attention-mark,.status-dot { width:8px; height:8px; border-radius:50%; background:var(--text-tertiary); flex:0 0 auto; }
 .overview-state.healthy { color:var(--success); }.overview-state.healthy i { background:var(--success); }
@@ -378,7 +371,7 @@ onMounted(loadData)
 .account-filter-tabs button { padding:8px 12px; border:0; border-radius:6px; color:var(--text-secondary); background:transparent; cursor:pointer; font-size:12px; }
 .account-filter-tabs button.active { background:var(--primary); color:white; }.account-filter-tabs button:hover:not(.active) { background:var(--border-subtle); }
 .account-grid { display:grid; grid-template-columns:1fr; gap:10px; padding:12px; }
-.account-card { padding:24px; background:linear-gradient(135deg, rgba(255,255,255,.88) 0%, rgba(255,255,255,.72) 100%); border:0; border-radius:var(--radius-panel); box-shadow:0 1px 2px rgba(17,28,45,.035), 0 4px 16px rgba(17,28,45,.05), inset 0 1px 0 rgba(255,255,255,.72); transition:background var(--transition-fast), box-shadow 280ms cubic-bezier(.2,0,0,1), transform 280ms cubic-bezier(.2,0,0,1); position:relative; }
+.account-card { padding:18px; background:linear-gradient(135deg, rgba(255,255,255,.88) 0%, rgba(255,255,255,.72) 100%); border:0; border-radius:var(--radius-panel); box-shadow:0 1px 2px rgba(17,28,45,.035), 0 4px 16px rgba(17,28,45,.05), inset 0 1px 0 rgba(255,255,255,.72); transition:background var(--transition-fast), box-shadow 280ms cubic-bezier(.2,0,0,1), transform 280ms cubic-bezier(.2,0,0,1); position:relative; }
 .account-card:nth-child(even) { background:linear-gradient(135deg, rgba(247,249,250,.88) 0%, rgba(247,249,250,.72) 100%); }
 .account-card:hover { background:linear-gradient(135deg, rgba(255,255,255,.96) 0%, rgba(255,255,255,.84) 100%); box-shadow:0 2px 4px rgba(17,28,45,.05), 0 12px 32px rgba(17,28,45,.10), inset 0 1px 0 rgba(255,255,255,.88), 2px 0 0 0 rgba(13,148,136,.12); transform:translateY(-3px); }
 .account-card:active { animation:card-press 180ms ease-out both; }
@@ -387,19 +380,26 @@ onMounted(loadData)
 .account-card > header { display:flex; align-items:center; gap:12px; }.account-card > header > div { flex:1; min-width:0; }
 .account-card > header strong { display:block; font-size:17px; overflow-wrap:anywhere; }.account-card > header small { display:block; margin-top:4px; color:var(--text-secondary); font-size:12px; }
 .account-avatar { display:grid; width:44px; height:44px; place-items:center; flex:0 0 auto; border-radius:12px; background:linear-gradient(145deg, #14b8a6 0%, #0d9488 40%, #0f766e 100%); color:white; font-weight:700; font-size:18px; box-shadow:0 4px 14px rgba(13,148,136,.22), 0 1px 2px rgba(0,0,0,.08), inset 0 1px 0 rgba(255,255,255,.18); }
-.bridge-state { display:flex; align-items:center; gap:10px; margin-top:18px; padding:12px 14px; border-radius:var(--radius-control); background:rgba(247,249,250,.56); }
+.bridge-state { display:flex; align-items:center; gap:10px; margin-top:12px; padding:10px 12px; border-radius:var(--radius-control); background:rgba(247,249,250,.56); }
+.bridge-collection-badge { margin-left:auto; flex-shrink:0; }
 .bridge-state strong,.bridge-state small,.connection-now strong,.connection-now small { display:block; }
 .bridge-state strong { font-size:13px; }.bridge-state small,.connection-now small { margin-top:4px; font-size:12px; color:var(--text-secondary); line-height:1.6; }
 .online .status-dot,.status-dot.online { background:var(--success); }.paused .status-dot,.status-dot.paused { background:var(--warning); }
-.collection-health { margin:12px 0 18px; padding:16px 14px; border-radius:var(--radius-control); background:rgba(247,249,250,.48); }
+.collection-health { margin:8px 0 0; border-radius:var(--radius-control); background:rgba(247,249,250,.48); }
+.collection-health summary { display:flex; align-items:center; gap:8px; padding:8px 12px; font-size:12px; cursor:pointer; list-style:none; color:var(--text-secondary); }
+.collection-health summary::before { content:'›'; color:var(--primary); font-size:14px; line-height:1; transition:transform .2s ease; }
+.collection-health[open] summary::before { transform:rotate(90deg); }
+.collection-health summary strong { color:var(--text); font-size:12px; }
+.collection-health summary small { color:var(--text-tertiary); font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .collection-health > header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px; font-size:13px; }
-.collection-health dl { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:20px; margin:0; }
+.collection-health dl { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:20px; margin:0; padding:4px 12px 10px; }
 .collection-health dl > div + div { padding-left:20px; border-left:0; position:relative; }
 .collection-health dl > div + div::before { content:''; position:absolute; left:0; top:4px; bottom:4px; width:1px; background:linear-gradient(180deg, transparent, var(--border-subtle) 40%, var(--border-subtle) 60%, transparent); }
 .collection-health dt { color:var(--text-secondary); font-size:11px; margin-bottom:6px; }.collection-health dd { margin:0; font-size:12px; line-height:1.7; overflow-wrap:anywhere; }
-.account-facts { display:flex; flex-wrap:wrap; gap:12px 28px; color:var(--text-secondary); font-size:12px; }
-.account-facts b { color:var(--text); font-size:17px; font-variant-numeric:tabular-nums; }
-.account-card > footer { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:20px; }
+.account-facts { display:flex; flex-wrap:wrap; gap:8px 20px; margin-top:10px; color:var(--text-secondary); font-size:12px; }
+.account-facts b { color:var(--text); font-size:14px; font-variant-numeric:tabular-nums; }
+.account-facts__sync { color:var(--text-tertiary); font-size:11px; }
+.account-card > footer { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:14px; }
 .connection-dialog { display:grid; gap:18px; }.connection-now { display:flex; align-items:center; gap:12px; background:var(--surface-soft); padding:16px; border-radius:10px; }
 .connection-steps-header { display:flex; align-items:center; justify-content:space-between; gap:10px; }
 .connection-dialog ol { list-style:none; margin:0; padding:0; display:grid; gap:14px; }.connection-dialog li { display:flex; align-items:center; gap:12px; line-height:1.6; }

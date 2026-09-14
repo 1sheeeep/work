@@ -17,11 +17,13 @@ test('retains every in-flight AI task while bounding terminal history', () => {
 });
 
 test('accepts only bounded anonymous restart baselines', () => {
-  const baseline = { unread: [[digest, digest2]], selected: [[digest2, digest]] };
+  const baseline = { unread: [[digest, digest2]], selected: [[digest2, digest]],
+    locators: [[digest, { ratio: 0.42, rowIndex: 3, updatedAt: 1_789_300_000_000 }]] };
   assert.deepEqual(validateSingleAccountBaseline(baseline), baseline);
   assert.throws(() => validateSingleAccountBaseline({ unread: [['raw-chat', digest2]], selected: [] }), /基线无效/);
   assert.throws(() => validateSingleAccountBaseline({ unread: [[digest, digest2], [digest, digest]], selected: [] }), /基线无效/);
   assert.throws(() => validateSingleAccountBaseline({ unread: Array.from({ length: 501 }, () => [digest, digest2]), selected: [] }), /基线无效/);
+  assert.throws(() => validateSingleAccountBaseline({ unread: [], selected: [], locators: [[digest, { ratio: 2, rowIndex: 0, updatedAt: 1 }]] }), /定位标识无效/);
 });
 
 test('opens the page automation circuit only for consecutive unknown outcomes', () => {

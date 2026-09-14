@@ -1,6 +1,8 @@
 package ai.xzkj.recruitment.localconnector;
 
 import ai.xzkj.recruitment.common.ApiException;
+import ai.xzkj.recruitment.common.AiUpstreamFailure;
+import ai.xzkj.recruitment.audit.AuditService;
 import ai.xzkj.recruitment.boss.BossAccountRepository;
 import ai.xzkj.recruitment.jobs.JobPosition;
 import ai.xzkj.recruitment.jobs.JobPositionRepository;
@@ -49,6 +51,7 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
     private final MeterRegistry meters;
     private final JdbcTemplate jdbc;
     private final ConversationTimelineService timeline;
+    private final AuditService audit;
     private final ExecutorService workers = Executors.newVirtualThreadPerTaskExecutor();
     private final InboundReplyExecutionCoordinator execution;
     private final SecureRandom random = new SecureRandom();
@@ -60,17 +63,19 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
     @Value("${app.inbound-reply.send-limit-per-day:100}") private long sendLimitPerDay = 100;
     @Value("${app.inbound-reply.auto-send-enabled:false}") private boolean autoSendEnabled;
     @Value("${app.inbound-reply.shadow-evaluation-enabled:false}") private boolean shadowEvaluationEnabled;
+    @Value("${app.inbound-reply.silent-revalidation-delay:PT10S}") private Duration silentRevalidationDelay = Duration.ofSeconds(10);
 
     InboundAiReplyQueueService(InboundAiReplyTaskRepository tasks, BrowserUnreadObservationRepository observations,
                                BossAccountRepository accounts, JobPositionRepository jobs,
                                InboundJobReplyService replies, PlatformTransactionManager manager,
                                MeterRegistry meters, JdbcTemplate jdbc,
-                               ConversationTimelineService timeline,
+                               ConversationTimelineService timeline, AuditService audit,
                                @Value("${app.inbound-reply.model-concurrency:8}") int configuredModelConcurrency) {
         this.tasks = tasks; this.observations = observations; this.accounts = accounts; this.jobs = jobs; this.replies = replies;
         this.meters = meters;
         this.jdbc = jdbc;
         this.timeline = timeline;
+        this.audit = audit;
         this.execution = new InboundReplyExecutionCoordinator(configuredModelConcurrency);
         this.transactions = new TransactionTemplate(manager);
         this.transactions.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
@@ -135,6 +140,62 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
         return submitted.getId();
     }
 
+    List<InboundReplyRetryCandidateResponse> retryable(UUID accountId) {
+        Instant now = Instant.now();
+        return transactions.execute(status -> tasks
+                // 库存复核只能在当前账号没有正常排队、模型处理中或等待退避的
+                // 新任务时启动，避免历史消息抢占实时求职者消息。
+                .countByAccountIdAndStatusIn(accountId, List.of("QUEUED", "PROCESSING", "RETRY_WAIT")) > 0
+                ? List.<InboundReplyRetryCandidateResponse>of()
+                : tasks.findSafeReplayInventory(accountId)
+                .stream()
+                .filter(task -> task.isReplayableFailure(now, silentRevalidationDelay))
+                .filter(task -> observations.findById(task.getObservationId()).map(observation ->
+                        (!task.isExpectedSilence() || !observation.isSelectedConversationUnread())
+                                && task.getChatDigest().equals(observation.getChatDigest())
+                                && task.getMessageDigest().equals(observation.getLatestMessageDigest())
+                                && "INBOUND".equals(observation.getLatestDirection())
+                                && task.getJobPositionId().equals(observation.getMatchedJobPositionId()))
+                        .orElse(false))
+                .map(task -> new InboundReplyRetryCandidateResponse(task.getId(), task.getChatDigest(),
+                        task.getMessageDigest(), task.getLastErrorCode(), task.getAttemptCount(), task.getUpdatedAt()))
+                .toList());
+    }
+
+    InboundReplyTaskAcceptedResponse retryFailed(UUID accountId, UUID taskId, UUID observationId, UUID jobId,
+                                                   String chatDigest, String messageDigest, String text, String context) {
+        InboundReplyTaskAcceptedResponse accepted = transactions.execute(status -> {
+            InboundAiReplyTask task = tasks.findForUpdateById(taskId).orElse(null);
+            if (task == null || !accountId.equals(task.getAccountId()))
+                throw new ApiException(HttpStatus.NOT_FOUND, "AI_REPLY_TASK_NOT_FOUND", "AI 回复任务不存在");
+            if (!observationId.equals(task.getObservationId()) || !jobId.equals(task.getJobPositionId())
+                    || !chatDigest.equals(task.getChatDigest()) || !messageDigest.equals(task.getMessageDigest()))
+                throw new ApiException(HttpStatus.CONFLICT, "AI_REPLY_RETRY_TARGET_MISMATCH", "重试目标与当前会话不一致，已拒绝重试");
+            if (!task.isReplayableFailure(Instant.now(), silentRevalidationDelay))
+                throw new ApiException(HttpStatus.CONFLICT, "AI_REPLY_RETRY_NOT_ALLOWED", "该失败任务不是可安全重试类型，已保持终态");
+            BrowserUnreadObservation observation = observations.findById(task.getObservationId()).orElse(null);
+            if (task.isExpectedSilence() && observation != null && observation.isSelectedConversationUnread())
+                throw new ApiException(HttpStatus.CONFLICT, "AI_REPLY_RETRY_READ_REQUIRED", "静默复核只允许已读且没有新消息的会话");
+            long accountOutstanding = tasks.countByAccountIdAndStatusIn(accountId, List.of("QUEUED", "PROCESSING", "RETRY_WAIT"))
+                    + tasks.countByAccountIdAndSendStatus(accountId, "READY")
+                    + tasks.countByAccountIdAndSendStatus(accountId, "CLAIMED");
+            long globalOutstanding = tasks.countByStatusIn(List.of("QUEUED", "PROCESSING", "RETRY_WAIT"))
+                    + tasks.countBySendStatus("READY") + tasks.countBySendStatus("CLAIMED");
+            if (accountOutstanding >= maxPendingPerAccount)
+                throw unavailable("AI_REPLY_ACCOUNT_QUEUE_FULL", "当前招聘账号的 AI 回复队列已满，请稍后重试");
+            if (globalOutstanding >= maxPendingGlobal)
+                throw unavailable("AI_REPLY_GLOBAL_QUEUE_FULL", "AI 回复系统当前繁忙，请稍后重试");
+            if (!task.requeueWithFreshInput(text, context, Instant.now()))
+                throw new ApiException(HttpStatus.CONFLICT, "AI_REPLY_RETRY_INPUT_INVALID", "重试必须提供当前会话最新的非空消息正文");
+            tasks.flush();
+            return new InboundReplyTaskAcceptedResponse(task.getId(), "QUEUED", null);
+        });
+        if (accepted == null) throw unavailable("AI_REPLY_RETRY_ENQUEUE_FAILED", "失败任务重新入队失败，请稍后重试");
+        meters.counter("recruitment.inbound.reply.requeued", "reason", "fresh_message").increment();
+        triggerDrain(accountId);
+        return accepted;
+    }
+
     InboundReplyTaskStatusResponse status(UUID accountId, UUID taskId) {
         InboundAiReplyTask task = transactions.execute(status -> tasks.findById(taskId).orElse(null));
         if (task == null || !accountId.equals(task.getAccountId()))
@@ -145,7 +206,8 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
             decision = new InboundReplyDecisionResponse(value.replyAllowed(), value.category(), value.confidence(), value.content(), value.reason());
         }
         return new InboundReplyTaskStatusResponse(task.getId(), task.getStatus(), decision,
-                task.getAttemptCount(), task.getNextAttemptAt(), task.getLastErrorCode(), task.getResultReason());
+                task.getAttemptCount(), task.getNextAttemptAt(), task.getLastErrorCode(), task.getResultReason(),
+                task.getSendStatus(), task.getSendResultReason());
     }
 
     List<InboundAiReplyTask> recentSuccessfulSends() {
@@ -218,12 +280,12 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
             String raw = token();
             task.claimSend(deviceId, hash(raw), request.beforeStateDigest(), now);
             return new InboundReplySendClaimResponse(true, task.getId(), raw, task.getReplyContent(),
-                    hash(task.getReplyContent()), task.getSendLeaseUntil(), task.getSendStatus(), "30 秒单次发送租约已签发");
+                    hash(task.getReplyContent()), task.getSendLeaseUntil(), task.getSendStatus(), "45 秒单次发送租约已签发");
         });
     }
 
     InboundReplySendReceiptResponse receiptSend(UUID accountId, UUID deviceId, InboundReplySendReceiptRequest request) {
-        return transactions.execute(status -> {
+        InboundReplySendReceiptResponse response = transactions.execute(status -> {
             InboundAiReplyTask task = tasks.findForUpdateBySendLeaseTokenHash(hash(request.leaseToken())).orElseThrow(() ->
                     new ApiException(HttpStatus.UNAUTHORIZED, "AI_REPLY_SEND_LEASE_INVALID", "AI 回复发送租约无效"));
             if (!accountId.equals(task.getAccountId()))
@@ -244,6 +306,11 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
                 throw new ApiException(HttpStatus.CONFLICT, "AI_REPLY_SEND_RECEIPT_CONFLICT", conflict.getMessage());
             }
         });
+        if ("UNKNOWN".equals(request.outcome()) || "FAILED".equals(request.outcome())) {
+            recordAiProblem("AI_REPLY_SEND_" + request.outcome(), response == null ? null : response.taskId(),
+                    "SEND_" + request.outcome(), request.reason());
+        }
+        return response;
     }
 
     private InboundAiReplyTask enqueue(UUID accountId, UUID observationId, UUID jobId,
@@ -297,7 +364,7 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
                 if (task == null) return;
                 try {
                     JobPosition job = jobs.findWithDetailsById(task.getJobPositionId()).orElse(null);
-                    if (job == null) { fail(task.getId(), "队列任务对应岗位已不存在"); continue; }
+                    if (job == null) { fail(task.getId(), "INBOUND_REPLY_JOB_MISSING", "队列任务对应岗位已不存在"); continue; }
                     InboundJobReplyService.Decision evaluated;
                     Timer.Sample modelTimer = Timer.start(meters);
                     execution.acquireModelSlot();
@@ -327,6 +394,9 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
                     Instant completedAt = Instant.now();
                     transactions.executeWithoutResult(status -> tasks.findById(task.getId())
                             .ifPresent(value -> value.complete(decision, completedAt)));
+                    if (!decision.replyAllowed()) {
+                        recordAiSkip(task.getId(), decision.category(), decision.reason());
+                    }
                     try {
                         timeline.recordAiReply(task.getAccountId(), task.getJobPositionId(), task.getChatDigest(),
                                 task.getId(), decision.replyAllowed(), decision.content(), completedAt, job);
@@ -335,7 +405,13 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
                     }
                     meters.counter("recruitment.inbound.reply.completed", "allowed", Boolean.toString(decision.replyAllowed())).increment();
                 } catch (Exception error) {
-                    retry(task.getId(), errorCode(error), "AI 回复任务处理失败：" + safe(error));
+                    String code = errorCode(error);
+                    String reason = "AI 回复任务处理失败：" + safe(error);
+                    if (!isRetryable(error, code)) {
+                        fail(task.getId(), code, reason);
+                        continue;
+                    }
+                    if (!retry(task.getId(), code, reason)) return;
                     return;
                 }
             }
@@ -348,15 +424,50 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
         workers.submit(() -> drain(accountId));
     }
 
-    private void retry(UUID id, String code, String reason) {
+    private boolean retry(UUID id, String code, String reason) {
+        boolean[] scheduled = {false};
         transactions.executeWithoutResult(status -> tasks.findById(id)
-                .ifPresent(value -> value.retry(code, reason, Instant.now())));
-        meters.counter("recruitment.inbound.reply.retry", "code", code).increment();
+                .ifPresent(value -> scheduled[0] = value.retry(code, reason, Instant.now())));
+        if (scheduled[0]) {
+            meters.counter("recruitment.inbound.reply.retry", "code", code).increment();
+            recordAiProblem("AI_REPLY_RETRY_SCHEDULED", id, code, reason);
+        }
+        return scheduled[0];
     }
-    private void fail(UUID id, String reason) {
+    private void fail(UUID id, String code, String reason) {
         transactions.executeWithoutResult(status -> tasks.findById(id)
-                .ifPresent(value -> value.fail(reason, Instant.now())));
-        meters.counter("recruitment.inbound.reply.failed", "reason", "job_missing").increment();
+                .ifPresent(value -> value.fail(code, reason, Instant.now())));
+        meters.counter("recruitment.inbound.reply.failed", "reason", safeCategory(code)).increment();
+        recordAiProblem("AI_REPLY_TASK_FAILED", id, code, reason);
+    }
+
+    private void recordAiProblem(String action, UUID taskId, String code, String reason) {
+        try {
+            audit.systemFailure(action, "INBOUND_AI_REPLY_TASK", taskId,
+                    code == null ? "AI 自动回复问题" : code,
+                    "task=" + (taskId == null ? "UNKNOWN" : taskId) + " | code=" + (code == null ? "UNKNOWN" : code)
+                            + " | " + (reason == null || reason.isBlank() ? "未记录具体原因" : reason));
+        } catch (RuntimeException auditFailure) {
+            meters.counter("recruitment.inbound.reply.problem.log.failure").increment();
+        }
+    }
+
+    private void recordAiSkip(UUID taskId, String category, String reason) {
+        try {
+            audit.systemSuccess("AI_REPLY_SAFETY_SKIPPED", "INBOUND_AI_REPLY_TASK", taskId,
+                    category == null ? "AI 安全跳过" : category,
+                    "task=" + taskId + " | category=" + (category == null ? "UNKNOWN" : category)
+                            + " | " + (reason == null || reason.isBlank() ? "AI 决定不自动回复" : reason));
+        } catch (RuntimeException auditFailure) {
+            meters.counter("recruitment.inbound.reply.problem.log.failure").increment();
+        }
+    }
+
+    private boolean isRetryable(Exception error, String code) {
+        if (error instanceof AiUpstreamFailure upstream) return upstream.isRetryable();
+        return Set.of("AI_OUTPUT_INVALID", "INBOUND_REPLY_AI_REQUEST_FAILED", "INBOUND_REPLY_AI_INVALID",
+                "INBOUND_REPLY_AI_INVALID_RESULT", "INBOUND_REPLY_AI_OUTPUT_MISSING", "INBOUND_REPLY_AI_TIMEOUT")
+                .contains(code);
     }
 
     @Scheduled(fixedDelayString = "${app.inbound-reply.queue-recovery-interval:5s}",
@@ -367,6 +478,17 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
             tasks.findByStatusAndStartedAtBefore("PROCESSING", now.minusSeconds(180)).forEach(task -> task.recoverIfStale(now));
             tasks.findTop100ByStatusAndNextAttemptAtBeforeOrderByNextAttemptAtAsc("RETRY_WAIT", now).forEach(task -> task.releaseRetry(now));
             tasks.findBySendStatusAndSendLeaseUntilBefore("CLAIMED", now).forEach(task -> task.expireSendLease(now));
+            tasks.findTop100BySendStatusOrderByCompletedAtDesc("READY").forEach(task -> {
+                BrowserUnreadObservation observation = observations.findById(task.getObservationId()).orElse(null);
+                if (observation == null) {
+                    task.skipSend("原会话观察记录已不存在，待发送回复已安全作废", now);
+                } else if (!observation.isUnread() || !"INBOUND".equals(observation.getLatestDirection())) {
+                    task.skipSend("会话已由 HR 处理或已不再处于候选人未读状态，待发送回复已安全作废", now);
+                } else if (!task.getMessageDigest().equals(observation.getLatestMessageDigest())
+                        || !task.getJobPositionId().equals(observation.getMatchedJobPositionId())) {
+                    task.skipSend("候选人最新消息或岗位归属已变化，旧待发送回复已安全作废", now);
+                }
+            });
         });
         Set<UUID> accounts = ConcurrentHashMap.newKeySet();
         transactions.execute(status -> {

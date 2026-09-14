@@ -85,7 +85,7 @@ public class ExternalResumeAnalysisService {
         String inputHash = hash(document.text());
         ExternalResumeAiClient.ExternalResumeMatch match = client.match(accessibleJobs, document.text(), actorHash(user));
         JobPosition matchedJob = accessibleJobs.stream().filter(job -> job.getId().equals(match.matchedJobId())).findFirst().orElse(null);
-        String candidateName = cleanName(match.candidateName(), document.documentHash());
+        String candidateName = cleanName(match.candidateName(), document.text(), document.documentHash());
         boolean unmatched = matchedJob == null;
         if (matchedJob == null) matchedJob = accessibleJobs.getFirst();
         JobPosition selectedJob = matchedJob;
@@ -122,9 +122,9 @@ public class ExternalResumeAnalysisService {
                 .map(Company::getId).anyMatch(company.getId()::equals);
     }
 
-    private String cleanName(String value, String documentHash) {
-        String clean = value == null ? "" : value.replace('\n', ' ').replace('\r', ' ').trim();
-        if (clean.isBlank()) return "匿名候选人 " + documentHash.substring(0, 8);
+    private String cleanName(String value, String resumeText, String documentHash) {
+        String clean = ResumeCandidateName.verified(value, resumeText);
+        if (clean == null || clean.isBlank()) return "匿名候选人 " + documentHash.substring(0, 8);
         return clean.substring(0, Math.min(100, clean.length()));
     }
 

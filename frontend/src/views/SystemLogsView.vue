@@ -4,7 +4,7 @@ import AsyncState from '../components/AsyncState.vue'
 import MetricCard from '../components/MetricCard.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { CircleCheck, Clock, DocumentCopy, Refresh, Search, Warning } from '@element-plus/icons-vue'
+import { CircleCheck, Clock, DocumentCopy, Search, Warning } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { api, apiErrorMessage } from '../services/api'
 import type { AuditLog, InboundReplyRuntimeEvent, OperationsSummary } from '../types'
@@ -45,6 +45,12 @@ const actionLabels: Record<string, string> = {
   BROWSER_DEVICE_OFFLINE: '浏览器桥接离线', BROWSER_DEVICE_ONLINE: '浏览器桥接恢复',
   AUTO_REPLY_DIAGNOSTIC_BLOCKED: '自动回复阻塞诊断',
   AUTO_REPLY_DIAGNOSTIC_RECOVERED: '自动回复诊断恢复',
+  AI_REPLY_RETRY_SCHEDULED: 'AI 回复已安排重试',
+  RETRY_FAILED_INBOUND_REPLY: '库存任务已安全复核并重新入队',
+  AI_REPLY_TASK_FAILED: 'AI 回复最终失败',
+  AI_REPLY_SAFETY_SKIPPED: 'AI 回复安全跳过',
+  AI_REPLY_SEND_FAILED: 'AI 回复发送失败',
+  AI_REPLY_SEND_UNKNOWN: 'AI 回复发送待确认',
 }
 const queueState = computed(() => {
   const q = summary.value?.inboundReplyQueue
@@ -64,6 +70,10 @@ const automationState = computed(() => {
   return { tone: 'success' as const, label: '自动回复运行中', note: '插件采集、持久队列与页面发送链路均已开启。' }
 })
 const recentReplyEvents = computed(() => summary.value?.recentInboundReplyEvents || [])
+const replyProblemEvents = computed(() => recentReplyEvents.value.filter(event =>
+  event.taskStatus === 'FAILED' || event.taskStatus === 'RETRY_WAIT'
+  || event.sendStatus === 'FAILED' || event.sendStatus === 'UNKNOWN'
+  || event.sendStatus === 'SKIPPED' || !!event.errorCode))
 function queueAge(seconds?: number) { if (seconds == null) return '当前无积压'; if (seconds < 60) return `最久等待 ${seconds} 秒`; return `最久等待 ${Math.floor(seconds / 60)} 分钟` }
 
 function replyEventState(event: InboundReplyRuntimeEvent) {
@@ -129,6 +139,51 @@ async function copyDetails(log: AuditLog) {
   }
 }
 
+function replyProblemRecord(event: InboundReplyRuntimeEvent) {
+  return {
+    timestamp: event.updatedAt,
+    stage: replyEventState(event).label,
+    account: event.accountName,
+    conversation: event.anonymousChatKey,
+    job: event.jobTitle,
+    taskStatus: event.taskStatus,
+    sendStatus: event.sendStatus,
+    errorCode: event.errorCode || null,
+    attempts: event.attemptCount,
+    incomingMessage: event.messageText || null,
+    detail: replyEventDetail(event),
+  }
+}
+
+function replyProblemText(event: InboundReplyRuntimeEvent) {
+  return JSON.stringify(replyProblemRecord(event), null, 2)
+}
+
+async function writeClipboard(text: string, success: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success(success)
+  } catch {
+    ElMessage.warning('当前浏览器无法复制，请检查剪贴板权限')
+  }
+}
+
+async function copyReplyProblem(event: InboundReplyRuntimeEvent) {
+  await writeClipboard(replyProblemText(event), '问题信息已复制')
+}
+
+async function copyReplyProblems() {
+  if (!replyProblemEvents.value.length) return ElMessage.info('当前没有可复制的 AI 自动回复问题')
+  const report = {
+    type: 'AI_AUTO_REPLY_PROBLEM_REPORT',
+    generatedAt: new Date().toISOString(),
+    count: replyProblemEvents.value.length,
+    problems: replyProblemEvents.value.map(replyProblemRecord),
+  }
+  const text = `\`\`\`json\n${JSON.stringify(report, null, 2)}\n\`\`\``
+  await writeClipboard(text, `已复制 ${replyProblemEvents.value.length} 条问题`)
+}
+
 onMounted(() => { void load(); refreshTimer = setInterval(() => void load(true), 30_000) })
 onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
 </script>
@@ -136,8 +191,7 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
 <template>
   <div class="page-shell logs-page">
     <PageHeader>
-      <div><span class="page-kicker">运行监测与问题定位</span><h1>项目运行日志</h1><p>查看关键事件、失败影响与对应对象，快速定位运行问题。</p></div>
-      <el-button :icon="Refresh" :loading="loading" @click="load()">刷新</el-button>
+      <div></div>
     </PageHeader>
 
     <AsyncState v-if="loading" state="loading" :rows="8" aria-label="正在加载项目运行日志" />
@@ -176,15 +230,18 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
           <div><span>在线桥接</span><strong>{{ summary.activeBrowserDevices }}</strong><small>{{ summary.staleBrowserDevices ? `${summary.staleBrowserDevices} 个心跳异常` : '采集链路正常' }}</small></div>
           <div><span>近一小时已回复</span><strong>{{ summary.inboundReplyQueue.sentLastHour }}</strong><small>以页面成功回执为准</small></div>
         </div>
-        <div class="reply-events__title flex-between"><div><h3>最近自动回复记录</h3><p>已发送内容以页面成功回执为准；候选人原始消息不在这里展示。</p></div><span>最近 {{ recentReplyEvents.length }} 条</span></div>
+        <div class="reply-events__title flex-between"><div><h3>最近自动回复记录</h3><p>已发送内容以页面成功回执为准；异常、重试、静默和安全跳过均保留原因。</p></div><div class="reply-events__actions"><span>最近 {{ recentReplyEvents.length }} 条 · 问题 {{ replyProblemEvents.length }} 条</span><el-button size="small" :icon="DocumentCopy" :disabled="!replyProblemEvents.length" @click="copyReplyProblems">复制问题汇总</el-button></div></div>
         <AsyncState v-if="!recentReplyEvents.length" state="empty" embedded class="reply-events__empty" title="暂无自动回复记录" message="开启挂机并处理到符合条件的未读会话后，阶段状态会显示在这里。" />
         <div v-else class="reply-events">
           <article v-for="event in recentReplyEvents" :key="event.id" class="reply-event" :class="{ 'reply-event--danger': replyEventState(event).tone === 'danger' }">
             <div class="reply-event__main"><span class="result-dot" :class="`result-dot--${replyEventState(event).tone === 'success' ? 'success' : replyEventState(event).tone === 'danger' ? 'failure' : 'pending'}`" aria-hidden="true"></span><div><strong>{{ event.jobTitle }}</strong><p>{{ event.accountName }} · 会话 {{ event.anonymousChatKey }}</p></div></div>
             <StatusBadge compact :label="replyEventState(event).label" :tone="replyEventState(event).tone" />
             <blockquote v-if="event.sendStatus === 'SUCCEEDED' && event.replyContent" class="reply-event__content">“{{ event.replyContent }}”</blockquote>
+            <blockquote v-if="replyProblemEvents.some(item => item.id === event.id) && event.messageText" class="reply-event__incoming"><strong>候选人原话</strong><span>“{{ event.messageText }}”</span></blockquote>
+            <p v-else-if="replyProblemEvents.some(item => item.id === event.id)" class="reply-event__incoming-missing">候选人原话未留存（历史记录）</p>
             <p class="reply-event__detail" :title="replyEventDetail(event)">{{ replyEventDetail(event) }}</p>
             <div class="reply-event__meta"><span v-if="event.errorCode" class="error-code">{{ event.errorCode }}</span><span>尝试 {{ event.attemptCount }} 次</span><time>{{ formatDate(event.updatedAt) }}</time></div>
+            <button v-if="replyProblemEvents.some(item => item.id === event.id)" type="button" class="reply-event__copy" :aria-label="`复制 ${event.jobTitle} 的问题信息`" @click="copyReplyProblem(event)"><el-icon><DocumentCopy /></el-icon>复制问题</button>
           </article>
         </div>
       </section>
@@ -285,6 +342,8 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
 .reply-events__title h3 { margin:0; font-size:14px; }
 .reply-events__title p { margin:4px 0 0; color:var(--text-tertiary); font-size:11px; }
 .reply-events__title>span { color:var(--text-tertiary); font-size:11px; white-space:nowrap; }
+.reply-events__actions { display:flex; align-items:center; gap:10px; }
+.reply-events__actions>span { color:var(--text-tertiary); font-size:11px; white-space:nowrap; }
 .reply-events { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; padding:0 22px 20px; }
 .reply-event { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:9px 12px; min-width:0; padding:13px 14px; border:1px solid var(--border-subtle); border-radius:var(--radius-control); background:rgba(255,255,255,.72); box-shadow:var(--shadow-ground); transition:box-shadow var(--transition-fast), transform var(--transition-fast), background var(--transition-fast); }
 .reply-event:hover { background:var(--surface-row); box-shadow:var(--shadow-raised); transform:translateY(-1px); }
@@ -296,13 +355,19 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
 .reply-event__main p { margin-top:3px; color:var(--text-tertiary); font-size:11px; }
 .reply-event__detail { grid-column:1/-1; overflow:hidden; margin:0; color:var(--text-secondary); font-size:12px; text-overflow:ellipsis; white-space:nowrap; }
 .reply-event__content { grid-column:1/-1; margin:0; padding:9px 11px; border-left:3px solid var(--color-primary); border-radius:0 7px 7px 0; background:var(--surface-teal); color:var(--text-main); font-size:12px; line-height:1.55; overflow-wrap:anywhere; }
+.reply-event__incoming { display:grid; grid-column:1/-1; gap:4px; margin:0; padding:9px 11px; border-left:3px solid var(--warning); border-radius:0 7px 7px 0; background:var(--surface-amber); color:var(--text-main); font-size:12px; line-height:1.55; overflow-wrap:anywhere; }
+.reply-event__incoming strong { color:var(--warning); font-size:10px; letter-spacing:.04em; }
+.reply-event__incoming-missing { grid-column:1/-1; margin:0; color:var(--text-tertiary); font-size:11px; }
 .reply-event__meta { display:flex; grid-column:1/-1; align-items:center; gap:10px; color:var(--text-tertiary); font-size:10px; }
 .reply-event__meta time { margin-left:auto; }
+.reply-event__copy { display:inline-flex; grid-column:1/-1; width:max-content; align-items:center; gap:5px; padding:4px 0; border:0; background:transparent; color:var(--color-primary); font-size:11px; font-weight:650; cursor:pointer; }
+.reply-event__copy:hover { color:var(--brand-700); text-decoration:underline; }
+.reply-event__copy:focus-visible { outline:2px solid var(--border-focus); outline-offset:3px; border-radius:3px; }
 .error-code { max-width:180px; overflow:hidden; padding:2px 6px; border-radius:5px; background:var(--surface-red); color:var(--danger); font-family:ui-monospace,SFMono-Regular,Consolas,monospace; text-overflow:ellipsis; white-space:nowrap; }
 .result-dot--pending { background:var(--warning); box-shadow:0 0 0 4px rgba(217,119,6,.08); }
 .reply-events__empty { min-height:150px; }
 @media (max-width:1100px){.queue-health__grid{grid-template-columns:repeat(3,minmax(0,1fr))}.queue-health__grid>div:nth-child(3){border-right:0}}
-@media (max-width:640px){.queue-health__head{align-items:flex-start}.queue-health__grid{grid-template-columns:repeat(2,minmax(0,1fr))}.queue-health__grid>div:nth-child(3){border-right:1px solid var(--border-subtle)}.queue-health__grid>div:nth-child(even){border-right:0}}
+@media (max-width:640px){.queue-health__head{align-items:flex-start}.queue-health__grid{grid-template-columns:repeat(2,minmax(0,1fr))}.queue-health__grid>div:nth-child(3){border-right:1px solid var(--border-subtle)}.queue-health__grid>div:nth-child(even){border-right:0}.reply-events__title{align-items:flex-start;flex-direction:column}.reply-events__actions{width:100%;justify-content:space-between}.reply-events{grid-template-columns:1fr}}
 .log-panel { overflow: hidden; padding: 0; border-radius: var(--radius-panel); }
 .log-head { display: flex; min-height: 92px; align-items: center; justify-content: space-between; gap: 20px; padding: 18px 22px; border-bottom: 1px solid var(--border); background:linear-gradient(180deg, rgba(255,255,255,.72), rgba(247,249,250,.82)); }
 .log-head__title { min-width: 0; }

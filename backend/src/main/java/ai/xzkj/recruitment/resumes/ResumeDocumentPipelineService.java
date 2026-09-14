@@ -14,8 +14,6 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.HexFormat;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 @Service
 public class ResumeDocumentPipelineService {
@@ -216,7 +214,8 @@ public class ResumeDocumentPipelineService {
     private String hash(String value) { return hash(value.getBytes(StandardCharsets.UTF_8)); }
 
     private void updateRecognizedName(CandidateProfile candidate, String text) {
-        String name = recognizeName(text);
+        if (candidate == null || !ResumeCandidateName.isAnonymousPlaceholder(candidate.getDisplayName())) return;
+        String name = ResumeCandidateName.verified(recognizeName(text), text);
         if (name != null) candidate.updateRecognizedName(name);
     }
 
@@ -231,23 +230,7 @@ public class ResumeDocumentPipelineService {
     }
 
     private String recognizeName(String text) {
-        if (text == null || text.isBlank()) return null;
-        String normalized = text.replace('\u0000', ' ').replace('\r', '\n');
-        Matcher labeled = Pattern.compile("(?:姓名|候选人姓名|真实姓名)\\s*[:：]?\\s*([\\p{IsHan}·]{2,20})").matcher(normalized);
-        if (labeled.find()) return labeled.group(1).trim();
-        Matcher english = Pattern.compile("(?im)^\\s*name\\s*[:：]\\s*([A-Za-z][A-Za-z .'-]{1,80})\\s*$").matcher(text);
-        if (english.find()) return english.group(1).trim();
-        // 很多中文 PDF 会把姓名单独放在简历顶部，不带“姓名”标签；
-        // 只检查前 20 行并排除常见标题，避免把学校、岗位等误识别为姓名。
-        String[] lines = normalized.split("\\n");
-        for (int i = 0; i < Math.min(lines.length, 20); i++) {
-            String line = lines[i].replaceAll("[\\t ]+", " ").trim();
-            if (line.matches("[\\p{IsHan}·]{2,4}")
-                    && !line.matches("简历|个人简历|求职简历|基本信息|个人信息|工作经历|教育经历|项目经历|自我评价|联系方式")) {
-                return line;
-            }
-        }
-        return null;
+        return ResumeCandidateName.recognize(text);
     }
     private String cleanCode(String value) { return value == null || value.isBlank() ? "RESUME_PROCESSING_FAILED" : value.substring(0, Math.min(80, value.length())); }
     private String cleanReason(String value) { String clean=value==null?"简历处理未完成":value.replace('\n',' ').replace('\r',' ').trim();return clean.substring(0,Math.min(300,clean.length())); }

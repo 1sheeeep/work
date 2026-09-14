@@ -33,6 +33,7 @@ public class BrowserDevice {
     protected BrowserDevice(){}
     public BrowserDevice(BossAccount account,String name,String hash,String type,String version,SystemUser user){id=UUID.randomUUID();bossAccount=account;displayName=name;tokenHash=hash;clientType=type;clientVersion=version;status="ACTIVE";runtimeState="OFFLINE";pageContext="NO_BOSS_PAGE";pairedBy=user;createdAt=Instant.now();}
     public void heartbeat(String state,String reason,String context){heartbeat(state,reason,context,Instant.now());}
+    void observeClientVersion(String value){if(value!=null&&!value.isBlank())clientVersion=value;}
     void heartbeat(String state,String reason,String context,Instant now){
         runtimeState=state;stopReason=reason;pageContext=context;lastHeartbeatAt=now;
         if(!"RUNNING".equals(state))markRecoveryRequired(reason,now);

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api, apiErrorMessage, ensureCsrf } from '../services/api'
 import type { Company, HrUser, UserRole } from '../types'
@@ -98,18 +98,16 @@ async function createUser() {
 }
 
 onMounted(load)
+onUnmounted(() => { document.removeEventListener('visibilitychange', onVisChange) })
+function onVisChange() { if (document.visibilityState === 'visible') void load() }
+document.addEventListener('visibilitychange', onVisChange)
 </script>
 
 <template>
   <main class="hr-users-page">
     <header class="page-heading">
-      <div>
-        <span class="eyebrow">系统管理</span>
-        <h1>HR 用户管理</h1>
-        <p>创建并维护进入招聘值守台的 HR 账号，为每个账号分配角色和企业范围。</p>
-      </div>
+      <div></div>
       <div class="heading-actions">
-        <el-button :loading="loading" @click="load">刷新</el-button>
         <el-button type="primary" @click="openCreateDialog">创建 HR 账号</el-button>
       </div>
     </header>
@@ -160,10 +158,10 @@ onMounted(load)
 
 <style scoped>
 .hr-users-page { display: grid; gap: 22px; max-width: 1180px; margin: 0 auto; }
-.page-heading { display:flex; align-items:flex-end; justify-content:space-between; gap:20px; }
+.page-heading { display:flex; align-items:center; justify-content:space-between; gap:20px; margin-bottom:12px; }
 .eyebrow { color:var(--brand-700); font-size:12px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; }
-h1 { margin:8px 0 6px; font-size:clamp(26px,3vw,34px); letter-spacing:-.03em; }
-.page-heading p { margin:0; color:var(--text-secondary); font-size:14px; }
+h1 { margin:0 0 4px; font-size:clamp(18px,1.6vw,22px); letter-spacing:-.01em; }
+.page-heading p { margin:0; color:var(--text-secondary); font-size:13px; }
 .heading-actions { display:flex; gap:10px; flex:0 0 auto; }
 .notice-panel,.users-panel { border:1px solid var(--border); border-radius:var(--radius-panel); background:var(--surface); box-shadow:var(--shadow-card); }
 .notice-panel { display:flex; align-items:flex-start; gap:12px; padding:16px 18px; background:linear-gradient(135deg, color-mix(in srgb,var(--brand-50) 78%,var(--surface)), var(--surface)); }

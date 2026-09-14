@@ -16,7 +16,7 @@ public class JobReplyTemplateService {
     private static final Pattern SALARY = Pattern.compile("(薪资|工资|月薪|年薪|底薪|提成|多少钱|薪酬|待遇)");
     private static final Pattern LOCATION = Pattern.compile("(工作地址|上班地址|工作地点|上班地点|办公地址|在哪里上班|在哪上班|工作地)");
     private static final Pattern RESPONSIBILITIES = Pattern.compile("(工作内容|主要做什么|主要负责|岗位职责|职责是什么|平时做什么|日常工作|干什么|干嘛)");
-    private static final Pattern WORK_TIME = Pattern.compile("(上班时间|工作时间|上下班时间|几点上班|几点下班|打卡时间|休息时间)");
+    private static final Pattern WORK_TIME = Pattern.compile("(上班时间|工作时间|上下班时间|几点上班|几点下班|打卡时间|休息时间|月休|休息几天|每周休息|单双休|大小周)");
     private static final Pattern BENEFITS = Pattern.compile("(福利待遇|福利|五险一金|社保|公积金|补贴|奖金|年终奖|带薪年假)");
     private static final Pattern EXPERIENCE = Pattern.compile("(经验要求|需要经验|工作经验|几年经验|无经验|没有经验|没经验|应届生|应届毕业)");
     private static final Pattern EDUCATION = Pattern.compile("(学历要求|学历|什么学历|大专|本科|中专|高中|硕士|博士)");
@@ -26,7 +26,7 @@ public class JobReplyTemplateService {
     private static final Pattern CONSIDERING = Pattern.compile("(考虑一下|再看看|想一想|先了解一下|回去考虑)");
     private static final Pattern RESUME_WILL_SEND = Pattern.compile("(?:(?:稍后|晚点|一会儿|马上|这就).{0,4}(?:发|发送|投递|上传).{0,6}简历|可以.{0,8}发.{0,4}简历)");
     private static final Pattern RESUME_SENT = Pattern.compile("(?:(?:已|已经|刚刚?|刚才).{0,6}(?:发|发送|投递|上传).{0,6}简历|简历.{0,8}(?:发了|发送了|已发|投递了|上传了))");
-    private static final Pattern DECLINE = Pattern.compile("(不考虑|不太合适|暂时不考虑|没兴趣|不感兴趣)");
+    private static final Pattern DECLINE = Pattern.compile("(不考虑|不再考虑|不在考虑范围|不太合适|不合适|暂时不考虑|没兴趣|不感兴趣|无法接受|不方便入职|不想入职|距离太远|办公地点太远|加班太晚)");
     private static final Pattern CLOSING = Pattern.compile("(再见|拜拜|晚安|先这样|回头联系)");
 
     private static final List<TemplateDefinition> DEFAULTS = List.of(
@@ -43,7 +43,7 @@ public class JobReplyTemplateService {
             new TemplateDefinition("CANDIDATE_CONSIDERING", "好的，您可以先了解和考虑，有需要时随时联系我。", ""),
             new TemplateDefinition("RESUME_WILL_SEND", "好的，您方便时发过来即可，我收到后会及时查看。", ""),
             new TemplateDefinition("RESUME_SENT", "好的，简历已收到，我先看一下，稍后和您沟通。", ""),
-            new TemplateDefinition("CANDIDATE_DECLINE", "好的，了解了，祝您后续求职顺利。", ""),
+            new TemplateDefinition("CANDIDATE_DECLINE", "好的，感谢您的投递。", ""),
             new TemplateDefinition("CONVERSATION_CLOSING", "好的，后续有需要欢迎随时联系。", "")
     );
 

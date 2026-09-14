@@ -66,22 +66,22 @@ public class ResumeAnalysisService {
     }
 
     @Transactional(noRollbackFor = ApiException.class)
-    public ResumeAnalysisResponse reanalyzeStoredPdf(UUID intakeId) {
+    public ResumeAnalysisResponse reanalyzeStoredText(UUID intakeId) {
         SystemUser user = users.requireCurrentUser();
         ResumeIntake intake = requireApprovedIntake(intakeId, user);
         String storedText = intake.getExtractedText();
-        if (storedText != null && !storedText.isBlank()) {
-            return analyzeAcrossActiveJobs(intake, user, cleanResumeText(storedText), "后端已保存的提取文本（未重新提取文件）");
+        if (storedText == null || storedText.isBlank()) {
+            throw new ApiException(HttpStatus.CONFLICT, "RESUME_EXTRACTED_TEXT_NOT_AVAILABLE",
+                    "该简历没有已保存的提取文本；重新分析不会再次提取文件，请先重新导入简历");
         }
-        byte[] content = intake.getSourcePdf();
-        if (content == null || content.length < 5) throw new ApiException(HttpStatus.CONFLICT, "RESUME_SOURCE_PDF_NOT_AVAILABLE", "该简历未保存可重新分析的 PDF 文件");
-        try {
-            malwareScanner.scan(content);
-            String text = imageOcr.supports(content) ? imageOcr.extract(content).text() : documents.extract(content).text();
-            intake.storeExtractedText(text);
-            return analyzeAcrossActiveJobs(intake, user, cleanResumeText(text), "后端已保存的 PDF 文件");
-        } catch (ApiException exception) { throw exception; }
-        catch (RuntimeException exception) { throw new ApiException(HttpStatus.BAD_REQUEST, "RESUME_PDF_REEXTRACT_FAILED", "已保存 PDF 无法重新提取文本"); }
+        String resumeText = cleanResumeText(storedText);
+        if (intake.getSource() == ResumeIntakeSource.BOSS_VISIBLE) {
+            if (intake.getContact().getJobPosition() == null) {
+                throw new ApiException(HttpStatus.CONFLICT, "RESUME_JOB_REQUIRED", "BOSS 简历未关联岗位，无法执行单岗位分析");
+            }
+            return analyzeText(intake, user, resumeText, "BOSS 已保存的提取文本（单岗位重新分析，未重新提取文件）");
+        }
+        return analyzeAcrossActiveJobs(intake, user, resumeText, "外部简历已保存的提取文本（跨岗位重新分析，未重新提取文件）");
     }
 
     @Transactional(noRollbackFor = ApiException.class)
@@ -125,6 +125,7 @@ public class ResumeAnalysisService {
         intake.analysisStarted();
         try {
             ResumeAnalysisResult result = client.analyze(intake.getContact().getJobPosition(), resumeText, actorHash(user));
+            updateVerifiedCandidateName(intake, result.candidateName(), resumeText);
             AiAssistanceRun run = runs.save(AiAssistanceRun.succeeded(
                     intake, user, properties.getModel(), inputHash, result.summary(), mapper.writeValueAsString(result), retention.expiresFrom(Instant.now())
             ));
@@ -133,10 +134,10 @@ public class ResumeAnalysisService {
                     "HR 已确认外部大模型分析（" + source + "）；仅保存输入摘要和结构化结果，不保存简历原文");
             return response(run);
         } catch (ApiException exception) {
-            recordFailure(intake, user, inputHash, exception.getCode());
+            recordFailure(intake, user, inputHash, exception.getCode(), exception.getMessage());
             throw exception;
         } catch (Exception exception) {
-            recordFailure(intake, user, inputHash, "OPENAI_RESULT_PERSIST_FAILED");
+            recordFailure(intake, user, inputHash, "OPENAI_RESULT_PERSIST_FAILED", exception.getMessage());
             throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "RESUME_ANALYSIS_SAVE_FAILED", "简历分析结果保存失败，未生成可用结论");
         }
     }
@@ -151,6 +152,7 @@ public class ResumeAnalysisService {
         intake.analysisStarted();
         try {
             ResumeAnalysisResult result = externalClient.match(accessibleJobs, resumeText, actorHash(user)).analysis();
+            updateVerifiedCandidateName(intake, result.candidateName(), resumeText);
             AiAssistanceRun run = runs.save(AiAssistanceRun.succeeded(
                     intake, user, properties.getModel(), inputHash, result.summary(), mapper.writeValueAsString(result), retention.expiresFrom(Instant.now())
             ));
@@ -159,10 +161,10 @@ public class ResumeAnalysisService {
                     "HR 请求跨岗位重新分析（" + source + "）；仅保存输入摘要和结构化结果，不保存简历原文");
             return response(run);
         } catch (ApiException exception) {
-            recordFailure(intake, user, inputHash, exception.getCode());
+            recordFailure(intake, user, inputHash, exception.getCode(), exception.getMessage());
             throw exception;
         } catch (Exception exception) {
-            recordFailure(intake, user, inputHash, "OPENAI_RESULT_PERSIST_FAILED");
+            recordFailure(intake, user, inputHash, "OPENAI_RESULT_PERSIST_FAILED", exception.getMessage());
             throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "RESUME_ANALYSIS_SAVE_FAILED", "简历分析结果保存失败，未生成可用结论");
         }
     }
@@ -193,11 +195,20 @@ public class ResumeAnalysisService {
         return response(run);
     }
 
-    private void recordFailure(ResumeIntake intake, SystemUser user, String inputHash, String code) {
-        runs.save(AiAssistanceRun.failed(intake, user, properties.getModel(), inputHash, code));
-        intake.analysisUnavailable("FAILED", code, "大模型分析未完成，请检查配置或稍后重试", Instant.now());
+    private void recordFailure(ResumeIntake intake, SystemUser user, String inputHash, String code, String reason) {
+        String detail = reason == null || reason.isBlank() ? "大模型分析未完成，请检查配置或稍后重试" : reason.trim();
+        if (detail.length() > 900) detail = detail.substring(0, 900);
+        runs.save(AiAssistanceRun.failed(intake, user, properties.getModel(), inputHash, code + "：" + detail));
+        intake.analysisUnavailable("FAILED", code, detail.length() > 300 ? detail.substring(0, 300) : detail, Instant.now());
         audit.failure("REQUEST_OPENAI_RESUME_ANALYSIS", "RESUME_INTAKE", intake.getId(), intake.getDisplayLabel(),
-                "大模型简历分析未完成，原因代码：" + code + "；简历原文未写入审计");
+                "大模型简历分析未完成，原因代码：" + code + "；原因：" + detail + "；简历原文未写入审计");
+    }
+
+    private void updateVerifiedCandidateName(ResumeIntake intake, String candidateName, String resumeText) {
+        var candidate = intake.getContact().getCandidate();
+        if (candidate == null || !ResumeCandidateName.isAnonymousPlaceholder(candidate.getDisplayName())) return;
+        String verified = ResumeCandidateName.verified(candidateName, resumeText);
+        if (verified != null) candidate.updateRecognizedName(verified);
     }
 
     private ResumeIntake requireApprovedIntake(UUID id, SystemUser user) {
