@@ -1061,6 +1061,10 @@
     }, delay);
   }
 
+  function isFatalAutoReplyPageState(page) {
+    return ['RISK_OR_VERIFICATION', 'LOGIN_REQUIRED'].includes(page?.code);
+  }
+
   async function haltSingleAccountAutoReply(state) {
     traceAutoReply('AUTO_REPLY_STOPPED', { outcome: 'STOPPED', reason: state });
     singleAccountAutoReplyEnabled = false;
@@ -1170,20 +1174,27 @@
       const page = classifyPage();
       if (!page.ok) {
         const reason = page.reason || '当前页面存在登录、验证或风险状态。';
-        traceAutoReply('PAGE_BLOCKED', { reason, outcome: 'BLOCKED' });
-        return void await haltSingleAccountAutoReply(`持续回复已停止：${reason}`);
+        if (isFatalAutoReplyPageState(page)) {
+          traceAutoReply('PAGE_BLOCKED', { reason, outcome: 'BLOCKED' });
+          return void await haltSingleAccountAutoReply(`持续回复已停止：${reason}`);
+        }
+        traceAutoReply('PAGE_WAITING', { reason, outcome: 'WAITING' });
+        return scheduleSingleAccountAutoReply(3_000);
       }
       // A previous resume import may have left a modal/iframe on top of the
       // conversation page. Close only the currently visible, known resume
       // preview before reading controls or selecting the next queue target.
       // Otherwise the overlay can make the list look unchanged forever.
       if (!await ensureResumePreviewClosedForAutoReply()) {
-        return void await haltSingleAccountAutoReply('持续回复已暂停：简历预览窗口无法确认关闭，请人工关闭后重新开启挂机。');
+        traceAutoReply('RESUME_PREVIEW_CLOSE_WAITING', {
+          outcome: 'WAITING', reason: '简历预览暂未确认关闭，保留挂机状态，稍后重试，不停止整个自动回复。',
+        });
+        return scheduleSingleAccountAutoReply(3_000);
       }
       const currentControls = findReplyControls();
       if (currentControls.editor && readEditorText(currentControls.editor).trim()) {
-        traceAutoReply('EDITOR_BLOCKED', { reason: '当前输入框已有内容，为避免覆盖 HR 草稿未切换会话。', outcome: 'BLOCKED' });
-        return void await haltSingleAccountAutoReply('持续回复已停止：当前输入框已有内容，为避免覆盖 HR 草稿未切换会话。');
+        traceAutoReply('EDITOR_WAITING', { reason: '当前输入框已有内容，为避免覆盖 HR 草稿，等待输入框恢复为空。', outcome: 'WAITING' });
+        return scheduleSingleAccountAutoReply(3_000);
       }
       await refreshDeferredReplyRevalidations();
       // BOSS immediately clears the unread badge when a message arrives in the
@@ -1325,7 +1336,10 @@
         }
         if (!target && !queueHeadPending) {
           const candidate = await findNewOrChangedUnreadConversation();
-          if (candidate.error) return void await haltSingleAccountAutoReply(`持续回复已停止：${candidate.error}`);
+          if (candidate.error) {
+            traceAutoReply('UNREAD_SCAN_WAITING', { outcome: 'WAITING', reason: candidate.error });
+            return scheduleSingleAccountAutoReply(1_500);
+          }
           target = candidate.item;
         }
         if (!target && Date.now() - lastDeepConversationScanAt >= DEEP_SCAN_COOLDOWN_MS) {
@@ -1349,8 +1363,8 @@
         }
       const identity = stableIdentity(target);
       if (!identity) {
-        traceAutoReply('TARGET_INVALID', { outcome: 'BLOCKED', reason: '未读会话没有稳定 DOM 身份，禁止猜测目标。' });
-        return void await haltSingleAccountAutoReply('持续回复已停止：未读会话没有稳定 DOM 身份，禁止猜测目标。');
+        traceAutoReply('TARGET_WAITING', { outcome: 'WAITING', reason: '未读会话暂时没有稳定 DOM 身份，跳过本轮并等待列表重绘。' });
+        return scheduleSingleAccountAutoReply(1_500);
       }
       const expectedChatDigest = await digest(identity);
       traceAutoReply('TARGET_SELECTED', { chatDigest: expectedChatDigest, outcome: 'SUCCESS', reason: '已锁定当前处理会话。' });
@@ -1482,7 +1496,11 @@
           if (findVisibleResumeDialog()) {
             const previewClosed = await ensureResumePreviewClosedForAutoReply(second.chatDigest);
             if (!previewClosed) {
-              return void await haltSingleAccountAutoReply('挂机已暂停：简历处理结束后预览窗口仍未关闭，请人工关闭后重新开启挂机。');
+              traceAutoReply('RESUME_PREVIEW_CLOSE_WAITING', {
+                chatDigest: second.chatDigest, messageDigest: second.messageDigest, outcome: 'WAITING',
+                reason: '简历处理后的预览窗口暂未确认关闭，等待下一轮自动重试。',
+              });
+              return scheduleSingleAccountAutoReply(3_000);
             }
             if (outcome?.chatDigest === second.chatDigest && outcome.error === '简历已导入，但预览窗口未确认关闭') {
               outcome.ok = true;
@@ -1531,8 +1549,8 @@
       }
       const controls = findReplyControls();
       if (!controls.editor || readEditorText(controls.editor).trim()) {
-        traceAutoReply('EDITOR_BLOCKED', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, outcome: 'BLOCKED', reason: !controls.editor ? '未找到可见回复输入框。' : '回复输入框已有内容。' });
-        return void await haltSingleAccountAutoReply('持续回复已停止：目标会话输入框不可用或已有内容，未发送。');
+        traceAutoReply('EDITOR_WAITING', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, outcome: 'WAITING', reason: !controls.editor ? '暂未找到可见回复输入框，等待页面完成渲染。' : '回复输入框已有内容，等待 HR 草稿处理完成。' });
+        return scheduleSingleAccountAutoReply(3_000);
       }
       let decision = queuedDecision;
       if (!decision) {
@@ -1596,9 +1614,13 @@
         return;
       }
       if (!decision?.replyAllowed || !decision.content) {
-        if (decision?.category === 'RATE_LIMIT' || decision?.category === 'DISABLED') {
+        if (decision?.category === 'DISABLED') {
           traceAutoReply('DECISION_BLOCKED', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, outcome: 'BLOCKED', reason: decision.reason || '安全限制已触发。' });
           return void await haltSingleAccountAutoReply(`持续回复已停止：${decision.reason || '安全限制已触发。'}`);
+        }
+        if (decision?.category === 'RATE_LIMIT') {
+          traceAutoReply('DECISION_RATE_LIMIT_WAITING', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, outcome: 'WAITING', reason: decision.reason || '触发频率限制，60 秒后继续。' });
+          return scheduleSingleAccountAutoReply(60_000);
         }
         traceAutoReply('DECISION_SILENT', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, outcome: 'SKIPPED', reason: decision?.reason || '消息不符合自动回复条件。' });
         if (decision?.category !== 'DUPLICATE') {
