@@ -3,6 +3,7 @@ package ai.xzkj.recruitment.localconnector;
 import ai.xzkj.recruitment.common.ApiException;
 import ai.xzkj.recruitment.common.AiUpstreamFailure;
 import ai.xzkj.recruitment.jobs.JobPosition;
+import ai.xzkj.recruitment.jobs.JobReplyIntentMatcher;
 import ai.xzkj.recruitment.jobs.JobReplyTemplateService;
 import ai.xzkj.recruitment.resumes.OpenAiProperties;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,6 +34,7 @@ import java.util.regex.Pattern;
 /** AI 理解意图，AI 仅基于最小岗位事实生成，后端再做确定性事实校验。 */
 @Service
 class InboundJobReplyService {
+    private static final System.Logger LOG = System.getLogger(InboundJobReplyService.class.getName());
     private static final double GROUNDED_MIN_CONFIDENCE = 0.85;
     private static final double SOCIAL_MIN_CONFIDENCE = 0.70;
     private static final int MAX_REPLY_LENGTH = 200;
@@ -69,8 +71,6 @@ class InboundJobReplyService {
     private static final Pattern DETAILED_RESPONSIBILITIES_QUESTION = Pattern.compile(
             "(?s)(?:工作内容|岗位职责|日常工作|主要负责|具体负责|做什么|工作流程).{0,80}(?:具体|详细|每天|日常|流程|全部|完整|介绍)|"
                     + "(?:具体|详细).{0,20}(?:工作内容|岗位职责|日常工作|主要负责|工作流程)");
-    private static final Pattern CANDIDATE_DECLINE = Pattern.compile(
-            "(?:不考虑|不再考虑|不在考虑范围|不太合适|不合适|没兴趣|不感兴趣|无法接受|不方便入职|不想入职|不考虑入职|距离太远|办公地点太远|加班太晚)");
     private static final Pattern INTERVIEW_CANCELLATION = Pattern.compile(
             "(?:(?:取消|不参加|去不了|不去|不方便去|改天再说|先不面|暂不面).{0,12}(?:面试|面谈|约面)|"
                     + "(?:面试|面谈|约面).{0,12}(?:取消|不参加|去不了|不去|不方便去|改天再说|先不面|暂不面)|"
@@ -496,25 +496,55 @@ class InboundJobReplyService {
     }
 
     private JsonNode callModel(ObjectNode payload, String operation) {
+        String clientRequestId = UUID.randomUUID().toString();
+        long started = System.nanoTime();
         try {
-            String clientRequestId = UUID.randomUUID().toString();
+            LOG.log(System.Logger.Level.INFO, "AI_REQUEST_STARTED phase=inbound operation=" + operation
+                    + " requestId=" + clientRequestId + " model=" + properties.getModel());
             HttpRequest request = HttpRequest.newBuilder(responseUri()).timeout(properties.getTimeout()).header("Authorization", "Bearer " + properties.getApiKey()).header("Content-Type", "application/json").header("X-Client-Request-Id", clientRequestId).POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(payload))).build();
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            String providerRequestId = response.headers().firstValue("x-request-id").orElse(clientRequestId);
+            LOG.log(System.Logger.Level.INFO, "AI_REQUEST_RESPONSE phase=inbound operation=" + operation
+                    + " requestId=" + clientRequestId + " providerRequestId=" + providerRequestId
+                    + " status=" + response.statusCode() + " elapsedMs=" + elapsedMillis(started));
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                String providerRequestId = response.headers().firstValue("x-request-id").orElse(clientRequestId);
                 throw AiUpstreamFailure.inbound(operation, response.statusCode(), response.body(), providerRequestId);
             }
-            return mapper.readTree(extractJson(responseBody(mapper.readTree(response.body()))));
+            JsonNode result = mapper.readTree(extractJson(responseBody(mapper.readTree(response.body()))));
+            LOG.log(System.Logger.Level.INFO, "AI_REQUEST_SUCCEEDED phase=inbound operation=" + operation
+                    + " requestId=" + clientRequestId + " elapsedMs=" + elapsedMillis(started));
+            return result;
         } catch (ApiException exception) {
+            LOG.log(System.Logger.Level.WARNING, "AI_REQUEST_FAILED phase=inbound operation=" + operation
+                    + " requestId=" + clientRequestId + " code=" + exception.getCode()
+                    + " elapsedMs=" + elapsedMillis(started) + " detail=" + safeLog(exception.getMessage()));
             throw exception;
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
+            LOG.log(System.Logger.Level.WARNING, "AI_REQUEST_INTERRUPTED phase=inbound operation=" + operation
+                    + " requestId=" + clientRequestId + " elapsedMs=" + elapsedMillis(started));
             throw new ApiException(HttpStatus.BAD_GATEWAY, "INBOUND_REPLY_AI_INTERRUPTED", operation + "被中断");
         } catch (HttpTimeoutException exception) {
+            LOG.log(System.Logger.Level.WARNING, "AI_REQUEST_TIMEOUT phase=inbound operation=" + operation
+                    + " requestId=" + clientRequestId + " timeoutMs=" + properties.getTimeout().toMillis()
+                    + " elapsedMs=" + elapsedMillis(started));
             throw new ApiException(HttpStatus.BAD_GATEWAY, "INBOUND_REPLY_AI_TIMEOUT", operation + "超时");
         } catch (Exception exception) {
+            LOG.log(System.Logger.Level.WARNING, "AI_REQUEST_FAILED phase=inbound operation=" + operation
+                    + " requestId=" + clientRequestId + " code=INBOUND_REPLY_AI_INVALID"
+                    + " elapsedMs=" + elapsedMillis(started) + " detail=" + safeLog(exception.getMessage()));
             throw new ApiException(HttpStatus.BAD_GATEWAY, "INBOUND_REPLY_AI_INVALID", "AI 未返回有效的" + operation + "结果");
         }
+    }
+
+    private long elapsedMillis(long started) {
+        return java.time.Duration.ofNanos(System.nanoTime() - started).toMillis();
+    }
+
+    private String safeLog(String value) {
+        if (value == null || value.isBlank()) return "none";
+        String clean = value.replaceAll("[\\r\\n]+", " ").replaceAll("(?i)(sk[-_][a-z0-9._-]{6,}|api[-_ ]?key\\s*[:=]\\s*)[a-z0-9._-]{6,}", "[REDACTED]").trim();
+        return clean.substring(0, Math.min(240, clean.length()));
     }
 
     private String polishSocialReply(String baseReply) {
@@ -709,7 +739,7 @@ class InboundJobReplyService {
     }
 
     static boolean isCandidateDecline(String rawMessage) {
-        return rawMessage != null && CANDIDATE_DECLINE.matcher(normalize(rawMessage)).find();
+        return JobReplyIntentMatcher.isCandidateDecline(rawMessage);
     }
 
     static boolean isInterviewCancellation(String rawMessage) {

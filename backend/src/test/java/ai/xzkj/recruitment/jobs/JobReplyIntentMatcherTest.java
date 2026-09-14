@@ -1,0 +1,18 @@
+package ai.xzkj.recruitment.jobs;
+
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class JobReplyIntentMatcherTest {
+    @Test
+    void usesOneMatcherForFixedAndSocialIntents() {
+        assertEquals("WORK_TIME", JobReplyIntentMatcher.detectFixedIntent("请问月休几天"));
+        assertEquals("RESUME_SENT", JobReplyIntentMatcher.detectSocialIntent("我刚刚发了简历"));
+        assertEquals("CANDIDATE_DECLINE", JobReplyIntentMatcher.detectSocialIntent("不好意思，距离太远不考虑了"));
+        assertTrue(JobReplyIntentMatcher.isCandidateDecline("办公地点较远，不在考虑范围内"));
+        assertNull(JobReplyIntentMatcher.detectSocialIntent("不好意思，想问一下薪资"));
+    }
+}

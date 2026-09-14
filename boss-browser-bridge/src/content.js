@@ -1160,6 +1160,57 @@
     } });
   }
 
+  async function prepareAutoReplyCycle() {
+    const page = classifyPage();
+    if (!page.ok) {
+      const reason = page.reason || '当前页面存在登录、验证或风险状态。';
+      if (isFatalAutoReplyPageState(page)) {
+        traceAutoReply('PAGE_BLOCKED', { reason, outcome: 'BLOCKED' });
+        await haltSingleAccountAutoReply(`持续回复已停止：${reason}`);
+        return { ready: false, stopped: true };
+      }
+      traceAutoReply('PAGE_WAITING', { reason, outcome: 'WAITING' });
+      return { ready: false, delay: 3_000 };
+    }
+    // A previous resume import may have left a modal/iframe on top of the
+    // conversation page. Close only the currently visible, known resume
+    // preview before reading controls or selecting the next queue target.
+    if (!await ensureResumePreviewClosedForAutoReply()) {
+      traceAutoReply('RESUME_PREVIEW_CLOSE_WAITING', {
+        outcome: 'WAITING', reason: '简历预览暂未确认关闭，保留挂机状态，稍后重试，不停止整个自动回复。',
+      });
+      return { ready: false, delay: 3_000 };
+    }
+    const currentControls = findReplyControls();
+    if (currentControls.editor && readEditorText(currentControls.editor).trim()) {
+      traceAutoReply('EDITOR_WAITING', { reason: '当前输入框已有内容，为避免覆盖 HR 草稿，等待输入框恢复为空。', outcome: 'WAITING' });
+      return { ready: false, delay: 3_000 };
+    }
+    await refreshDeferredReplyRevalidations();
+    return { ready: true };
+  }
+
+  async function collectStableAutoReplySnapshot(target, expectedChatDigest) {
+    singleAccountPendingChatDigest = expectedChatDigest;
+    const switchedConversation = !target.matches(SELECTORS.selectedConversation);
+    if (switchedConversation) target.click();
+    await delay(switchedConversation ? 650 : 120);
+    const first = await collectSelectedConversation();
+    await delay(350);
+    const second = await collectSelectedConversation();
+    if (!first.ok || !second.ok || first.chatDigest !== expectedChatDigest || second.chatDigest !== expectedChatDigest || !sameConversationMessage(first, second)) {
+      traceAutoReply('SNAPSHOT_UNSTABLE', {
+        chatDigest: expectedChatDigest,
+        messageDigest: second?.messageDigest || first?.messageDigest || null,
+        outcome: 'WAITING',
+        reason: !first.ok || !second.ok ? '当前会话读取失败。' : first.chatDigest !== expectedChatDigest || second.chatDigest !== expectedChatDigest ? '会话摘要与目标不一致。' : '连续两次消息摘要不一致，等待页面稳定。',
+      });
+      return null;
+    }
+    traceAutoReply('SNAPSHOT_STABLE', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, outcome: 'SUCCESS', reason: `已完成两次一致复核，方向=${second.direction || 'UNKNOWN'}。` });
+    return second;
+  }
+
   async function processNextUnreadConversation() {
     if (!singleAccountAutoReplyEnabled) return;
     if (singleAccountAutoReplyBusy || autoReplyBusy || collecting) {
@@ -1171,32 +1222,11 @@
     autoReplyTraceRunStartedAt = Date.now();
     autoReplyTraceRunId = `${autoReplyTraceRunStartedAt.toString(36)}-${++autoReplyTraceRunSequence}`;
     try {
-      const page = classifyPage();
-      if (!page.ok) {
-        const reason = page.reason || '当前页面存在登录、验证或风险状态。';
-        if (isFatalAutoReplyPageState(page)) {
-          traceAutoReply('PAGE_BLOCKED', { reason, outcome: 'BLOCKED' });
-          return void await haltSingleAccountAutoReply(`持续回复已停止：${reason}`);
-        }
-        traceAutoReply('PAGE_WAITING', { reason, outcome: 'WAITING' });
-        return scheduleSingleAccountAutoReply(3_000);
+      const preparation = await prepareAutoReplyCycle();
+      if (!preparation.ready) {
+        if (!preparation.stopped) scheduleSingleAccountAutoReply(preparation.delay || 3_000);
+        return;
       }
-      // A previous resume import may have left a modal/iframe on top of the
-      // conversation page. Close only the currently visible, known resume
-      // preview before reading controls or selecting the next queue target.
-      // Otherwise the overlay can make the list look unchanged forever.
-      if (!await ensureResumePreviewClosedForAutoReply()) {
-        traceAutoReply('RESUME_PREVIEW_CLOSE_WAITING', {
-          outcome: 'WAITING', reason: '简历预览暂未确认关闭，保留挂机状态，稍后重试，不停止整个自动回复。',
-        });
-        return scheduleSingleAccountAutoReply(3_000);
-      }
-      const currentControls = findReplyControls();
-      if (currentControls.editor && readEditorText(currentControls.editor).trim()) {
-        traceAutoReply('EDITOR_WAITING', { reason: '当前输入框已有内容，为避免覆盖 HR 草稿，等待输入框恢复为空。', outcome: 'WAITING' });
-        return scheduleSingleAccountAutoReply(3_000);
-      }
-      await refreshDeferredReplyRevalidations();
       // BOSS immediately clears the unread badge when a message arrives in the
       // conversation that is already open. Detect that changed detail first;
       // otherwise a list-only scan sees zero unread rows and silently misses it.
@@ -1368,23 +1398,8 @@
       }
       const expectedChatDigest = await digest(identity);
       traceAutoReply('TARGET_SELECTED', { chatDigest: expectedChatDigest, outcome: 'SUCCESS', reason: '已锁定当前处理会话。' });
-      singleAccountPendingChatDigest = expectedChatDigest;
-      const switchedConversation = !target.matches(SELECTORS.selectedConversation);
-      if (switchedConversation) target.click();
-      await delay(switchedConversation ? 650 : 120);
-      const first = await collectSelectedConversation();
-      await delay(350);
-      const second = await collectSelectedConversation();
-      if (!first.ok || !second.ok || first.chatDigest !== expectedChatDigest || second.chatDigest !== expectedChatDigest || !sameConversationMessage(first, second)) {
-        traceAutoReply('SNAPSHOT_UNSTABLE', {
-          chatDigest: expectedChatDigest,
-          messageDigest: second?.messageDigest || first?.messageDigest || null,
-          outcome: 'WAITING',
-          reason: !first.ok || !second.ok ? '当前会话读取失败。' : first.chatDigest !== expectedChatDigest || second.chatDigest !== expectedChatDigest ? '会话摘要与目标不一致。' : '连续两次消息摘要不一致，等待页面稳定。',
-        });
-        return scheduleSingleAccountAutoReply(1_500);
-      }
-      traceAutoReply('SNAPSHOT_STABLE', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, outcome: 'SUCCESS', reason: `已完成两次一致复核，方向=${second.direction || 'UNKNOWN'}。` });
+      const second = await collectStableAutoReplySnapshot(target, expectedChatDigest);
+      if (!second) return scheduleSingleAccountAutoReply(1_500);
       if (retryTask) {
         if (second.messageDigest !== retryTask.messageDigest) {
           traceAutoReply('AI_RETRY_SKIPPED', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, taskId: retryTask.taskId, outcome: 'SKIPPED', reason: '历史失败任务对应的消息摘要已变化，禁止使用旧任务重试。' });

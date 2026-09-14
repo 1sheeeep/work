@@ -41,6 +41,7 @@ import java.util.concurrent.TimeUnit;
 /** 持久化、按账号 FIFO 串行的入站 AI 回复队列；不同账号可并行。 */
 @Service
 class InboundAiReplyQueueService implements InboundReplyWorkGate {
+    private static final System.Logger LOG = System.getLogger(InboundAiReplyQueueService.class.getName());
     private static final long CLIENT_WAIT_NANOS = 125_000_000_000L;
     private final InboundAiReplyTaskRepository tasks;
     private final BrowserUnreadObservationRepository observations;
@@ -355,6 +356,8 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
                         if (next != null) {
                             next.start(Instant.now());
                             tasks.flush();
+                            LOG.log(System.Logger.Level.INFO, "AI_TASK_STAGE stage=CLAIMED task=" + next.getId()
+                                    + " account=" + accountId + " chatDigest=" + safeDigest(next.getChatDigest()));
                         }
                         return next;
                     });
@@ -370,11 +373,16 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
                     Timer.Sample modelTimer = Timer.start(meters);
                     execution.acquireModelSlot();
                     try {
+                        LOG.log(System.Logger.Level.INFO, "AI_TASK_STAGE stage=AI_REQUEST_STARTED task=" + task.getId()
+                                + " account=" + accountId + " chatDigest=" + safeDigest(task.getChatDigest()));
                         InboundJobReplyService.ConversationRuntime runtime = observations.findById(task.getObservationId())
                                 .map(value -> InboundJobReplyService.ConversationRuntime.from(
                                         value.getConversationStage(), value.getConversationSignals()))
                                 .orElseGet(InboundJobReplyService.ConversationRuntime::empty);
                         evaluated = replies.decide(job, task.getMessageText(), task.getConversationContext(), runtime);
+                        LOG.log(System.Logger.Level.INFO, "AI_TASK_STAGE stage=AI_REQUEST_FINISHED task=" + task.getId()
+                                + " category=" + safeCategory(evaluated.category()) + " allowed=" + evaluated.replyAllowed()
+                                + " retryable=" + evaluated.retryable());
                     }
                     finally {
                         execution.releaseModelSlot();
@@ -431,6 +439,8 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
                 .ifPresent(value -> scheduled[0] = value.retry(code, reason, Instant.now())));
         if (scheduled[0]) {
             meters.counter("recruitment.inbound.reply.retry", "code", code).increment();
+            LOG.log(System.Logger.Level.WARNING, "AI_TASK_STAGE stage=RETRY_SCHEDULED task=" + id
+                    + " code=" + safeCategory(code) + " detail=" + safe(reason));
             recordAiProblem("AI_REPLY_RETRY_SCHEDULED", id, code, reason);
         }
         return scheduled[0];
@@ -439,6 +449,8 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
         transactions.executeWithoutResult(status -> tasks.findById(id)
                 .ifPresent(value -> value.fail(code, reason, Instant.now())));
         meters.counter("recruitment.inbound.reply.failed", "reason", safeCategory(code)).increment();
+        LOG.log(System.Logger.Level.WARNING, "AI_TASK_STAGE stage=FAILED task=" + id
+                + " code=" + safeCategory(code) + " detail=" + safe(reason));
         recordAiProblem("AI_REPLY_TASK_FAILED", id, code, reason);
     }
 
@@ -562,6 +574,17 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
         if (value == null || value.isBlank()) value = error.getClass().getSimpleName();
         value = value.replace('\n', ' ').replace('\r', ' ').trim();
         return value.substring(0, Math.min(240, value.length()));
+    }
+    private String safe(String value) {
+        if (value == null || value.isBlank()) return "none";
+        String clean = value.replace('\n', ' ').replace('\r', ' ')
+                .replaceAll("(?i)(sk[-_][a-z0-9._-]{6,}|api[-_ ]?key\\s*[:=]\\s*)[a-z0-9._-]{6,}", "[REDACTED]")
+                .trim();
+        return clean.substring(0, Math.min(240, clean.length()));
+    }
+    private String safeDigest(String value) {
+        if (value == null || value.isBlank()) return "none";
+        return value.substring(0, Math.min(16, value.length()));
     }
     private String token() { byte[] value=new byte[32];random.nextBytes(value);return Base64.getUrlEncoder().withoutPadding().encodeToString(value); }
     private String hash(String value) { try{return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));}catch(Exception error){throw new IllegalStateException(error);} }

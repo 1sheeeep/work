@@ -23,6 +23,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 @Service
 public class ResumeAnalysisQueueService {
+    private static final System.Logger LOG = System.getLogger(ResumeAnalysisQueueService.class.getName());
     private final ResumeIntakeRepository intakes;
     private final AutomatedResumeAnalysisService analysis;
     private final InboundReplyWorkGate replyWork;
@@ -79,12 +80,15 @@ public class ResumeAnalysisQueueService {
             if (due.isEmpty()) return null;
             ResumeIntake intake = due.get(0);
             if (!intake.claimAnalysis(now)) return null;
+            LOG.log(System.Logger.Level.INFO, "AI_TASK_STAGE stage=CLAIMED task=" + intake.getId()
+                    + " resume=" + safeDigest(intake.getResumeDigest()));
             return intake.getId();
         });
     }
 
     private boolean process(UUID intakeId) {
         try {
+            LOG.log(System.Logger.Level.INFO, "AI_TASK_STAGE stage=STARTED task=" + intakeId);
             // 事务只负责读取已领取的任务；远程 AI 调用必须在事务外执行，避免长时间占用数据库连接。
             ResumeIntake intake = transactions.execute(status -> intakes.findWithDetailsById(intakeId).orElse(null));
             if (intake == null) return true;
@@ -95,6 +99,7 @@ public class ResumeAnalysisQueueService {
             if (insideReplyPriorityWindow && replyWork.hasPendingWork(intake.getContact().getBossAccount().getId())) {
                 transactions.executeWithoutResult(status -> intakes.findById(intakeId)
                         .ifPresent(value -> value.deferAnalysisForReplyPriority(Instant.now())));
+                LOG.log(System.Logger.Level.INFO, "AI_TASK_STAGE stage=DEFERRED_FOR_REPLY task=" + intakeId);
                 return false;
             }
             String text = intake.getExtractedText();
@@ -103,11 +108,16 @@ public class ResumeAnalysisQueueService {
                         value.analysisUnavailable("FAILED", "RESUME_TEXT_NOT_AVAILABLE", "简历提取文本不存在，无法进行 AI 分析", Instant.now())));
             } else {
                 // analyzeInMemory 会执行公网 AI 请求和 AI 运行记录写入，不放在上面的事务中。
+                LOG.log(System.Logger.Level.INFO, "AI_TASK_STAGE stage=AI_REQUEST_STARTED task=" + intakeId);
                 analysis.analyzeInMemory(intake, text);
+                LOG.log(System.Logger.Level.INFO, "AI_TASK_STAGE stage=AI_REQUEST_FINISHED task=" + intakeId
+                        + " analysisStatus=" + intake.getAnalysisStatus()
+                        + " failureCode=" + safeCode(intake.getAnalysisFailureCode()));
                 transactions.executeWithoutResult(status -> intakes.findById(intakeId)
                         .ifPresent(value -> value.copyAnalysisStateFrom(intake)));
             }
             finalizeTask(intakeId);
+            LOG.log(System.Logger.Level.INFO, "AI_TASK_STAGE stage=FINALIZED task=" + intakeId);
             return true;
         } catch (RuntimeException error) {
             // 不能把异常任务当成普通 defer，否则会绕过 attempt 上限形成无限循环。
@@ -120,6 +130,8 @@ public class ResumeAnalysisQueueService {
                 return null;
             });
             finalizeTask(intakeId);
+            LOG.log(System.Logger.Level.WARNING, "AI_TASK_STAGE stage=FAILED task=" + intakeId
+                    + " code=RESUME_ANALYSIS_WORKER_EXCEPTION detail=" + safe(error));
             return true;
         }
     }
@@ -158,6 +170,16 @@ public class ResumeAnalysisQueueService {
         if (value == null || value.isBlank()) value = error == null ? "未知异常" : error.getClass().getSimpleName();
         value = value.replace('\n', ' ').replace('\r', ' ').trim();
         return value.substring(0, Math.min(240, value.length()));
+    }
+
+    private String safeDigest(String value) {
+        if (value == null || value.isBlank()) return "none";
+        return value.substring(0, Math.min(16, value.length()));
+    }
+
+    private String safeCode(String value) {
+        if (value == null || value.isBlank()) return "none";
+        return value.replaceAll("[^A-Za-z0-9_-]", "").substring(0, Math.min(80, value.replaceAll("[^A-Za-z0-9_-]", "").length()));
     }
 
     @PreDestroy
