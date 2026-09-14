@@ -42,7 +42,10 @@ class InboundJobReplyService {
     private static final Pattern UNSAFE_REPLY = Pattern.compile("(?i)(保证录用|一定录用|包过|无需审核|先付款|转账|押金|验证码|身份证号|银行卡|加微信|私下联系|https?://|www\\.)");
     private static final Pattern NUMBER = Pattern.compile("\\d+(?:[.,]\\d+)?");
     private static final Pattern INTERVIEW_WORDS = Pattern.compile("(面试|面谈|约面|到公司|到店|到现场|来公司|过来聊)");
-    private static final Pattern DIRECT_INTERVIEW = Pattern.compile("(面试|面谈|约面|面试官|参加面试|去面试)");
+    private static final Pattern DIRECT_INTERVIEW = Pattern.compile(
+            "(?:(?:什么时候|何时|哪天|几点|时间|安排|预约|确认|改到|推迟|提前).{0,18}(?:面试|面谈|约面|到公司|到店|到现场)|"
+                    + "(?:面试|面谈|约面).{0,18}(?:什么时候|何时|哪天|几点|时间|安排|预约|确认|改到|推迟|提前|可以吗|方便吗|行吗)|"
+                    + "(?:方便|可以).{0,10}(?:过去|到公司|到店|到现场|参加).{0,6}(?:面试|面谈|约面))");
     private static final Pattern STRONG_INTERVIEW_SCHEDULING = Pattern.compile("(那个|这个|约定|面试).{0,8}(时间|日期|安排|改到|推迟|提前)|(?:安排|改到|推迟|提前).{0,8}(?:\\d{1,2}[点时:：]|上午|下午|晚上|明天|后天|周[一二三四五六日天])");
     private static final Pattern TIME_CONFIRMATION = Pattern.compile("(?:今天|明天|后天|大后天|周[一二三四五六日天]|星期[一二三四五六日天]|上午|下午|晚上|中午|\\d{1,2}[点时:：]|\\d{1,2}号).{0,12}(?:可以吗|可以不|方便吗|行吗|没问题|确认|安排)|(?:可以|方便|行|确认|安排).{0,12}(?:今天|明天|后天|周[一二三四五六日天]|上午|下午|晚上|\\d{1,2}[点时:：])");
     private static final Pattern HUMAN_REQUIRED = Pattern.compile("(投诉|举报|欺骗|骗子|不靠谱|态度|骚扰|歧视|劳动仲裁|违法|赔偿|退款|生气|不满|人工|负责人|主管处理)");
@@ -53,7 +56,11 @@ class InboundJobReplyService {
     private static final Pattern PURE_GREETING = Pattern.compile(
             "^(?:(?:你|您)?好|哈喽|hello|hi)[啊呀呢哈哦的了～~。！!，,；;\\s]*$", Pattern.CASE_INSENSITIVE);
     private static final Pattern PURE_ACKNOWLEDGEMENT = Pattern.compile(
-            "^(?:好的?|好哒|嗯+|收到|知道了|明白了|可以|行|没问题)[啊呀呢哈哦的了～~。！!，,；;\\s]*$", Pattern.CASE_INSENSITIVE);
+            "^(?:好的?|好哒|好嘿|好滴|嗯+|收到|知道了|晓得了|明白了|了解了?|可以|行|没问题|ok(?:ay)?)[啊呀呢哈哦的了～~。！!，,；;\\s]*$", Pattern.CASE_INSENSITIVE);
+    private static final String RESUME_RECEIVED_REPLY = "收到，我先看一下您的简历，了解后再和您联系。";
+    private static final Pattern PORTFOLIO_SHARE = Pattern.compile(
+            "(?is)(?:(?:作品|作品集|案例|剪辑作品).{0,60}(?:https?://|链接|网址|发了|发给|看看|看一下)|"
+                    + "(?:https?://\\S+).{0,30}(?:作品|作品集|案例))");
     /** 浏览器桥接器在简历附件提取成功后传入的受控上下文标记，不来自候选人正文。 */
     private static final String RESUME_ATTACHMENT_RECEIPT_CONTEXT = "[SYSTEM_RESUME_ATTACHMENT_RECEIPT]";
     private static final Pattern SALARY_QUESTION = Pattern.compile(
@@ -81,8 +88,17 @@ class InboundJobReplyService {
     private static final Pattern RESUME_PERMISSION_OR_INTEREST = Pattern.compile(
             "(?:(?:可以|可否|能否|方便|能不能).{0,12}(?:发|发送|投递|上传|提供).{0,6}(?:一份|我的)?简历|"
                     + "(?:简历).{0,12}(?:发给|发送给|投递给|给您|给你)|"
-                    + "(?:感兴趣|想应聘|希望应聘|应聘贵公司|盼望回复|期待回复|请考虑下我|觉得自己.{0,6}匹配|小白可以|"
+                    + "(?:感兴趣|想应聘|希望应聘|希望.{0,6}面试机会|应聘贵公司|盼望回复|期待回复|请考虑下我|(?:觉得|感觉)自己.{0,6}(?:匹配|合适)|小白可以|"
                     + "看到.{0,12}(?:接受新人|接受无经验)|(?:岗位|职位).{0,8}(?:接受新人|接受无经验)))");
+    private static final Pattern LONG_RESUME_PERMISSION = Pattern.compile(
+            "(?s)(?:(?:是否|是不是)?(?:可以|可否|能否|能不能|方便).{0,120}"
+                    + "(?:(?:发|发送|投递|上传|提供|提交).{0,30}(?:一?[份分]|个人|我的)?简历|"
+                    + "(?:一?[份分]|个人|我的)?简历.{0,30}(?:发|发送|投递|上传|提供|提交|给您|给你))|"
+                    + "(?:发|发送|投递|上传|提供|提交).{0,30}(?:一?[份分]|个人|我的)?简历.{0,40}"
+                    + "(?:可以吗|行吗|方便吗|可以不|能吗|可否|能否))");
+    private static final Pattern NEGATED_RESUME_PERMISSION = Pattern.compile(
+            "(?s)(?:不想|暂时不|先不|不方便|不能|没法|无法|不可以|不用|不要).{0,20}"
+                    + "(?:(?:发|发送|投递|上传|提供|提交).{0,20}简历|简历.{0,20}(?:发|发送|投递|上传|提供|提交))");
     private static final Pattern SOCIAL_FACT_CLAIM = Pattern.compile("(薪资|工资|月薪|年薪|福利|待遇|工作地址|上班地址|工作地点|上班地点|工作时间|上下班时间|在招|招聘中|录用|通过面试|安排面试|面试时间)");
     /**
      * 明确的求职动作信号。问候可以静默，但一旦同一条消息表达了想沟通、感兴趣、
@@ -117,6 +133,8 @@ class InboundJobReplyService {
     private static final Pattern CLOSING_UTTERANCE = Pattern.compile("(?:不客气|有问题.{0,8}随时|随时.{0,8}(?:联系|沟通|告诉)|先考虑|考虑好.{0,8}联系|先这样|再见|拜拜|晚安)");
     private static final Pattern RESUME_REQUEST = Pattern.compile("(?:(?:发|发送|提供|投递|上传).{0,8}简历|简历.{0,8}(?:发|发送|提供|投递|上传))");
     private static final Pattern RESUME_SENT = Pattern.compile("(?:(?:已|已经|刚|这就|现在)?.{0,4}(?:发|发送|投递|上传).{0,6}简历|简历.{0,8}(?:发了|发送了|已发|投递了|上传了))");
+    private static final Pattern SHORT_RESUME_SENT_CONFIRMATION = Pattern.compile(
+            "^(?:发了|已发|发过去了?|发给您了?|发您了?|已发送|投了|已投|上传了|已上传)[啊呀呢哈哦的了～~。！!，,；;\\s]*$");
     private static final Set<String> SOCIAL_INTENTS = Set.of(
             "GREETING", "SOCIAL_GREETING", "SOCIAL_THANKS", "SOCIAL_ACKNOWLEDGEMENT",
             "CANDIDATE_CONSIDERING", "RESUME_WILL_SEND", "RESUME_SENT", "CANDIDATE_DECLINE", "CONVERSATION_CLOSING");
@@ -608,27 +626,40 @@ class InboundJobReplyService {
                                             ConversationMemory memory, ConversationRuntime runtime) {
         if (RESUME_ATTACHMENT_RECEIPT_CONTEXT.equals(context)) {
             return new Decision(true, "RESUME_SENT", 1.0,
-                    "收到，过后看完简历再和你联系",
+                    RESUME_RECEIVED_REPLY,
                     "简历附件已完成提取，发送一次性收件确认，不重复索要简历");
+        }
+        if (memory.resumeRequestedByHr() && SHORT_RESUME_SENT_CONFIRMATION.matcher(normalize(message)).matches()) {
+            return new Decision(true, "RESUME_SENT", 1.0, RESUME_RECEIVED_REPLY,
+                    "上文已明确由 HR 索要简历，候选人用简短语句确认已发送");
         }
         if (isCandidateDecline(message)) {
             return candidateDeclineReply("已识别候选人明确暂不考虑，发送礼貌收尾，不再继续自动跟进");
         }
         if (runtime.resumeAlreadyReceived() || memory.resumeSentByCandidate()) {
-            return new Decision(true, "RESUME_SENT", 1.0, "收到，过后看完简历再和你联系",
+            return new Decision(true, "RESUME_SENT", 1.0, RESUME_RECEIVED_REPLY,
                     "候选人已发送简历，后续消息统一发送收件确认，不重复展开岗位问答");
+        }
+        if (isResumePermissionQuestion(message)) {
+            return new Decision(true, "RESUME_WILL_SEND", 1.0, "可以",
+                    "已从长消息中提取到候选人询问能否发送简历，使用固定回复，不依赖 AI 解析");
         }
         if (JobReplyIntentMatcher.isMealsLodgingQuestion(message)) {
             return new Decision(true, "MEALS_LODGING", 1.0, "吃住自理",
                     "已命中吃住类统一回复，不调用 AI 或引用岗位事实");
+        }
+        if (PORTFOLIO_SHARE.matcher(message).find()) {
+            return new Decision(true, "OTHER_RECRUITMENT", 1.0,
+                    "收到，我这边会看一下您的作品，后续再和您联系。",
+                    "已识别候选人发送作品或作品链接，仅确认收到，不自动打开外部链接");
         }
         if (isPureAcknowledgement(message)) {
             return new Decision(true, "SOCIAL_ACKNOWLEDGEMENT", 1.0, "好的",
                     "已命中确认类统一回复，使用“好的”保持简洁自然");
         }
         if (isPureGreeting(message)) {
-            return new Decision(true, "SOCIAL_GREETING", 1.0, "你好",
-                    "已命中纯问候固定回复，使用“你好”避免机械回复“好的”");
+            return new Decision(true, "SOCIAL_GREETING", 1.0, "您好",
+                    "已命中纯问候固定回复，不调用 AI");
         }
         if (isPaydayQuestion(message)) {
             String base = "每月15号发薪，具体安排面试时再沟通。";
@@ -669,8 +700,12 @@ class InboundJobReplyService {
             return new Decision(true, "WORK_TIME", 1.0, "工作方面的具体情况，面试的时候会详细解答。",
                     "已命中工作安排问题固定回复，将具体细节留待面试说明");
         }
+        if (BENEFITS_QUESTION.matcher(message).find()) {
+            return new Decision(true, "BENEFITS", 1.0, "社保情况面试时会详细说明。",
+                    "已命中社保类问题安全兜底模板，不猜测未审核的缴纳时间或标准");
+        }
         if (RESUME_ALREADY_SENT_SIGNAL.matcher(normalize(message)).find()) {
-            return new Decision(true, "RESUME_SENT", 1.0, "收到，过后看完简历再和你联系",
+            return new Decision(true, "RESUME_SENT", 1.0, RESUME_RECEIVED_REPLY,
                     "已确认候选人简历已发送，发送固定收件确认，不重复索要简历");
         }
         if (isDetailedJobQuestion(message)) {
@@ -683,7 +718,7 @@ class InboundJobReplyService {
                     reply.equals(base) ? "已命中在招状态固定回复" : "已命中在招状态固定回复并完成轻量 AI 润色");
         }
         if (!isResumePermissionOrJobInterest(message)) return null;
-        String base = "可以，您先发一份简历过来，我看过后再和您沟通。";
+        String base = "可以的，您把简历发过来就行，我先了解一下。";
         String reply = shouldPolishFixedReplies() ? polishSocialReply(base) : base;
         if (!reply.contains("简历")) reply = base;
         return new Decision(true,
@@ -759,7 +794,7 @@ class InboundJobReplyService {
     }
 
     private Decision candidateDeclineReply(String reason) {
-        String base = "感谢您的投递";
+        String base = "感谢投递，祝您求职顺利。";
         String reply = shouldPolishFixedReplies() ? polishSocialReply(base) : base;
         if (reply.isBlank()) reply = base;
         return new Decision(true, "CANDIDATE_DECLINE", 1.0, reply,
@@ -814,6 +849,12 @@ class InboundJobReplyService {
         String message = normalize(rawMessage);
         if (message.isBlank() || message.matches(".*(?:不感兴趣|没兴趣|暂不考虑|不考虑这个岗位).*")) return false;
         return RESUME_PERMISSION_OR_INTEREST.matcher(message).find();
+    }
+
+    static boolean isResumePermissionQuestion(String rawMessage) {
+        String message = normalize(rawMessage);
+        if (message.isBlank() || NEGATED_RESUME_PERMISSION.matcher(message).find()) return false;
+        return LONG_RESUME_PERMISSION.matcher(message).find();
     }
 
     private String polishHiringReply(String baseReply) {
@@ -1064,7 +1105,7 @@ class InboundJobReplyService {
     private GeneratedReply buildActionableFallback(JobPosition job, String rawMessage, Topic topic) {
         String message = normalize(rawMessage);
         if ("RESUME_SENT".equals(topic.category())) {
-            return new GeneratedReply("收到，过后看完简历再和你联系", List.of());
+            return new GeneratedReply(RESUME_RECEIVED_REPLY, List.of());
         }
         if ("RESUME_WILL_SEND".equals(topic.category())) {
             return new GeneratedReply("可以，您直接把简历发来即可，我收到后和您沟通。", List.of());

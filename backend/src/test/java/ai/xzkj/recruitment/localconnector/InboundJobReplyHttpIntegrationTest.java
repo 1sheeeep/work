@@ -306,7 +306,7 @@ class InboundJobReplyHttpIntegrationTest {
 
         assertTrue(result.replyAllowed());
         assertEquals("RESUME_SENT", result.category());
-        assertEquals("收到，过后看完简历再和你联系", result.content());
+        assertEquals("收到，我先看一下您的简历，了解后再和您联系。", result.content());
     }
 
     @Test

@@ -1,4 +1,4 @@
-import { DEFAULT_BACKEND_URL, compactProcessedMessages, consolePathForContext, isJobManagementUrl, isSupportedActionLeaseMode, jobSnapshotSignature, nextConsecutiveFailureCount, pageContextFromUrl, publicStatus, snapshotSignature, validateActionLeaseExecutionResult, validateApprovedDraftFillContext, validateApprovedDraftFillResult, validateBackendUrl, validateControlDomDiagnostic, validateCurrentActionEntryTestResult, validateCurrentTestDraftSendResult, validateDraftFillResult, validateExchangeConfirmationTestResult, validateJobSnapshot, validateSingleAccountBaseline, validateSnapshot, validateValidationReadiness, validateVisibleResumeTextCapture } from './bridge-core.mjs';
+import { DEFAULT_BACKEND_URL, canPollInboundReplyTask, classifyProcessedMessageClaim, compactProcessedMessages, consolePathForContext, isJobManagementUrl, isSupportedActionLeaseMode, jobSnapshotSignature, nextConsecutiveFailureCount, pageContextFromUrl, publicStatus, snapshotSignature, validateActionLeaseExecutionResult, validateApprovedDraftFillContext, validateApprovedDraftFillResult, validateBackendUrl, validateControlDomDiagnostic, validateCurrentActionEntryTestResult, validateCurrentTestDraftSendResult, validateDraftFillResult, validateExchangeConfirmationTestResult, validateJobSnapshot, validateSingleAccountBaseline, validateSnapshot, validateValidationReadiness, validateVisibleResumeTextCapture } from './bridge-core.mjs';
 
 const SETTINGS_KEY = 'bridgeSettingsV1';
 const RUNTIME_KEY = 'bridgeRuntimeV1';
@@ -257,11 +257,21 @@ async function decideInboundReply(payload) {
   const messageKey = `${payload.chatDigest}:${payload.messageDigest}`;
   if (continuous) {
     const claim = await claimSingleAccountMessage(messageKey);
-    if (claim === 'DISABLED') {
+    if (claim.status === 'DISABLED') {
       return { ok: true, decision: { replyAllowed: false, category: 'DISABLED', reason: '单账号持续自动回复已停止。' } };
     }
-    if (claim === 'DUPLICATE') {
-      return { ok: true, decision: { replyAllowed: false, category: 'DUPLICATE', reason: '该条候选人消息已经处理，禁止重复回复。' } };
+    if (claim.status === 'RESUME_TASK') {
+      return { ok: true, pending: true, recovered: true, taskId: claim.task.taskId,
+        resumeReceipt: claim.task.resumeReceipt === true,
+        pendingRowSignature: claim.task.pendingRowSignature || null };
+    }
+    if (['WAITING_CLAIM', 'WAITING_SEND'].includes(claim.status)) {
+      return { ok: true, processing: true, processingState: claim.status,
+        retryAfterMs: Math.min(10_000, Math.max(1_000, Number(claim.retryAfterMs || 2_000))) };
+    }
+    if (claim.status === 'DUPLICATE_TERMINAL') {
+      return { ok: true, decision: { replyAllowed: false, category: 'DUPLICATE', terminal: true,
+        processedOutcome: claim.outcome, reason: '该条候选人消息已有明确处理结果，禁止重复回复。' } };
     }
   } else {
     await setRuntime({ autoReplyTestState: '正在判断候选人消息是否与当前岗位相关…' });
@@ -279,6 +289,12 @@ async function decideInboundReply(payload) {
       method: 'POST', token: settings.deviceToken, body: decisionPayload, timeoutMs: 8_000,
     });
     if (accepted?.status === 'COMPLETED' && accepted.decision) {
+      if (/^[0-9a-f-]{36}$/i.test(accepted.taskId || '')) {
+        await attachSingleAccountTask(messageKey, accepted.taskId, payload.chatDigest, payload.messageDigest, {
+          resumeReceipt,
+          pendingRowSignature: payload.pendingRowSignature,
+        });
+      }
       await updateSingleAccountProcessedMessage(messageKey, accepted.decision.replyAllowed ? 'READY' : 'SILENT');
       return { ok: true, pending: false, decision: accepted.decision };
     }
@@ -325,7 +341,7 @@ async function pollInboundReply(payload) {
   const runtime = await getRuntime();
   const tracked = (runtime.singleAccountProcessedMessages || [])
     .find((item) => item.key === key && item.taskId === payload.taskId && item.outcome === 'PROCESSING');
-  if (!tracked && payload.retryable !== true) return { ok: true, status: 'CANCELLED' };
+  if (!canPollInboundReplyTask(payload, tracked)) return { ok: true, status: 'CANCELLED' };
   let result;
   try {
     result = await request(settings.backendUrl, `/api/local-connector/runtime/inbound-reply-tasks/${payload.taskId}`, {
@@ -417,7 +433,8 @@ async function pendingInboundReplies() {
     if (/^[0-9a-f-]{36}$/i.test(task?.taskId || '') && /^[a-f0-9]{64}$/.test(task?.chatDigest || '')
         && /^[a-f0-9]{64}$/.test(task?.messageDigest || '')) {
       byId.set(task.taskId, { taskId: task.taskId, chatDigest: task.chatDigest,
-        messageDigest: task.messageDigest, resumeReceipt: task.resumeReceipt === true, retryable: false });
+        messageDigest: task.messageDigest, resumeReceipt: task.resumeReceipt === true,
+        retryable: false, recoveredSend: true });
     }
   }
   for (const task of Array.isArray(retryable) ? retryable : []) {
@@ -455,12 +472,14 @@ async function discardStaleInboundReply(payload) {
       || !/^[a-f0-9]{64}$/.test(payload.currentMessageDigest || '')
       || payload.messageDigest === payload.currentMessageDigest
       || !Number.isFinite(Date.parse(payload.currentMessageAt))
+      || (payload.currentDirection != null && !['INBOUND', 'OUTBOUND'].includes(payload.currentDirection))
       || typeof payload.selectedUnread !== 'boolean' || !payload.conversationSignals) throw new Error('旧回复作废参数无效。');
   const settings = await getSettings();
   if (!settings.deviceToken) throw new Error('请先完成本机账号配对。');
   await request(settings.backendUrl, '/api/local-connector/runtime/selected-conversation', {
     method: 'POST', token: settings.deviceToken, body: {
-      chatDigest: payload.chatDigest, messageDigest: payload.currentMessageDigest, direction: 'INBOUND',
+      chatDigest: payload.chatDigest, messageDigest: payload.currentMessageDigest,
+      direction: payload.currentDirection || 'INBOUND',
       messageAt: payload.currentMessageAt, selectedUnread: payload.selectedUnread,
       conversationSignals: payload.conversationSignals, observedAt: new Date().toISOString(),
     }, timeoutMs: 8_000,
@@ -469,7 +488,9 @@ async function discardStaleInboundReply(payload) {
     method: 'POST', token: settings.deviceToken, body: {
       chatDigest: payload.chatDigest, messageDigest: payload.messageDigest,
       currentMessageDigest: payload.currentMessageDigest,
-      reason: '候选人在 AI 分析期间发送了更新消息，旧回复已安全作废。',
+      reason: payload.currentDirection === 'OUTBOUND'
+        ? 'HR 已在候选人消息后发出新回复，旧 AI 回复已安全作废。'
+        : '候选人在 AI 分析期间发送了更新消息，旧回复已安全作废。',
     }, timeoutMs: 8_000,
   });
 }
@@ -582,17 +603,20 @@ async function recordSingleAccountAutoReplyState(payload) {
 }
 
 async function claimSingleAccountMessage(key) {
-  let outcome = 'CLAIMED';
+  let result = { status: 'CLAIMED' };
   await mutateRuntime((runtime) => {
     if (runtime.singleAccountAutoReplyEnabled !== true) {
-      outcome = 'DISABLED';
+      result = { status: 'DISABLED' };
       return {};
     }
-    if ((runtime.singleAccountProcessedMessages || []).some((item) => item.key === key)) {
-      outcome = 'DUPLICATE';
+    const existing = (runtime.singleAccountProcessedMessages || []).find((item) => item.key === key);
+    const classification = classifyProcessedMessageClaim(existing);
+    if (!['CLAIMED', 'RECLAIMED'].includes(classification.status)) {
+      result = classification;
       return {};
     }
-    const entries = [...(runtime.singleAccountProcessedMessages || []), {
+    result = classification;
+    const entries = [...(runtime.singleAccountProcessedMessages || []).filter((item) => item.key !== key), {
       key, outcome: 'PROCESSING', at: new Date().toISOString(),
     }];
     return {
@@ -600,13 +624,14 @@ async function claimSingleAccountMessage(key) {
       singleAccountAutoReplyState: '正在判断未读消息是否与岗位相关…',
     };
   });
-  return outcome;
+  return result;
 }
 
 async function updateSingleAccountProcessedMessage(key, outcome) {
   await mutateRuntime((runtime) => {
+    const previous = (runtime.singleAccountProcessedMessages || []).find((item) => item.key === key) || {};
     const entries = (runtime.singleAccountProcessedMessages || []).filter((item) => item.key !== key);
-    entries.push({ key, outcome, at: new Date().toISOString() });
+    entries.push({ ...previous, key, outcome, at: new Date().toISOString() });
     return { singleAccountProcessedMessages: compactProcessedMessages(entries) };
   });
 }

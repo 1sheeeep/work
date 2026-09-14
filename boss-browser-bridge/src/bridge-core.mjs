@@ -261,6 +261,35 @@ export function compactProcessedMessages(entries, terminalLimit = 200, absoluteL
   return [...terminal, ...processing].slice(-absoluteLimit);
 }
 
+export function classifyProcessedMessageClaim(entry, now = Date.now(), orphanTimeoutMs = 120_000) {
+  if (!entry || typeof entry !== 'object') return { status: 'CLAIMED' };
+  if (['PROCESSING', 'READY'].includes(entry.outcome)
+      && /^[0-9a-f-]{36}$/i.test(entry.taskId || '')
+      && /^[a-f0-9]{64}$/.test(entry.chatDigest || '')
+      && /^[a-f0-9]{64}$/.test(entry.messageDigest || '')) {
+    return { status: 'RESUME_TASK', task: entry };
+  }
+  if (entry.outcome === 'PROCESSING') {
+    const claimedAt = Date.parse(entry.at || '');
+    if (Number.isFinite(claimedAt) && now - claimedAt < orphanTimeoutMs) {
+      return { status: 'WAITING_CLAIM', retryAfterMs: Math.max(1_000, orphanTimeoutMs - (now - claimedAt)) };
+    }
+    return { status: 'RECLAIMED' };
+  }
+  if (entry.outcome === 'READY') {
+    const readyAt = Date.parse(entry.at || '');
+    if (Number.isFinite(readyAt) && now - readyAt < orphanTimeoutMs) {
+      return { status: 'WAITING_SEND', retryAfterMs: Math.max(1_000, orphanTimeoutMs - (now - readyAt)) };
+    }
+    return { status: 'RECLAIMED' };
+  }
+  return { status: 'DUPLICATE_TERMINAL', outcome: String(entry.outcome || 'UNKNOWN') };
+}
+
+export function canPollInboundReplyTask(payload, tracked) {
+  return Boolean(tracked || payload?.retryable === true || payload?.recoveredSend === true);
+}
+
 export function validateSingleAccountBaseline(payload, limit = 500) {
   const validateEntries = (entries) => {
     if (!Array.isArray(entries) || entries.length > limit) throw new Error('持续回复恢复基线无效。');

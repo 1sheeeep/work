@@ -17,7 +17,7 @@ public final class JobReplyIntentMatcher {
     private static final Pattern EDUCATION = Pattern.compile("(学历要求|学历|什么学历|大专|本科|中专|高中|硕士|博士)");
     private static final Pattern SOCIAL_GREETING = Pattern.compile("^(?:你?好|哈喽|hello|hi)[啊呀呢哈哦的了～~。！!，,\\s]*$", Pattern.CASE_INSENSITIVE);
     private static final Pattern SOCIAL_THANKS = Pattern.compile("^(?:谢谢|感谢|多谢)[啊呀呢哈哦的了～~。！!，,\\s]*$");
-    private static final Pattern SOCIAL_ACK = Pattern.compile("^(?:好的?|好哒|嗯+|收到|知道了|明白了|可以|行|没问题)[啊呀呢哈哦的了～~。！!，,\\s]*$");
+    private static final Pattern SOCIAL_ACK = Pattern.compile("^(?:好的?|好哒|好嘿|好滴|嗯+|收到|知道了|晓得了|明白了|了解了?|可以|行|没问题|ok(?:ay)?)[啊呀呢哈哦的了～~。！!，,\\s]*$", Pattern.CASE_INSENSITIVE);
     private static final Pattern CONSIDERING = Pattern.compile("(考虑一下|再看看|想一想|先了解一下|回去考虑)");
     private static final Pattern RESUME_WILL_SEND = Pattern.compile("(?:(?:稍后|晚点|一会儿|马上|这就).{0,4}(?:发|发送|投递|上传).{0,6}简历|可以.{0,8}发.{0,4}简历)");
     private static final Pattern RESUME_SENT = Pattern.compile("(?:(?:已|已经|刚刚?|刚才).{0,6}(?:发|发送|投递|上传).{0,6}简历|简历.{0,8}(?:发了|发送了|已发|投递了|上传了))");

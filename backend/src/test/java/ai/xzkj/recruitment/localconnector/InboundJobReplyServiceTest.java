@@ -22,7 +22,12 @@ class InboundJobReplyServiceTest {
         assertTrue(InboundJobReplyService.isResumePermissionOrJobInterest("我想应聘贵公司的AI应用开发助理，盼望回复，谢谢！"));
         assertTrue(InboundJobReplyService.isResumePermissionOrJobInterest("小白可以吗，很感兴趣，并且会认真学习"));
         assertTrue(InboundJobReplyService.isResumePermissionOrJobInterest("看到这个岗位接受新人，请考虑下我谢谢"));
+        assertTrue(InboundJobReplyService.isResumePermissionOrJobInterest("感觉自己很合适，希望可以有面试机会"));
         assertEquals(false, InboundJobReplyService.isResumePermissionOrJobInterest("暂时不考虑这个岗位"));
+        assertTrue(InboundJobReplyService.isResumePermissionQuestion(
+                "Boss您好，我对这个岗位很感兴趣，之前有过一些相关实习经历，也认真看了岗位介绍，请问我这边可以先发一份简历吗？"));
+        assertTrue(InboundJobReplyService.isResumePermissionQuestion("请问可以发分简历吗"));
+        assertEquals(false, InboundJobReplyService.isResumePermissionQuestion("我暂时不方便发简历"));
     }
 
     @Test
@@ -31,6 +36,10 @@ class InboundJobReplyServiceTest {
         assertTrue(InboundJobReplyService.isPureGreeting("您好！"));
         assertTrue(InboundJobReplyService.isPureAcknowledgement("好的！"));
         assertTrue(InboundJobReplyService.isPureAcknowledgement("可以"));
+        assertTrue(InboundJobReplyService.isPureAcknowledgement("好嘿"));
+        assertTrue(InboundJobReplyService.isPureAcknowledgement("了解了"));
+        assertTrue(InboundJobReplyService.isPureAcknowledgement("OK"));
+        assertEquals(false, InboundJobReplyService.isPureAcknowledgement("好的，请问薪资多少"));
         assertEquals(false, InboundJobReplyService.isPureAcknowledgement("你好"));
         assertTrue(InboundJobReplyService.isDetailedJobQuestion(
                 "您好，大专应届生，有国内电商运营助理实习。薪资无责4k是底薪吗？是否缴纳五险一金，是双休还是大小周？"));
@@ -66,12 +75,12 @@ class InboundJobReplyServiceTest {
         InboundJobReplyService.Decision cancellation = service.decide(job, "不好意思，明天的面试我先取消了");
         assertTrue(cancellation.replyAllowed());
         assertEquals("CANDIDATE_DECLINE", cancellation.category());
-        assertEquals("感谢您的投递", cancellation.content());
+        assertEquals("感谢投递，祝您求职顺利。", cancellation.content());
 
         InboundJobReplyService.Decision cannotAttend = service.decide(job, "非常抱歉，因临时有事，无法按照定时间参加面试。");
         assertTrue(cannotAttend.replyAllowed());
         assertEquals("CANDIDATE_DECLINE", cannotAttend.category());
-        assertEquals("感谢您的投递", cannotAttend.content());
+        assertEquals("感谢投递，祝您求职顺利。", cannotAttend.content());
     }
 
     @Test
@@ -89,10 +98,45 @@ class InboundJobReplyServiceTest {
         assertTrue(acknowledgement.replyAllowed());
         assertEquals("好的", acknowledgement.content());
 
+        InboundJobReplyService.Decision ok = service.decide(job, "OK");
+        assertTrue(ok.replyAllowed());
+        assertEquals("好的", ok.content());
+
+        InboundJobReplyService.Decision greeting = service.decide(job, "你好");
+        assertTrue(greeting.replyAllowed());
+        assertEquals("您好", greeting.content());
+
+        InboundJobReplyService.Decision interviewInterest = service.decide(
+                job, "您好，感觉自己很合适，希望可以有面试机会～");
+        assertTrue(interviewInterest.replyAllowed());
+        assertEquals("JOB_INTEREST", interviewInterest.category());
+        assertEquals("可以的，您把简历发过来就行，我先了解一下。", interviewInterest.content());
+
+        InboundJobReplyService.Decision longResumePermission = service.decide(job,
+                "Boss您好，我是26届毕业生，看到职位介绍后很感兴趣，也有相关项目经历，如果这边还在招聘，我可以先发一份简历吗？");
+        assertTrue(longResumePermission.replyAllowed());
+        assertEquals("RESUME_WILL_SEND", longResumePermission.category());
+        assertEquals("可以", longResumePermission.content());
+
+        InboundJobReplyService.Decision portfolio = service.decide(job,
+                "这个是我的作品，您可以看看：https://example.test/portfolio");
+        assertTrue(portfolio.replyAllowed());
+        assertEquals("收到，我这边会看一下您的作品，后续再和您联系。", portfolio.content());
+
+        InboundJobReplyService.Decision benefits = service.decide(job, "入职购买社保吗");
+        assertTrue(benefits.replyAllowed());
+        assertEquals("社保情况面试时会详细说明。", benefits.content());
+
         InboundJobReplyService.Decision afterResume = service.decide(job, "我再了解一下工作内容", "",
                 new InboundJobReplyService.ConversationRuntime("RESUME_RECEIVED", true, false, false, false));
         assertTrue(afterResume.replyAllowed());
-        assertEquals("收到，过后看完简历再和你联系", afterResume.content());
+        assertEquals("收到，我先看一下您的简历，了解后再和您联系。", afterResume.content());
+
+        InboundJobReplyService.Decision shortResumeConfirmation = service.decide(job, "发了",
+                "HR：方便的话发一份简历过来\n候选人：发了");
+        assertTrue(shortResumeConfirmation.replyAllowed());
+        assertEquals("RESUME_SENT", shortResumeConfirmation.category());
+        assertEquals("收到，我先看一下您的简历，了解后再和您联系。", shortResumeConfirmation.content());
     }
 
     @Test
@@ -115,6 +159,7 @@ class InboundJobReplyServiceTest {
         assertEquals(true, InboundJobReplyService.isInterviewCoordination("那个时间安排在4点可以不？", ""));
         assertEquals(true, InboundJobReplyService.isInterviewCoordination("面试改到明天上午方便吗？", ""));
         assertEquals(false, InboundJobReplyService.isInterviewCoordination("请问这个岗位几点上下班？", "候选人：我想了解工作时间"));
+        assertEquals(false, InboundJobReplyService.isInterviewCoordination("感觉自己很合适，希望可以有面试机会", ""));
     }
 
     @Test

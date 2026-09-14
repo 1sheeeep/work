@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { compactProcessedMessages, consolePathForContext, isJobManagementUrl, isSupportedActionLeaseMode, jobSnapshotSignature, nextConsecutiveFailureCount, pageContextFromUrl, publicStatus, snapshotSignature, validateActionLeaseExecutionResult, validateApprovedDraftFillContext, validateApprovedDraftFillResult, validateBackendUrl, validateControlDomDiagnostic, validateCurrentActionEntryTestResult, validateCurrentTestDraftSendResult, validateDraftFillResult, validateExchangeConfirmationTestResult, validateJobSnapshot, validateSingleAccountBaseline, validateSnapshot, validateValidationReadiness, validateVisibleResumeTextCapture } from '../src/bridge-core.mjs';
+import { canPollInboundReplyTask, classifyProcessedMessageClaim, compactProcessedMessages, consolePathForContext, isJobManagementUrl, isSupportedActionLeaseMode, jobSnapshotSignature, nextConsecutiveFailureCount, pageContextFromUrl, publicStatus, snapshotSignature, validateActionLeaseExecutionResult, validateApprovedDraftFillContext, validateApprovedDraftFillResult, validateBackendUrl, validateControlDomDiagnostic, validateCurrentActionEntryTestResult, validateCurrentTestDraftSendResult, validateDraftFillResult, validateExchangeConfirmationTestResult, validateJobSnapshot, validateSingleAccountBaseline, validateSnapshot, validateValidationReadiness, validateVisibleResumeTextCapture } from '../src/bridge-core.mjs';
 
 const digest = 'a'.repeat(64);
 const digest2 = 'b'.repeat(64);
@@ -14,6 +14,25 @@ test('retains every in-flight AI task while bounding terminal history', () => {
   assert.equal(compacted.filter((item) => item.outcome !== 'PROCESSING').length, 200);
   assert.equal(compacted.some((item) => item.key === 'done-0'), false);
   assert.equal(compacted.some((item) => item.key === 'done-259'), true);
+});
+
+test('distinguishes resumable, orphaned and terminal message claims', () => {
+  const now = Date.parse('2026-09-14T14:00:00.000Z');
+  assert.equal(classifyProcessedMessageClaim(null, now).status, 'CLAIMED');
+  assert.equal(classifyProcessedMessageClaim({ outcome: 'PROCESSING', at: '2026-09-14T13:59:30.000Z' }, now).status, 'WAITING_CLAIM');
+  assert.equal(classifyProcessedMessageClaim({ outcome: 'PROCESSING', at: '2026-09-14T13:57:00.000Z' }, now).status, 'RECLAIMED');
+  assert.equal(classifyProcessedMessageClaim({ outcome: 'PROCESSING', taskId: '12345678-1234-1234-1234-123456789012', chatDigest: digest, messageDigest: digest2 }, now).status, 'RESUME_TASK');
+  assert.equal(classifyProcessedMessageClaim({ outcome: 'READY', taskId: '12345678-1234-1234-1234-123456789012', chatDigest: digest, messageDigest: digest2 }, now).status, 'RESUME_TASK');
+  assert.equal(classifyProcessedMessageClaim({ outcome: 'READY', at: '2026-09-14T13:59:30.000Z' }, now).status, 'WAITING_SEND');
+  assert.equal(classifyProcessedMessageClaim({ outcome: 'READY', at: '2026-09-14T13:57:00.000Z' }, now).status, 'RECLAIMED');
+  assert.deepEqual(classifyProcessedMessageClaim({ outcome: 'SENT' }, now), { status: 'DUPLICATE_TERMINAL', outcome: 'SENT' });
+});
+
+test('polls backend-recovered ready tasks without weakening ordinary task tracking', () => {
+  assert.equal(canPollInboundReplyTask({}, null), false);
+  assert.equal(canPollInboundReplyTask({}, { outcome: 'PROCESSING' }), true);
+  assert.equal(canPollInboundReplyTask({ retryable: true }, null), true);
+  assert.equal(canPollInboundReplyTask({ recoveredSend: true }, null), true);
 });
 
 test('accepts only bounded anonymous restart baselines', () => {
