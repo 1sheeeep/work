@@ -15,11 +15,11 @@ import java.time.Duration;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.Semaphore;
 
 /**
  * 简历后台分析队列。文件提取与会话回复完全解耦，数据库状态负责恢复，
- * 同一实例始终只运行一个分析 worker；服务重启后会继续处理未完成任务。
+ * 分析 worker 使用有界并发；服务重启后会继续处理未完成任务。
  */
 @Service
 public class ResumeAnalysisQueueService {
@@ -27,20 +27,22 @@ public class ResumeAnalysisQueueService {
     private final AutomatedResumeAnalysisService analysis;
     private final InboundReplyWorkGate replyWork;
     private final TransactionTemplate transactions;
-    private final ExecutorService worker = Executors.newSingleThreadExecutor();
-    private final AtomicBoolean draining = new AtomicBoolean();
+    private final ExecutorService worker = Executors.newVirtualThreadPerTaskExecutor();
+    private final Semaphore analysisSlots;
     @Value("${app.resume.analysis-queue.enabled:true}") private boolean enabled;
-    @Value("${app.resume.analysis-queue.max-reply-priority-wait:60s}") private Duration maxReplyPriorityWait = Duration.ofSeconds(60);
+    @Value("${app.resume.analysis-queue.max-reply-priority-wait:0s}") private Duration maxReplyPriorityWait = Duration.ZERO;
 
     public ResumeAnalysisQueueService(ResumeIntakeRepository intakes,
                                       AutomatedResumeAnalysisService analysis,
                                       InboundReplyWorkGate replyWork,
-                                      PlatformTransactionManager manager) {
+                                      PlatformTransactionManager manager,
+                                      @Value("${app.resume.analysis-queue.concurrency:2}") int configuredConcurrency) {
         this.intakes = intakes;
         this.analysis = analysis;
         this.replyWork = replyWork;
         this.transactions = new TransactionTemplate(manager);
         this.transactions.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        this.analysisSlots = new Semaphore(Math.max(1, Math.min(configuredConcurrency, 8)), true);
     }
 
     /** 在提取成功的同一事务中调用，确保简历不会因进程重启而丢失。 */
@@ -51,21 +53,27 @@ public class ResumeAnalysisQueueService {
     @Scheduled(fixedDelayString = "${app.resume.analysis-queue.poll-interval:2s}",
             initialDelayString = "${app.resume.analysis-queue.initial-delay:5s}")
     public void scheduleDrain() {
-        if (!enabled || !draining.compareAndSet(false, true)) return;
-        worker.execute(() -> {
+        if (!enabled) return;
+        while (analysisSlots.tryAcquire()) {
+            UUID intakeId;
             try {
-                drain();
-            } finally {
-                draining.set(false);
+                intakeId = claimNext();
+            } catch (RuntimeException error) {
+                analysisSlots.release();
+                throw error;
             }
-        });
-    }
-
-    private void drain() {
-        while (enabled) {
-            UUID intakeId = claimNext();
-            if (intakeId == null) return;
-            if (!process(intakeId)) return;
+            if (intakeId == null) {
+                analysisSlots.release();
+                return;
+            }
+            UUID claimedIntakeId = intakeId;
+            worker.execute(() -> {
+                try {
+                    process(claimedIntakeId);
+                } finally {
+                    analysisSlots.release();
+                }
+            });
         }
     }
 
@@ -90,7 +98,8 @@ public class ResumeAnalysisQueueService {
                 ResumeIntake intake = intakes.findWithDetailsById(intakeId).orElse(null);
                 if (intake == null) return true;
                 Instant now = Instant.now();
-                boolean insideReplyPriorityWindow = intake.getAnalysisQueueQueuedAt() != null
+                boolean insideReplyPriorityWindow = maxReplyPriorityWait != null && !maxReplyPriorityWait.isZero()
+                        && !maxReplyPriorityWait.isNegative() && intake.getAnalysisQueueQueuedAt() != null
                         && intake.getAnalysisQueueQueuedAt().plus(maxReplyPriorityWait).isAfter(now);
                 if (insideReplyPriorityWindow && replyWork.hasPendingWork(intake.getContact().getBossAccount().getId())) return false;
                 String text = intake.getExtractedText();

@@ -4,6 +4,8 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
+import java.time.Duration;
 
 /** 进程内执行协调：同账号只允许一个 drain，不同账号共享有界 AI 并发。 */
 final class InboundReplyExecutionCoordinator {
@@ -26,6 +28,11 @@ final class InboundReplyExecutionCoordinator {
 
     void acquireModelSlot() throws InterruptedException {
         modelSlots.acquire();
+    }
+
+    boolean tryAcquireModelSlot(Duration timeout) throws InterruptedException {
+        Duration safe = timeout == null || timeout.isNegative() ? Duration.ZERO : timeout;
+        return modelSlots.tryAcquire(safe.toNanos(), TimeUnit.NANOSECONDS);
     }
 
     void releaseModelSlot() {

@@ -4,6 +4,11 @@ spring:
   threads:
     virtual:
       enabled: true
+  task:
+    scheduling:
+      pool:
+        size: 4
+      thread-name-prefix: recruitment-scheduler-
   lifecycle:
     timeout-per-shutdown-phase: 70s
   datasource:
@@ -98,6 +103,7 @@ app:
     # 复核仍必须通过最新 chat/message digest、岗位归属和会话详情校验。
     silent-revalidation-delay: ${APP_INBOUND_REPLY_SILENT_REVALIDATION_DELAY:PT10S}
     model-concurrency: ${APP_INBOUND_REPLY_MODEL_CONCURRENCY:8}
+    model-slot-wait-timeout: ${APP_INBOUND_REPLY_MODEL_SLOT_WAIT_TIMEOUT:10s}
     max-pending-per-account: ${APP_INBOUND_REPLY_MAX_PENDING_PER_ACCOUNT:100}
     max-pending-global: ${APP_INBOUND_REPLY_MAX_PENDING_GLOBAL:1000}
     send-limit-per-hour: ${APP_INBOUND_REPLY_SEND_LIMIT_PER_HOUR:20}
@@ -105,8 +111,10 @@ app:
   resume:
     analysis-queue:
       enabled: ${APP_RESUME_ANALYSIS_QUEUE_ENABLED:true}
+      concurrency: ${APP_RESUME_ANALYSIS_QUEUE_CONCURRENCY:2}
       poll-interval: ${APP_RESUME_ANALYSIS_QUEUE_POLL_INTERVAL:2s}
       initial-delay: ${APP_RESUME_ANALYSIS_QUEUE_INITIAL_DELAY:5s}
+      max-reply-priority-wait: ${APP_RESUME_ANALYSIS_QUEUE_MAX_REPLY_PRIORITY_WAIT:0s}
     malware-scan:
       enabled: ${APP_RESUME_MALWARE_SCAN_ENABLED:false}
       host: ${APP_RESUME_MALWARE_SCAN_HOST:clamav}

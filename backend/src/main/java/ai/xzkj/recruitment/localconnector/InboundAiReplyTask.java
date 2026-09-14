@@ -67,6 +67,7 @@ class InboundAiReplyTask {
     }
 
     void start(Instant now){status="PROCESSING";attemptCount++;startedAt=now;updatedAt=now;}
+    void requeueAfterModelCapacity(Instant now){if(!"PROCESSING".equals(status))return;status="QUEUED";attemptCount=Math.max(0,attemptCount-1);startedAt=null;nextAttemptAt=now;updatedAt=now;}
     void complete(InboundJobReplyService.Decision decision,Instant now){if(!"PROCESSING".equals(status))return;status="COMPLETED";replyAllowed=decision.replyAllowed();category=decision.category();confidence=decision.confidence();replyContent=decision.content();resultReason=bounded(decision.reason());sendStatus=decision.replyAllowed()?"READY":"SKIPPED";conversationContext=null;nextAttemptAt=null;lastErrorCode=null;completedAt=now;updatedAt=now;}
     void fail(String reason,Instant now){fail(lastErrorCode,reason,now);}
     void fail(String code,String reason,Instant now){status="FAILED";replyAllowed=false;category="UNCERTAIN";confidence=0d;replyContent=null;resultReason=bounded(reason);lastErrorCode=boundedCode(code);sendStatus="SKIPPED";conversationContext=null;nextAttemptAt=null;completedAt=now;updatedAt=now;}

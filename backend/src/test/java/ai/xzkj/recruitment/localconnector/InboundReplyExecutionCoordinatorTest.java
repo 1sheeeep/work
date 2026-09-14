@@ -3,6 +3,7 @@ package ai.xzkj.recruitment.localconnector;
 import org.junit.jupiter.api.Test;
 
 import java.util.UUID;
+import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -55,6 +56,14 @@ class InboundReplyExecutionCoordinatorTest {
         coordinator.releaseModelSlot();
         waiting.join();
         assertThat(coordinator.availableModelSlots()).isEqualTo(2);
+    }
+
+    @Test
+    void timesOutWhenModelCapacityIsUnavailable() throws Exception {
+        InboundReplyExecutionCoordinator coordinator = new InboundReplyExecutionCoordinator(1);
+        coordinator.acquireModelSlot();
+        assertThat(coordinator.tryAcquireModelSlot(Duration.ZERO)).isFalse();
+        coordinator.releaseModelSlot();
     }
 
     @Test
