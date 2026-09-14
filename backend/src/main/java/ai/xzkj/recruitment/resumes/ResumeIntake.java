@@ -35,6 +35,12 @@ import java.util.UUID;
  void analysisStarted(){analysisStatus="ANALYZING";analysisFailureCode=null;analysisFailureReason=null;analysisCompletedAt=null;}
  void analysisSucceeded(Instant now){analysisStatus="SUCCEEDED";analysisFailureCode=null;analysisFailureReason=null;analysisCompletedAt=now;}
  void analysisUnavailable(String status,String code,String reason,Instant now){analysisStatus=status;analysisFailureCode=code;analysisFailureReason=reason;analysisCompletedAt=now;}
+ void copyAnalysisStateFrom(ResumeIntake analyzed){
+  if(analyzed==null)return;
+  analysisStatus=analyzed.analysisStatus;analysisFailureCode=analyzed.analysisFailureCode;
+  analysisFailureReason=analyzed.analysisFailureReason;analysisCompletedAt=analyzed.analysisCompletedAt;
+  updatedAt=Instant.now();
+ }
  void queueAnalysis(Instant now){if("SUCCEEDED".equals(analysisQueueStatus)||"PROCESSING".equals(analysisQueueStatus))return;if("FAILED".equals(analysisQueueStatus)||"NONE".equals(analysisQueueStatus))analysisQueueAttempts=0;analysisQueueStatus="QUEUED";analysisQueueNextAttemptAt=now;analysisQueueQueuedAt=now;analysisQueueLeaseUntil=null;analysisQueueLastError=null;updatedAt=now;}
  boolean claimAnalysis(Instant now){if(analysisQueueAttempts>=MAX_ANALYSIS_ATTEMPTS){failAnalysisQueue("AI 分析重试次数已达上限",now);return false;}analysisQueueStatus="PROCESSING";analysisQueueAttempts++;analysisQueueLeaseUntil=now.plusSeconds(180);analysisQueueNextAttemptAt=null;updatedAt=now;return true;}
  void deferAnalysisForReplyPriority(Instant now){analysisQueueStatus="QUEUED";analysisQueueAttempts=Math.max(0,analysisQueueAttempts-1);analysisQueueNextAttemptAt=now.plusSeconds(5);analysisQueueLeaseUntil=null;updatedAt=now;}

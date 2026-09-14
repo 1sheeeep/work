@@ -103,9 +103,8 @@ public class AutomatedResumeAnalysisService {
         String name = ResumeCandidateName.verified(candidateName, extractedText);
         if (name == null) return;
         candidate.updateRecognizedName(name);
-        // The worker runs inside a transaction, but an explicit flush is intentional:
-        // the talent profile and the AI run must become visible together even when the
-        // analysis is executed from the asynchronous queue.
+        // The analysis worker may run outside the intake transaction. Flush the
+        // independently updated talent profile explicitly before the AI run is finalized.
         if (candidates != null) candidates.saveAndFlush(candidate);
     }
 

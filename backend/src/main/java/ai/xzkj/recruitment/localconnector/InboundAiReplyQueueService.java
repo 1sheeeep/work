@@ -348,8 +348,9 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
                 InboundAiReplyTask task;
                 try {
                     task = transactions.execute(status -> {
-                        if (tasks.existsByAccountIdAndStatus(accountId, "RETRY_WAIT")
-                                || tasks.existsByAccountIdAndStatus(accountId, "PROCESSING")) return null;
+                        // RETRY_WAIT 属于历史/当前任务的退避状态，不能阻塞同账号刚到达的实时消息。
+                        // PROCESSING 仍需保留，避免同一账号出现两个正在读取会话上下文的任务。
+                        if (tasks.existsByAccountIdAndStatus(accountId, "PROCESSING")) return null;
                         InboundAiReplyTask next = tasks.findFirstByAccountIdAndStatusOrderByCreatedAtAsc(accountId, "QUEUED").orElse(null);
                         if (next != null) {
                             next.start(Instant.now());

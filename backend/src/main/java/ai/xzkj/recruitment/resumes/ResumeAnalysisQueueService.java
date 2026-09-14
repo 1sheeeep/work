@@ -84,23 +84,31 @@ public class ResumeAnalysisQueueService {
     }
 
     private boolean process(UUID intakeId) {
-        Boolean processed = false;
         try {
-            processed = transactions.execute(status -> {
-                ResumeIntake intake = intakes.findWithDetailsById(intakeId).orElse(null);
-                if (intake == null) return true;
-                Instant now = Instant.now();
-                boolean insideReplyPriorityWindow = intake.getAnalysisQueueQueuedAt() != null
-                        && intake.getAnalysisQueueQueuedAt().plus(maxReplyPriorityWait).isAfter(now);
-                if (insideReplyPriorityWindow && replyWork.hasPendingWork(intake.getContact().getBossAccount().getId())) return false;
-                String text = intake.getExtractedText();
-                if (text == null || text.isBlank()) {
-                    intake.analysisUnavailable("FAILED", "RESUME_TEXT_NOT_AVAILABLE", "简历提取文本不存在，无法进行 AI 分析", Instant.now());
-                } else {
-                    analysis.analyzeInMemory(intake, text);
-                }
-                return true;
-            });
+            // 事务只负责读取已领取的任务；远程 AI 调用必须在事务外执行，避免长时间占用数据库连接。
+            ResumeIntake intake = transactions.execute(status -> intakes.findWithDetailsById(intakeId).orElse(null));
+            if (intake == null) return true;
+            Instant now = Instant.now();
+            boolean insideReplyPriorityWindow = maxReplyPriorityWait != null && !maxReplyPriorityWait.isZero()
+                    && !maxReplyPriorityWait.isNegative() && intake.getAnalysisQueueQueuedAt() != null
+                    && intake.getAnalysisQueueQueuedAt().plus(maxReplyPriorityWait).isAfter(now);
+            if (insideReplyPriorityWindow && replyWork.hasPendingWork(intake.getContact().getBossAccount().getId())) {
+                transactions.executeWithoutResult(status -> intakes.findById(intakeId)
+                        .ifPresent(value -> value.deferAnalysisForReplyPriority(Instant.now())));
+                return false;
+            }
+            String text = intake.getExtractedText();
+            if (text == null || text.isBlank()) {
+                transactions.executeWithoutResult(status -> intakes.findById(intakeId).ifPresent(value ->
+                        value.analysisUnavailable("FAILED", "RESUME_TEXT_NOT_AVAILABLE", "简历提取文本不存在，无法进行 AI 分析", Instant.now())));
+            } else {
+                // analyzeInMemory 会执行公网 AI 请求和 AI 运行记录写入，不放在上面的事务中。
+                analysis.analyzeInMemory(intake, text);
+                transactions.executeWithoutResult(status -> intakes.findById(intakeId)
+                        .ifPresent(value -> value.copyAnalysisStateFrom(intake)));
+            }
+            finalizeTask(intakeId);
+            return true;
         } catch (RuntimeException error) {
             // 不能把异常任务当成普通 defer，否则会绕过 attempt 上限形成无限循环。
             transactions.execute(status -> {
@@ -114,18 +122,6 @@ public class ResumeAnalysisQueueService {
             finalizeTask(intakeId);
             return true;
         }
-        if (!Boolean.TRUE.equals(processed)) {
-            transactions.execute(status -> {
-                ResumeIntake intake = intakes.findById(intakeId).orElse(null);
-                if (intake != null) intake.deferAnalysisForReplyPriority(Instant.now());
-                return null;
-            });
-            // Continue with another due intake. The deferred item is hidden for
-            // five seconds and its attempt budget was restored.
-            return true;
-        }
-        finalizeTask(intakeId);
-        return true;
     }
 
     private void finalizeTask(UUID intakeId) {

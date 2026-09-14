@@ -6,6 +6,7 @@ import ai.xzkj.recruitment.jobs.JobPosition;
 import ai.xzkj.recruitment.jobs.JobReplyTemplateService;
 import ai.xzkj.recruitment.resumes.OpenAiProperties;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.JsonNode;
@@ -136,6 +137,9 @@ class InboundJobReplyService {
     private final HttpClient client;
     private final HrReplyExampleService replyExamples;
     private final JobReplyTemplateService replyTemplates;
+    /** 固定话术默认不再额外调用模型；需要自然化时可显式打开。 */
+    @Value("${app.inbound-reply.fixed-reply-ai-polish-enabled:false}")
+    private boolean fixedReplyAiPolishEnabled;
 
     @Autowired
     InboundJobReplyService(OpenAiProperties properties, ObjectMapper mapper, HrReplyExampleService replyExamples,
@@ -184,7 +188,7 @@ class InboundJobReplyService {
                     JobReplyTemplateService.RenderedReply rendered = socialReply.get();
                     String content = isCourtesyIntent(rendered.intent())
                             ? courtesyReply()
-                            : properties.isConfigured()
+                            : shouldPolishFixedReplies()
                                 ? polishSocialReply(rendered.content()) : rendered.content();
                     return new Decision(true, rendered.intent(), 1.0, content,
                             content.equals(rendered.content()) ? rendered.reason() : "已命中社交模板并完成轻量 AI 语气润色");
@@ -539,7 +543,7 @@ class InboundJobReplyService {
      */
     private String polishFactReply(String baseReply, String protectedFact) {
         if (baseReply == null || baseReply.isBlank() || protectedFact == null || protectedFact.isBlank()
-                || !properties.isConfigured()) return baseReply;
+                || !shouldPolishFixedReplies()) return baseReply;
         ObjectNode payload = basePayload(160);
         payload.put("temperature", 0.2);
         ArrayNode messages = payload.putArray("messages");
@@ -599,14 +603,14 @@ class InboundJobReplyService {
         }
         if (isNoExperienceQuestion(message)) {
             String base = "可以的，您先发一份简历过来，我了解后再和您沟通。";
-            String reply = properties.isConfigured() ? polishSocialReply(base) : base;
+            String reply = shouldPolishFixedReplies() ? polishSocialReply(base) : base;
             if (!reply.contains("简历")) reply = base;
             return new Decision(true, "JOB_INTEREST", 1.0, reply,
                     reply.equals(base) ? "已命中无经验求职固定回复" : "已命中无经验求职固定回复并完成轻量 AI 润色");
         }
         if (isRoleConfirmationQuestion(job, message)) {
             String base = "是的，方便发一份简历，再详细沟通。";
-            String reply = properties.isConfigured() ? polishSocialReply(base) : base;
+            String reply = shouldPolishFixedReplies() ? polishSocialReply(base) : base;
             if (!reply.contains("简历")) reply = base;
             return new Decision(true, "JOB_INTEREST", 1.0, reply,
                     reply.equals(base) ? "已命中岗位方向确认固定回复" : "已命中岗位方向确认固定回复并完成轻量 AI 润色");
@@ -636,7 +640,7 @@ class InboundJobReplyService {
         }
         if (isHiringStatusInquiry(message) || latestCandidateHiringInquiry(context)) {
             String base = "招人的，方便发简历过来。";
-            String reply = properties.isConfigured() ? polishHiringReply(base) : base;
+            String reply = shouldPolishFixedReplies() ? polishHiringReply(base) : base;
             return new Decision(true, "JOB_STATUS", 1.0, reply,
                     reply.equals(base) ? "已命中在招状态固定回复" : "已命中在招状态固定回复并完成轻量 AI 润色");
         }
@@ -646,7 +650,7 @@ class InboundJobReplyService {
                     "已确认简历已收到，未重复索要简历");
         }
         String base = "可以，您先发一份简历过来，我看过后再和您沟通。";
-        String reply = properties.isConfigured() ? polishSocialReply(base) : base;
+        String reply = shouldPolishFixedReplies() ? polishSocialReply(base) : base;
         if (!reply.contains("简历")) reply = base;
         return new Decision(true,
                 RESUME_WILL_SEND_SIGNAL.matcher(normalize(message)).find() ? "RESUME_WILL_SEND" : "JOB_INTEREST",
@@ -722,7 +726,7 @@ class InboundJobReplyService {
 
     private Decision candidateDeclineReply(String reason) {
         String base = "好的，感谢您的投递。";
-        String reply = properties.isConfigured() ? polishSocialReply(base) : base;
+        String reply = shouldPolishFixedReplies() ? polishSocialReply(base) : base;
         if (reply.isBlank()) reply = base;
         return new Decision(true, "CANDIDATE_DECLINE", 1.0, reply,
                 reply.equals(base) ? reason : reason + "，并完成轻量 AI 润色");
@@ -795,6 +799,10 @@ class InboundJobReplyService {
         } catch (RuntimeException ignored) {
             return baseReply;
         }
+    }
+
+    private boolean shouldPolishFixedReplies() {
+        return fixedReplyAiPolishEnabled && properties.isConfigured();
     }
 
     private ObjectNode socialPolishResponseFormat() {
