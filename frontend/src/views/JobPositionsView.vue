@@ -881,10 +881,10 @@ function showJobsHelp() {
 .review-steps span.done i { border-color:var(--success); background:var(--success); box-shadow:0 0 0 3px rgba(22,128,91,.12); }
 .review-steps span.done { color:var(--success); }
 .review-cards article > p,.internal-blocker { color:var(--warning); font-size:12px; line-height:1.6; }.review-cards article > p { margin:0 0 10px; display:-webkit-box; -webkit-line-clamp:1; line-clamp:1; -webkit-box-orient:vertical; overflow:hidden; }
-.metrics-panel { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:18px; padding:12px 18px; margin-bottom:18px; border-radius:var(--radius-panel); border:1px solid var(--border-teal); background:linear-gradient(135deg, rgba(238,249,246/.92), rgba(255,255,255/.72)), var(--surface-teal); box-shadow:0 1px 2px rgba(17,28,45/.03), 0 4px 16px rgba(17,28,45/.06), inset 0 1px 0 rgba(255,255,255/.62); transition:background 300ms ease, border-color 300ms ease, box-shadow 280ms cubic-bezier(.2,0,0,1); position:relative; overflow:hidden; }
-.metrics-panel::before { content:''; position:absolute; inset:-80% auto auto 48%; width:420px; height:220px; border-radius:50%; background:radial-gradient(circle, rgba(20,184,166/.12), transparent 68%); pointer-events:none; }
+.metrics-panel { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:18px; padding:12px 18px; margin-bottom:18px; border-radius:var(--radius-panel); border:1px solid var(--border-teal); background:linear-gradient(135deg, rgba(238,249,246,.92), rgba(255,255,255,.72)), var(--surface-teal); box-shadow:0 1px 2px rgba(17,28,45,.03), 0 4px 16px rgba(17,28,45,.06), inset 0 1px 0 rgba(255,255,255,.62); transition:background 300ms ease, border-color 300ms ease, box-shadow 280ms cubic-bezier(.2,0,0,1); position:relative; overflow:hidden; }
+.metrics-panel::before { content:''; position:absolute; inset:-80% auto auto 48%; width:420px; height:220px; border-radius:50%; background:radial-gradient(circle, rgba(20,184,166,.12), transparent 68%); pointer-events:none; }
 .metrics-panel > * { position:relative; z-index:1; }
-.metrics-panel:hover { box-shadow:0 2px 4px rgba(17,28,45/.05), 0 10px 28px rgba(17,28,45/.10), inset 0 1px 0 rgba(255,255,255/.78); }
+.metrics-panel:hover { box-shadow:0 2px 4px rgba(17,28,45,.05), 0 10px 28px rgba(17,28,45,.10), inset 0 1px 0 rgba(255,255,255,.78); }
 .metrics-panel__left { display:flex; align-items:center; gap:8px; flex-shrink:0; }
 .metrics-panel__left .el-icon { font-size:18px; color:var(--primary); }
 .metrics-panel__title { font-size:14px; font-weight:600; color:var(--text-primary); white-space:nowrap; }
@@ -899,12 +899,12 @@ function showJobsHelp() {
 .metric-tile--amber { --tile-accent:var(--warning); --tile-bg:rgba(217,119,6,.07); --tile-border:rgba(217,119,6,.18); }
 .metric-pill { display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border:1px solid var(--border-subtle); border-radius:var(--radius-pill); background:rgba(255,255,255,.55); color:var(--text-secondary); font-size:12px; cursor:pointer; transition:background 180ms ease, border-color 180ms ease, box-shadow 200ms ease, transform 200ms cubic-bezier(.2,0,0,1); white-space:nowrap; }
 .metric-pill b { color:var(--text-primary); font-weight:700; font-variant-numeric:tabular-nums; }
-.metric-pill:hover { background:rgba(255,255,255/.82); border-color:var(--border-teal); box-shadow:0 2px 8px rgba(13,148,136/.08); transform:translateY(-1px); }
+.metric-pill:hover { background:rgba(255,255,255,.82); border-color:var(--border-teal); box-shadow:0 2px 8px rgba(13,148,136,.08); transform:translateY(-1px); }
 .metric-pill:active { animation:card-press 160ms ease-out both; }
-.metric-pill--teal { --pill-accent:var(--primary); --pill-bg:rgba(13,148,136/.07); --pill-border:var(--border-teal); }
-.metric-pill--blue { --pill-accent:var(--color-info); --pill-bg:rgba(37,99,235/.07); --pill-border:var(--border-blue); }
-.metric-pill--violet { --pill-accent:var(--color-violet); --pill-bg:rgba(124,58,237/.07); --pill-border:var(--border-violet); }
-.metric-pill--amber { --pill-accent:var(--warning); --pill-bg:rgba(217,119,6/.07); --pill-border:var(--border-amber); }
+.metric-pill--teal { --pill-accent:var(--primary); --pill-bg:rgba(13,148,136,.07); --pill-border:var(--border-teal); }
+.metric-pill--blue { --pill-accent:var(--color-info); --pill-bg:rgba(37,99,235,.07); --pill-border:var(--border-blue); }
+.metric-pill--violet { --pill-accent:var(--color-violet); --pill-bg:rgba(124,58,237,.07); --pill-border:var(--border-violet); }
+.metric-pill--amber { --pill-accent:var(--warning); --pill-bg:rgba(217,119,6,.07); --pill-border:var(--border-amber); }
 .metric-pill:not(:hover) { background:var(--pill-bg); border-color:var(--pill-border); }
 .metric-pill:hover { border-color:var(--pill-accent); box-shadow:0 2px 8px color-mix(in srgb, var(--pill-accent) 22%, transparent); }
 .metric-pill b { color:var(--pill-accent); }
@@ -969,12 +969,12 @@ function showJobsHelp() {
 :global(:root[data-theme="dark"]) .job-cards dl > div { background:linear-gradient(145deg, rgba(30,36,51,.82) 0%, rgba(26,31,44,.66) 100%); box-shadow:0 1px 2px rgba(0,0,0,.22), 0 2px 8px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.04); }
 :global(:root[data-theme="dark"]) .job-cards dl > div:hover { background:linear-gradient(145deg, rgba(36,42,58,.94) 0%, rgba(30,36,51,.82) 100%); box-shadow:0 2px 4px rgba(0,0,0,.30), 0 8px 24px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.06), 2px 0 0 0 rgba(20,184,166,.12); }
 :global(:root[data-theme="dark"]) .job-cards dl > div::before { background:linear-gradient(90deg, transparent 0%, rgba(255,255,255,.08) 25%, rgba(255,255,255,.22) 50%, rgba(255,255,255,.08) 75%, transparent 100%); }
-:global(:root[data-theme="dark"]) .metrics-panel { background:linear-gradient(135deg, rgba(15,23,32/.92), rgba(26,31,44/.72)), var(--surface-teal); border-color:var(--brand-600); box-shadow:0 1px 2px rgba(0,0,0/.22), 0 4px 16px rgba(0,0,0/.18), inset 0 1px 0 rgba(255,255,255/.04); }
-:global(:root[data-theme="dark"]) .metrics-panel:hover { box-shadow:0 2px 4px rgba(0,0,0/.30), 0 10px 28px rgba(0,0,0/.26), inset 0 1px 0 rgba(255,255,255/.06); }
-:global(:root[data-theme="dark"]) .metric-pill { background:rgba(255,255,255/.04); border-color:rgba(255,255,255/.06); color:rgba(255,255,255/.55); }
-:global(:root[data-theme="dark"]) .metric-pill--teal { --pill-bg:rgba(13,148,136/.10); --pill-border:rgba(20,184,166/.18); }
-:global(:root[data-theme="dark"]) .metric-pill--blue { --pill-bg:rgba(37,99,235/.10); --pill-border:rgba(37,99,235/.18); }
-:global(:root[data-theme="dark"]) .metric-pill--violet { --pill-bg:rgba(124,58,237/.10); --pill-border:rgba(124,58,237/.18); }
-:global(:root[data-theme="dark"]) .metric-pill--amber { --pill-bg:rgba(217,119,6/.10); --pill-border:rgba(217,119,6/.18); }
-:global(:root[data-theme="dark"]) .metric-pill:hover { background:rgba(255,255,255/.08); }
+:global(:root[data-theme="dark"]) .metrics-panel { background:linear-gradient(135deg, rgba(15,23,32,.92), rgba(26,31,44,.72)), var(--surface-teal); border-color:var(--brand-600); box-shadow:0 1px 2px rgba(0,0,0,.22), 0 4px 16px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.04); }
+:global(:root[data-theme="dark"]) .metrics-panel:hover { box-shadow:0 2px 4px rgba(0,0,0,.30), 0 10px 28px rgba(0,0,0,.26), inset 0 1px 0 rgba(255,255,255,.06); }
+:global(:root[data-theme="dark"]) .metric-pill { background:rgba(255,255,255,.04); border-color:rgba(255,255,255,.06); color:rgba(255,255,255,.55); }
+:global(:root[data-theme="dark"]) .metric-pill--teal { --pill-bg:rgba(13,148,136,.10); --pill-border:rgba(20,184,166,.18); }
+:global(:root[data-theme="dark"]) .metric-pill--blue { --pill-bg:rgba(37,99,235,.10); --pill-border:rgba(37,99,235,.18); }
+:global(:root[data-theme="dark"]) .metric-pill--violet { --pill-bg:rgba(124,58,237,.10); --pill-border:rgba(124,58,237,.18); }
+:global(:root[data-theme="dark"]) .metric-pill--amber { --pill-bg:rgba(217,119,6,.10); --pill-border:rgba(217,119,6,.18); }
+:global(:root[data-theme="dark"]) .metric-pill:hover { background:rgba(255,255,255,.08); }
 </style>

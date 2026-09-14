@@ -58,7 +58,21 @@ class LocalConnectorResumeController {
                     || !task.getAccount().getId().equals(device.getBossAccount().getId()))
                 throw bad("RESUME_REQUEST_TASK_MISMATCH", "简历事件与已成功的本轮索要简历任务不一致");
         }
-        return pipeline.processVisibleResume(job, observation.getChatDigest(), sourceEventDigest, sourceActionTaskId, file);
+        observation.markResumeImporting(Instant.now());
+        observations.saveAndFlush(observation);
+        try {
+            ResumeDocumentProcessingResponse result = pipeline.processVisibleResume(
+                    job, observation.getChatDigest(), sourceEventDigest, sourceActionTaskId, file);
+            String failureReason = result.analysisFailureReason() != null
+                    ? result.analysisFailureReason() : result.failureReason();
+            observation.recordResumePipelineResult(result.intakeId(), result.analysisStatus(), failureReason, Instant.now());
+            observations.saveAndFlush(observation);
+            return result;
+        } catch (RuntimeException exception) {
+            observation.markResumePipelineFailed(exception.getMessage(), Instant.now());
+            observations.saveAndFlush(observation);
+            throw exception;
+        }
     }
 
     @PostMapping(value="/api/local-connector/runtime/visible-resume-text", consumes=MediaType.APPLICATION_JSON_VALUE)

@@ -30,6 +30,7 @@ class InboundJobReplyServiceTest {
         assertTrue(InboundJobReplyService.isPureGreeting("你好；"));
         assertTrue(InboundJobReplyService.isPureGreeting("您好！"));
         assertTrue(InboundJobReplyService.isPureAcknowledgement("好的！"));
+        assertTrue(InboundJobReplyService.isPureAcknowledgement("可以"));
         assertEquals(false, InboundJobReplyService.isPureAcknowledgement("你好"));
         assertTrue(InboundJobReplyService.isDetailedJobQuestion(
                 "您好，大专应届生，有国内电商运营助理实习。薪资无责4k是底薪吗？是否缴纳五险一金，是双休还是大小周？"));
@@ -65,12 +66,33 @@ class InboundJobReplyServiceTest {
         InboundJobReplyService.Decision cancellation = service.decide(job, "不好意思，明天的面试我先取消了");
         assertTrue(cancellation.replyAllowed());
         assertEquals("CANDIDATE_DECLINE", cancellation.category());
-        assertEquals("好的，感谢您的投递。", cancellation.content());
+        assertEquals("感谢您的投递", cancellation.content());
 
         InboundJobReplyService.Decision cannotAttend = service.decide(job, "非常抱歉，因临时有事，无法按照定时间参加面试。");
         assertTrue(cannotAttend.replyAllowed());
         assertEquals("CANDIDATE_DECLINE", cannotAttend.category());
-        assertEquals("好的，感谢您的投递。", cannotAttend.content());
+        assertEquals("感谢您的投递", cannotAttend.content());
+    }
+
+    @Test
+    void usesDeterministicRepliesForCourtesyMealsAndPostResumeMessages() {
+        JobPosition job = mock(JobPosition.class);
+        when(job.isKnowledgeApproved()).thenReturn(true);
+        InboundJobReplyService service = new InboundJobReplyService(new OpenAiProperties(), new ObjectMapper());
+
+        InboundJobReplyService.Decision meals = service.decide(job, "请问有宿舍吗");
+        assertTrue(meals.replyAllowed());
+        assertEquals("MEALS_LODGING", meals.category());
+        assertEquals("吃住自理", meals.content());
+
+        InboundJobReplyService.Decision acknowledgement = service.decide(job, "可以");
+        assertTrue(acknowledgement.replyAllowed());
+        assertEquals("好的", acknowledgement.content());
+
+        InboundJobReplyService.Decision afterResume = service.decide(job, "我再了解一下工作内容", "",
+                new InboundJobReplyService.ConversationRuntime("RESUME_RECEIVED", true, false, false, false));
+        assertTrue(afterResume.replyAllowed());
+        assertEquals("收到，过后看完简历再和你联系", afterResume.content());
     }
 
     @Test

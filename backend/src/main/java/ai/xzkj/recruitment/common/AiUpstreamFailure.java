@@ -44,6 +44,7 @@ public final class AiUpstreamFailure extends ApiException {
         String code = switch (status) {
             case 401, 403 -> "INBOUND_REPLY_AI_AUTH_FAILED";
             case 400, 404 -> "INBOUND_REPLY_AI_CONFIG_INVALID";
+            case 402 -> "INBOUND_REPLY_AI_BILLING_REQUIRED";
             case 429 -> "INBOUND_REPLY_AI_RATE_LIMITED";
             default -> status >= 500 && status <= 599
                     ? "INBOUND_REPLY_AI_UPSTREAM_5XX"
@@ -56,6 +57,7 @@ public final class AiUpstreamFailure extends ApiException {
         String code = switch (status) {
             case 401, 403 -> "OPENAI_AUTH_FAILED";
             case 400, 404 -> "OPENAI_MODEL_INVALID";
+            case 402 -> "OPENAI_BILLING_REQUIRED";
             case 429 -> "OPENAI_LIMIT_REACHED";
             default -> "OPENAI_REQUEST_FAILED";
         };

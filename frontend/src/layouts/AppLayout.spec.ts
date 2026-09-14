@@ -49,9 +49,9 @@ describe('AppLayout navigation contract', () => {
 
     expect(navigationLabels(wrapper)).toEqual([
       '今日值守',
-      '简历分析',
-      '招聘账号',
+      '人才库',
       '岗位资料',
+      '招聘账号',
       'HR 用户管理',
       '项目运行日志',
     ])
@@ -63,9 +63,9 @@ describe('AppLayout navigation contract', () => {
 
     expect(navigationLabels(wrapper)).toEqual([
       '今日值守',
-      '简历分析',
-      '招聘账号',
+      '人才库',
       '岗位资料',
+      '招聘账号',
     ])
     wrapper.unmount()
   })

@@ -21,8 +21,8 @@ interface InboundAiReplyTaskRepository extends JpaRepository<InboundAiReplyTask,
             SELECT task.*
               FROM inbound_ai_reply_tasks task
              WHERE task.account_id = :accountId
-               AND task.safe_replay_count < 1
                AND (
+                    (task.safe_replay_count < 1 AND (
                     (task.send_status = 'FAILED' AND task.status = 'COMPLETED' AND task.reply_allowed = TRUE)
                     OR
                     (task.send_status = 'SKIPPED' AND (
@@ -41,7 +41,13 @@ interface InboundAiReplyTaskRepository extends JpaRepository<InboundAiReplyTask,
                             OR task.result_reason LIKE '无法可靠判断消息意图%'
                             OR task.result_reason LIKE 'AI 判断该消息需要人工复核%'
                             OR task.result_reason LIKE '正常静默：%'))
-                    ))
+                    ))))
+                    OR
+                    (task.safe_replay_count < 2
+                        AND task.status = 'COMPLETED'
+                        AND task.send_status = 'SKIPPED'
+                        AND task.send_result_reason = '会话已由 HR 处理或已不再处于候选人未读状态，待发送回复已安全作废'
+                        AND task.updated_at >= CURRENT_TIMESTAMP - INTERVAL '2 days')
                )
              ORDER BY task.updated_at ASC
              LIMIT 100

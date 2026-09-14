@@ -28,4 +28,26 @@ class AiUpstreamFailureTest {
         assertThat(failure.isRetryable()).isTrue();
         assertThat(failure.getMessage()).contains("HTTP 429", "rate limited");
     }
+
+    @Test
+    void treatsBillingFailureAsNonRetryableResumeConfigurationFailure() {
+        AiUpstreamFailure failure = AiUpstreamFailure.openAi(
+                "AI 服务简历分析请求", 402,
+                "{\"error\":{\"message\":\"Insufficient Balance\"}}", "provider-request-1");
+
+        assertThat(failure.getCode()).isEqualTo("OPENAI_BILLING_REQUIRED");
+        assertThat(failure.isRetryable()).isFalse();
+        assertThat(failure.getMessage()).contains("HTTP 402", "Insufficient Balance");
+    }
+
+    @Test
+    void treatsBillingFailureAsNonRetryableInboundFailure() {
+        AiUpstreamFailure failure = AiUpstreamFailure.inbound(
+                "消息理解与岗位回复生成", 402,
+                "{\"error\":{\"message\":\"Insufficient Balance\"}}", "provider-request-2");
+
+        assertThat(failure.getCode()).isEqualTo("INBOUND_REPLY_AI_BILLING_REQUIRED");
+        assertThat(failure.isRetryable()).isFalse();
+        assertThat(failure.getMessage()).contains("HTTP 402", "Insufficient Balance");
+    }
 }

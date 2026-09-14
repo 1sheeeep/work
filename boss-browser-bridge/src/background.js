@@ -6,6 +6,7 @@ const ALARM_NAME = 'bridge-observe';
 const MIN_SYNC_INTERVAL_MS = 10_000;
 const BOSS_TAB_PATTERNS = ['https://zhipin.com/*', 'https://*.zhipin.com/*'];
 const AUTO_REPLY_TRACE_LIMIT = 200;
+const TAB_MESSAGE_TIMEOUT_MS = 30_000;
 let syncInFlight = null;
 let jobSyncInFlight = null;
 let actionExecutionInFlight = null;
@@ -238,6 +239,8 @@ async function decideInboundReply(payload) {
       || typeof payload.messageText !== 'string' || !payload.messageText.trim()
       || payload.messageText.length > 1000 || !Number.isFinite(Date.parse(payload.messageAt))
       || (payload.conversationContext != null && (typeof payload.conversationContext !== 'string' || payload.conversationContext.length > 2400))
+      || (payload.purpose != null && !['STANDARD_REPLY', 'RESUME_RECEIPT'].includes(payload.purpose))
+      || (payload.resumeIntakeId != null && !/^[0-9a-f-]{36}$/i.test(payload.resumeIntakeId))
       || (payload.pendingRowSignature != null && !/^[a-f0-9]{64}$/.test(payload.pendingRowSignature))
       || typeof payload.selectedUnread !== 'boolean' || !payload.conversationSignals
       || !Number.isFinite(Date.parse(payload.observedAt))) {
@@ -395,10 +398,14 @@ async function pendingInboundReplies() {
     }));
   const settings = await getSettings();
   let retryable = [];
+  let pendingSends = [];
   let retryableError = null;
   if (settings.deviceToken) {
     try {
       retryable = await request(settings.backendUrl, '/api/local-connector/runtime/inbound-reply-tasks/retryable', {
+        method: 'GET', token: settings.deviceToken, timeoutMs: 8_000,
+      });
+      pendingSends = await request(settings.backendUrl, '/api/local-connector/runtime/inbound-reply-tasks/pending-sends', {
         method: 'GET', token: settings.deviceToken, timeoutMs: 8_000,
       });
     } catch (error) {
@@ -406,6 +413,13 @@ async function pendingInboundReplies() {
     }
   }
   const byId = new Map(tracked.map((task) => [task.taskId, task]));
+  for (const task of Array.isArray(pendingSends) ? pendingSends : []) {
+    if (/^[0-9a-f-]{36}$/i.test(task?.taskId || '') && /^[a-f0-9]{64}$/.test(task?.chatDigest || '')
+        && /^[a-f0-9]{64}$/.test(task?.messageDigest || '')) {
+      byId.set(task.taskId, { taskId: task.taskId, chatDigest: task.chatDigest,
+        messageDigest: task.messageDigest, resumeReceipt: task.resumeReceipt === true, retryable: false });
+    }
+  }
   for (const task of Array.isArray(retryable) ? retryable : []) {
     if (/^[0-9a-f-]{36}$/i.test(task?.taskId || '') && /^[a-f0-9]{64}$/.test(task?.chatDigest || '')
         && /^[a-f0-9]{64}$/.test(task?.messageDigest || '')) {
@@ -1110,15 +1124,29 @@ async function collectJobsFromAllFrames(tabId, refreshRequested = false) {
   throw new Error([...new Set(failures)].slice(0, 3).join('；') || '所有页面 frame 均未找到职位列表。');
 }
 
+function withDeadline(operation, timeoutMs, timeoutMessage) {
+  let timer = null;
+  const operationPromise = Promise.resolve().then(operation);
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+  });
+  return Promise.race([operationPromise, timeoutPromise]).finally(() => clearTimeout(timer));
+}
+
 async function sendToBossTab(tabId, message) {
+  const send = () => withDeadline(
+    () => chrome.tabs.sendMessage(tabId, message),
+    TAB_MESSAGE_TIMEOUT_MS,
+    `BOSS 页面操作超过 ${Math.ceil(TAB_MESSAGE_TIMEOUT_MS / 1_000)} 秒未返回。`,
+  );
   try {
-    return await chrome.tabs.sendMessage(tabId, message);
+    return await send();
   } catch (error) {
     const reason = safeError(error);
     if (!/receiving end does not exist|could not establish connection/i.test(reason)) throw error;
     await chrome.scripting.executeScript({ target: { tabId }, files: ['src/content.js'] });
     await new Promise((resolve) => setTimeout(resolve, 120));
-    return chrome.tabs.sendMessage(tabId, message);
+    return send();
   }
 }
 

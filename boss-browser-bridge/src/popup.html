@@ -1,50 +1,99 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="popup.css"><link rel="stylesheet" href="continuous-reply.css"><link rel="stylesheet" href="transcript-copy.css"><title>BOSS 招聘桥接</title></head>
-<body><main>
-  <header><span class="mark">值</span><div><strong>BOSS 招聘桥接</strong><small>当前会话 · 安全自动化</small></div><span id="stateBadge" class="badge">检查中</span></header>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="popup.css">
+  <title>BOSS 招聘桥接</title>
+</head>
+<body>
+<main class="shell">
+  <header class="topbar">
+    <span class="mark" aria-hidden="true">值</span>
+    <div class="brand-copy">
+      <strong>BOSS 招聘桥接</strong>
+      <small>保持连接，自动处理来信</small>
+    </div>
+    <div class="top-actions">
+      <button id="enabledToggle" class="plugin-toggle" type="button" aria-pressed="false" hidden>插件已开启</button>
+      <span id="stateBadge" class="badge">检查中</span>
+    </div>
+  </header>
+
   <section id="summary" hidden>
-    <div class="context-bar"><div><small>当前账号</small><strong id="accountName">-</strong></div><div><small>页面</small><strong id="pageContext">未识别</strong></div></div>
-    <section class="resume-workflow" aria-labelledby="resumeWorkflowTitle">
-      <div class="resume-heading"><div><h1 id="resumeWorkflowTitle">简历导入与 AI 分析</h1><small id="lastVisibleResume">尚未开始</small></div><span id="resumeStageBadge" class="resume-stage-badge">等待识别</span></div>
-      <div class="resume-progress" aria-label="简历处理进度"><span id="resumeStepDetected">1 已识别</span><span id="resumeStepImported">2 已导入</span><span id="resumeStepAnalyzing">3 AI 分析</span><span id="resumeStepCompleted">4 已完成</span></div>
-      <p id="visibleResumeState" class="resume-status">尚未识别当前会话中的 PDF 简历。</p>
-      <p id="resumeRecovery" class="resume-recovery">打开目标会话并点击 PDF 预览，插件将自动识别。</p>
-      <button id="recognizeCurrentResume" class="primary primary-action" type="button">识别并导入当前简历</button>
+    <section class="context-bar" aria-label="当前连接">
+      <div><small>账号</small><strong id="accountName">-</strong></div>
+      <div><small>页面</small><strong id="pageContext">未识别</strong></div>
     </section>
-    <div class="sync-row"><div><strong>会话同步</strong><span id="detailState">尚未复核当前会话</span><small id="lastSync"></small></div><button id="collect" class="secondary" type="button">同步当前会话</button></div>
-    <section class="transcript-copy" aria-labelledby="transcriptCopyTitle">
-      <div><strong id="transcriptCopyTitle">当前会话记录</strong><span>自动加载当前已选会话的历史消息，本机脱敏后同步到后端示例库并复制。</span></div>
-      <button id="copyCurrentTranscript" class="secondary" type="button">一键同步并复制聊天记录</button>
-    </section>
-    <div class="metrics"><article><strong id="totalCount">0</strong><span>本次会话</span></article><article><strong id="currentUnreadCount">0</strong><span>当前未读</span></article><article><strong id="trackedUnreadCount">0</strong><span>观察队列</span></article></div>
-    <p id="reason" class="system-note"></p>
-    <section class="continuous-reply" aria-labelledby="continuousReplyTitle">
-      <div class="continuous-reply-heading"><div><strong id="continuousReplyTitle">当前账号·全未读自动回复</strong><small id="continuousReplyState">当前未开启</small></div><span id="continuousReplyBadge" class="badge">已停止</span></div>
-      <p>由招聘值守台 Dashboard 统一开启或停止。开启后立即处理当前未读，并持续监测新来信。</p>
-      <small id="lastContinuousReply"></small>
-      <div class="trace-heading"><strong>自动回复运行日志</strong><button id="copyAutoReplyTrace" class="secondary" type="button" disabled>一键复制日志</button></div>
-      <small id="autoReplyTraceSummary" class="trace-summary">日志汇总：暂无</small>
-      <pre id="autoReplyTraceLog" class="auto-reply-trace-log" aria-live="polite">尚无运行日志。</pre>
-    </section>
-    <details class="tool-group"><summary><span>页面与职位工具</span><small>同步职位、检查回复入口</small></summary><div class="tool-content">
-      <div class="tool-item"><strong>职位同步</strong><span id="jobState">尚未同步职位页面。</span><small id="lastJobSync"></small><button id="collectJobs" class="secondary" type="button">同步当前职位页</button></div>
-      <div class="tool-item"><strong>回复入口检查</strong><span id="readinessState">尚未检查当前会话。</span><small id="lastReadiness"></small><button id="checkReadiness" class="secondary" type="button">检查回复入口</button></div>
-      <div class="tool-item"><strong>已审核草稿</strong><span id="approvedDraftFillState">尚未填入后台已审核草稿。</span><small id="lastApprovedDraftFill"></small><button id="fillApprovedDraft" class="secondary" type="button">填入已审核草稿</button></div>
-    </div></details>
-    <details class="tool-group"><summary><span>单会话测试工具</span><small>仅用于人工验收</small></summary><div class="tool-content">
-      <div class="tool-item"><strong>操作入口</strong><span id="actionTestState">尚未执行入口测试。</span><small id="lastActionTest"></small><div class="button-grid"><button id="testRequestResume" class="warning">测试求简历</button><button id="testExchangePhone" class="warning">测试换电话</button><button id="testExchangeWechat" class="warning">测试换微信</button><button id="testInterview" class="warning">测试约面试</button></div></div>
-      <div class="tool-item"><strong>联系方式确认</strong><span id="exchangeConfirmState">尚未执行二级确认。</span><small id="lastExchangeConfirm"></small><div class="button-grid"><button id="confirmExchangePhone" class="danger">确认换电话</button><button id="confirmExchangeWechat" class="danger">确认换微信</button></div></div>
-      <div class="tool-item"><strong>生产自动动作</strong><span id="productionActionState">尚未执行生产自动动作。</span><small id="lastProductionAction"></small></div>
-      <div class="tool-item"><strong>草稿写入</strong><span id="draftTestState">尚未写入测试草稿。</span><small id="lastDraftTest"></small><button id="fillTestDraft" class="warning">写入测试草稿</button></div>
-      <div class="tool-item"><strong>单次发送</strong><span id="sendTestState">尚未执行发送测试。</span><small id="lastSendTest"></small><div class="button-grid"><button id="prepareCurrentSendTest" class="warning">准备本轮测试</button><button id="sendCurrentTestDraft" class="danger">发送测试草稿</button></div></div>
-      <div class="tool-item"><strong>来信触发</strong><p id="autoReplyTestResult">结果：尚未执行</p><span id="autoReplyTestState">尚未开启。</span><small id="autoReplyTestExpiry"></small><span id="autoReplyDiagnosticState">尚未诊断触发条件。</span><small id="lastAutoReplyDiagnostic"></small><div class="button-grid"><button id="diagnoseCurrentAutoReply" class="secondary">诊断条件</button><button id="armCurrentAutoReplyTest" class="danger">开启一次触发</button><button id="cancelCurrentAutoReplyTest" class="secondary">取消等待</button></div></div>
-    </div></details>
-    <details class="tool-group"><summary><span>诊断与连接设置</span><small>出现适配问题时使用</small></summary><div class="tool-content">
-      <div class="tool-item"><strong>DOM 诊断</strong><span id="controlDiagnosticState">尚未生成报告。</span><small id="lastControlDiagnostic"></small><div class="button-grid"><button id="inspectControls" class="secondary">重新识别 DOM</button><button id="copyControlDiagnostic" class="secondary" disabled>复制报告</button></div><textarea id="controlDiagnosticReport" readonly hidden aria-label="脱敏功能键 DOM 报告"></textarea></div>
-      <label class="toggle"><input id="enabled" type="checkbox"><span>开启页面观测</span></label><div class="button-grid"><button id="openConsole" class="secondary">打开招聘值守台</button><button id="forget" class="text-button">解除本机绑定</button></div>
-    </div></details>
+
+    <div class="quick-actions">
+      <button id="collect" class="secondary" type="button">刷新状态</button>
+      <button id="openConsole" class="secondary" type="button">打开值守台</button>
+    </div>
+
+    <details class="more-info">
+      <summary><span>更多信息</span><small>自动回复 · 统计 · 会话记录</small></summary>
+      <div class="more-info-content">
+        <div class="reply-section">
+          <div class="reply-heading">
+            <div><strong>自动回复</strong><small id="continuousReplyState">当前未开启</small></div>
+            <span id="continuousReplyBadge" class="badge">已停止</span>
+          </div>
+          <small id="lastContinuousReply" class="muted">尚未处理消息</small>
+        </div>
+        <section class="stats" aria-label="当前数据">
+          <article><strong id="currentUnreadCount">0</strong><span>当前未读</span></article>
+          <article><strong id="trackedUnreadCount">0</strong><span>观察队列</span></article>
+          <article><strong id="totalCount">0</strong><span>本次会话</span></article>
+        </section>
+        <section class="sync-strip">
+          <div>
+            <strong>当前会话记录</strong>
+            <small id="detailState">尚未复核当前会话</small>
+            <small id="lastSync">尚未同步真实快照</small>
+          </div>
+          <button id="copyCurrentTranscript" class="secondary compact" type="button">复制记录</button>
+        </section>
+      </div>
+    </details>
+
+    <details class="advanced-tools">
+      <summary><span>高级工具</span><small>职位同步 · DOM 诊断</small></summary>
+      <div class="advanced-content">
+        <div class="tool-item">
+          <strong>职位同步</strong>
+          <span id="jobState">尚未同步职位页面。</span>
+          <small id="lastJobSync"></small>
+          <button id="collectJobs" class="secondary" type="button">同步当前职位页</button>
+        </div>
+        <div class="tool-item">
+          <strong>DOM 诊断</strong>
+          <span id="controlDiagnosticState">尚未生成报告。</span>
+          <small id="lastControlDiagnostic"></small>
+          <div class="button-grid">
+            <button id="inspectControls" class="secondary" type="button">重新识别 DOM</button>
+            <button id="copyControlDiagnostic" class="secondary" type="button" disabled>复制报告</button>
+          </div>
+          <textarea id="controlDiagnosticReport" readonly hidden aria-label="脱敏功能键 DOM 报告"></textarea>
+        </div>
+        <button id="forget" class="text-button" type="button">解除本机绑定</button>
+      </div>
+    </details>
   </section>
-<form id="pairForm" hidden><h1>连接招聘值守台</h1><p>在招聘账号页面生成一次性接入码后完成配对。</p><label>后台地址<input id="backendUrl" maxlength="120" value="http://localhost:8088" placeholder="http://localhost:8088" required></label><label>设备名称<input id="deviceName" maxlength="80" value="HR 电脑" required></label><label>一次性接入码<textarea id="pairingToken" maxlength="200" rows="3" required></textarea></label><div class="button-grid"><button id="saveBackendUrl" class="secondary" type="button">保存后台地址</button><button class="primary primary-action" type="submit">完成配对</button></div></form>
-  <div id="message" class="message" hidden></div><footer>版本 <span id="pluginVersion">-</span> · 默认只读，不读取 Cookie 或密码</footer>
-</main><script type="module" src="popup.js"></script></body></html>
+
+  <form id="pairForm" hidden>
+    <div class="eyebrow">首次使用</div>
+    <h1>连接招聘值守台</h1>
+    <p>在招聘账号页面生成一次性接入码后完成配对。</p>
+    <label>后台地址<input id="backendUrl" maxlength="120" value="http://localhost:8088" placeholder="http://localhost:8088" required></label>
+    <label>设备名称<input id="deviceName" maxlength="80" value="HR 电脑" required></label>
+    <label>一次性接入码<textarea id="pairingToken" maxlength="200" rows="3" required></textarea></label>
+    <div class="button-grid"><button id="saveBackendUrl" class="secondary" type="button">保存地址</button><button class="primary" type="submit">完成配对</button></div>
+  </form>
+
+  <div id="message" class="message" hidden></div>
+  <footer>版本 <span id="pluginVersion">-</span> · 默认只读，不读取 Cookie 或密码</footer>
+</main>
+<script type="module" src="popup.js"></script>
+</body>
+</html>

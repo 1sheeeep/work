@@ -49,6 +49,16 @@ class InboundJobReplyHttpIntegrationTest {
     }
 
     @Test
+    void answersWorkScheduleReasonWithInterviewFollowUp() {
+        InboundJobReplyService.Decision result = new InboundJobReplyService(new OpenAiProperties(), new ObjectMapper())
+                .decide(job(), "能问一下为什么是下午开始上班么？");
+
+        assertTrue(result.replyAllowed());
+        assertEquals("WORK_TIME", result.category());
+        assertEquals("工作方面的具体情况，面试的时候会详细解答。", result.content());
+    }
+
+    @Test
     void disablesDeepSeekThinkingForStructuredReplyGeneration() throws Exception {
         AtomicReference<JsonNode> requestPayload = new AtomicReference<>();
         start(exchange -> {
@@ -296,7 +306,7 @@ class InboundJobReplyHttpIntegrationTest {
 
         assertTrue(result.replyAllowed());
         assertEquals("RESUME_SENT", result.category());
-        assertEquals("我已收到简历，具体了解后再回复。", result.content());
+        assertEquals("收到，过后看完简历再和你联系", result.content());
     }
 
     @Test

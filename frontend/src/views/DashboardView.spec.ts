@@ -146,6 +146,31 @@ describe('DashboardView', () => {
     expect(wrapper.text()).toContain('有新回复，待跟进')
   })
 
+  it('splits successful replies from silent, failed, and retrying events', async () => {
+    vi.mocked(api.get)
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [
+        { id:'ok', observationId:'o-ok', anonymousKey:'ok01', accountName:'主招聘账号', jobTitle:'跨境客服', category:'SALARY', taskStatus:'COMPLETED', sendStatus:'SUCCEEDED', messageText:'请问薪资？', replyContent:'您好，薪资为 8-13K。', detail:'页面已确认发送', updatedAt:'2026-09-14T08:00:00Z', completedAt:'2026-09-14T08:00:00Z', attemptCount:1, needsFollowUp:false },
+        { id:'silent', observationId:'o-silent', anonymousKey:'silent01', accountName:'主招聘账号', jobTitle:'跨境客服', category:'SOCIAL_ACKNOWLEDGEMENT', taskStatus:'COMPLETED', sendStatus:'SKIPPED', messageText:'好的', detail:'正常静默：无需重复客套', updatedAt:'2026-09-14T08:01:00Z', completedAt:'2026-09-14T08:01:00Z', attemptCount:1, needsFollowUp:false },
+        { id:'retry', observationId:'o-retry', anonymousKey:'retry01', accountName:'主招聘账号', jobTitle:'跨境客服', category:'GENERAL_JOB_CONSULTATION', taskStatus:'FAILED', sendStatus:'SKIPPED', messageText:'可以详细介绍下吗', detail:'AI 输出重试已耗尽', updatedAt:'2026-09-14T08:02:00Z', completedAt:'2026-09-14T08:02:00Z', attemptCount:3, needsFollowUp:false },
+      ] })
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [] })
+
+    const wrapper = mount(DashboardView)
+    await flushPromises()
+
+    const panels = wrapper.findAll('.duty-grid-layout > .duty-review')
+    expect(panels[0].text()).toContain('请问薪资？')
+    expect(panels[0].text()).toContain('您好，薪资为 8-13K。')
+    expect(panels[0].text()).not.toContain('好的')
+    expect(panels[1].text()).toContain('好的')
+    expect(panels[1].text()).toContain('AI 输出重试已耗尽')
+    expect(panels[1].text()).toContain('已重试 2 次')
+  })
+
   it('labels a partial AI answer with its HR follow-up reason', async () => {
     vi.mocked(api.get)
       .mockResolvedValueOnce({ data: [] })

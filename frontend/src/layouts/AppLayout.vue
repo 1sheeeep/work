@@ -23,9 +23,9 @@ const user = computed(() => authStore.state.user)
 const navigationGroups = computed(() => [
   { label: '日常工作', items: [
     { path: '/dashboard', label: '今日值守', icon: Grid },
-    { path: '/resume-intakes', label: '简历分析', icon: DocumentChecked },
-    { path: '/boss-accounts', label: '招聘账号', icon: Connection },
+    { path: '/resume-intakes', label: '人才库', icon: DocumentChecked },
     { path: '/job-positions', label: '岗位资料', icon: Briefcase },
+    { path: '/boss-accounts', label: '招聘账号', icon: Connection },
   ] },
 ])
 const systemItems = computed(() => user.value?.role === 'SYSTEM_ADMIN'
@@ -35,7 +35,7 @@ const systemItems = computed(() => user.value?.role === 'SYSTEM_ADMIN'
     ]
   : [])
 const roleLabel = computed(() => ({ SYSTEM_ADMIN: '系统管理员', RECRUITMENT_ADMIN: '招聘管理员', RECRUITER: '招聘专员' }[user.value?.role ?? 'SYSTEM_ADMIN']))
-const workspaceLabel = computed(() => ({ dashboard: '今日总览', 'boss-accounts': '招聘账号', 'job-positions': '岗位资料', 'resume-intakes': '简历分析', 'hr-users': 'HR 用户管理', 'system-logs': '项目运行日志' }[String(route.name)] ?? '招聘值守台'))
+const workspaceLabel = computed(() => ({ dashboard: '今日总览', 'boss-accounts': '招聘账号', 'job-positions': '岗位资料', 'resume-intakes': '人才库', 'hr-users': 'HR 用户管理', 'system-logs': '项目运行日志' }[String(route.name)] ?? '招聘值守台'))
 
 const transitionName = ref('fade-slide')
 watch(() => route.path, (_to, from) => {
@@ -335,12 +335,13 @@ async function handleLogout() {
 .workspace { position:relative; margin-left:232px; min-height:100dvh; transition:margin-left 280ms cubic-bezier(.4,0,.2,1); }
 .workspace::before { content:''; position:fixed; inset:0 0 auto 232px; height:180px; pointer-events:none; background:linear-gradient(180deg, rgba(255,255,255,.34), transparent); transition:inset 280ms cubic-bezier(.4,0,.2,1); }
 .sidebar-collapsed .workspace::before { left:72px; }
+:root[data-theme="dark"] .workspace::before { background:linear-gradient(180deg, rgba(13,148,136,.06), transparent); }
 .workspace-content { position:relative; z-index:1; padding:30px 30px 50px; min-width:0; }
 
 /* ── 顶栏：空闲时收缩到顶部 8px，靠近顶部或获取焦点时展开 ── */
 .topbar-shell { position:sticky; top:0; z-index:15; display:grid; grid-template-rows:56px; overflow:visible; transition:grid-template-rows 240ms cubic-bezier(.16,1,.3,1); }
 .topbar-shell--collapsed { grid-template-rows:8px; }
-.topbar { position:relative; display:flex; align-items:center; justify-content:space-between; width:100%; height:56px; min-height:0; gap:16px; padding:9px 30px; border-bottom:1px solid color-mix(in srgb, var(--border) 78%, transparent); background:color-mix(in srgb, var(--surface) 84%, transparent); backdrop-filter:blur(18px) saturate(1.08); -webkit-backdrop-filter:blur(18px) saturate(1.08); box-shadow:0 1px 0 rgba(255,255,255,.5); transform:translateY(0); transition:transform 240ms cubic-bezier(.16,1,.3,1), box-shadow 180ms ease, border-color 180ms ease; }
+.topbar { position:relative; display:flex; align-items:center; justify-content:space-between; width:100%; height:56px; min-height:0; gap:16px; padding:9px 30px; border-bottom:1px solid color-mix(in srgb, var(--border) 78%, transparent); background:color-mix(in srgb, var(--surface) 84%, transparent); backdrop-filter:blur(18px) saturate(1.08); -webkit-backdrop-filter:blur(18px) saturate(1.08); box-shadow:0 1px 0 color-mix(in srgb, var(--border) 60%, transparent); transform:translateY(0); transition:transform 240ms cubic-bezier(.16,1,.3,1), box-shadow 180ms ease, border-color 180ms ease; }
 .topbar-shell--collapsed .topbar { transform:translateY(calc(-100% + 8px)); border-bottom-color:transparent; box-shadow:none; }
 .topbar-context { display:flex; align-items:center; gap:10px; min-width:0; }
 .topbar-context span { color:var(--text-secondary); font-size:12px; }
@@ -355,7 +356,7 @@ async function handleLogout() {
 .mobile-menu-button { display:none; border:1px solid var(--border); background:var(--surface); border-radius:var(--radius-control); width:44px; height:44px; place-items:center; }
 
 /* ── 响应式 ── */
-@media(max-width:899px) { .sidebar { display:none; }.workspace,.sidebar-collapsed .workspace { margin-left:0; }.mobile-menu-button { display:grid; flex:0 0 auto; }.topbar-shell,.topbar-shell--collapsed { grid-template-rows:56px; }.topbar-shell--collapsed .topbar { transform:none; border-bottom-color:color-mix(in srgb, var(--border) 78%, transparent); box-shadow:0 1px 0 rgba(255,255,255,.5); }.topbar { padding:10px 16px; gap:12px; }.topbar-context { margin-right:auto; }.topbar-context span,.topbar-context .breadcrumb-sep,.monitor-chip,.user-copy { display:none; }.topbar-context strong { border:0; padding:0; }.workspace-content { padding:20px 16px 36px; } }
+@media(max-width:899px) { .sidebar { display:none; }.workspace,.sidebar-collapsed .workspace { margin-left:0; }.mobile-menu-button { display:grid; flex:0 0 auto; }.topbar-shell,.topbar-shell--collapsed { grid-template-rows:56px; }.topbar-shell--collapsed .topbar { transform:none; border-bottom-color:color-mix(in srgb, var(--border) 78%, transparent); box-shadow:0 1px 0 color-mix(in srgb, var(--border) 60%, transparent); }.topbar { padding:10px 16px; gap:12px; }.topbar-context { margin-right:auto; }.topbar-context span,.topbar-context .breadcrumb-sep,.monitor-chip,.user-copy { display:none; }.topbar-context strong { border:0; padding:0; }.workspace-content { padding:20px 16px 36px; } }
 @media(max-width:460px) { .workspace-content { padding:18px 12px 30px; }.user-avatar { display:none; }.topbar-right,.user-area { gap:0; } }
 @media(prefers-reduced-motion:reduce) { .topbar-shell,.topbar { transition-duration:.01ms; } }
 

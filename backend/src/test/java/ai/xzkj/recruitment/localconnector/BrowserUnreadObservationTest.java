@@ -167,6 +167,21 @@ class BrowserUnreadObservationTest {
         assertThat(observation.getEligibilityStatus()).isEqualTo("HR_HANDLED");
     }
 
+    @Test void keepsReadConversationReviewableWhenVerifiedLastMessageIsInbound(){
+        BrowserDevice device=mock(BrowserDevice.class);when(device.getBossAccount()).thenReturn(mock(BossAccount.class));
+        Instant first=Instant.parse("2026-08-29T12:00:00Z"),now=first.plusSeconds(30);
+        BrowserUnreadObservation observation=new BrowserUnreadObservation(device,DIGEST,first,first);
+        observation.observe(entry(1,first),first);
+        observation.verifyDetail("b".repeat(64),"INBOUND",first,true,first);
+
+        observation.observe(entry(0,now),now);
+        observation.evaluate(now,0,true);
+
+        assertThat(observation.isUnread()).isFalse();
+        assertThat(observation.getLatestDirection()).isEqualTo("INBOUND");
+        assertThat(observation.getEligibilityStatus()).isEqualTo("READY_FOR_REVIEW");
+    }
+
     @Test void archivesUnreadStateWhenItsConnectorDeviceHasBeenReplaced(){
         BrowserDevice device=mock(BrowserDevice.class);when(device.getBossAccount()).thenReturn(mock(BossAccount.class));
         Instant first=Instant.parse("2026-08-29T12:00:00Z"),replaced=first.plusSeconds(60);

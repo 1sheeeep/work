@@ -10,6 +10,8 @@ class JobReplyIntentMatcherTest {
     @Test
     void usesOneMatcherForFixedAndSocialIntents() {
         assertEquals("WORK_TIME", JobReplyIntentMatcher.detectFixedIntent("请问月休几天"));
+        assertEquals("WORK_TIME", JobReplyIntentMatcher.detectFixedIntent("能问一下为什么是下午开始上班么？"));
+        assertEquals("MEALS_LODGING", JobReplyIntentMatcher.detectFixedIntent("请问有宿舍吗"));
         assertEquals("RESUME_SENT", JobReplyIntentMatcher.detectSocialIntent("我刚刚发了简历"));
         assertEquals("CANDIDATE_DECLINE", JobReplyIntentMatcher.detectSocialIntent("不好意思，距离太远不考虑了"));
         assertTrue(JobReplyIntentMatcher.isCandidateDecline("办公地点较远，不在考虑范围内"));

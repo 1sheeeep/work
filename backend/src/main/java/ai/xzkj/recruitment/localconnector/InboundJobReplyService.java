@@ -53,7 +53,7 @@ class InboundJobReplyService {
     private static final Pattern PURE_GREETING = Pattern.compile(
             "^(?:(?:你|您)?好|哈喽|hello|hi)[啊呀呢哈哦的了～~。！!，,；;\\s]*$", Pattern.CASE_INSENSITIVE);
     private static final Pattern PURE_ACKNOWLEDGEMENT = Pattern.compile(
-            "^好的[啊呀呢哈哦的了～~。！!，,；;\\s]*$", Pattern.CASE_INSENSITIVE);
+            "^(?:好的?|好哒|嗯+|收到|知道了|明白了|可以|行|没问题)[啊呀呢哈哦的了～~。！!，,；;\\s]*$", Pattern.CASE_INSENSITIVE);
     /** 浏览器桥接器在简历附件提取成功后传入的受控上下文标记，不来自候选人正文。 */
     private static final String RESUME_ATTACHMENT_RECEIPT_CONTEXT = "[SYSTEM_RESUME_ATTACHMENT_RECEIPT]";
     private static final Pattern SALARY_QUESTION = Pattern.compile(
@@ -62,6 +62,8 @@ class InboundJobReplyService {
             "(?:(?:五险一金|五险|社保|公积金|福利|福利待遇|待遇).{0,14}(?:有|缴纳|包含|是否|吗|么|呢|提供|如何|怎样)|(?:是否|有没有|有无).{0,10}(?:五险|社保|公积金|福利|待遇))");
     private static final Pattern WORK_TIME_QUESTION = Pattern.compile(
             "(?:(?:双休|单休|大小周|月休|休息几天|每周休息|工作时间|上班时间|休息安排|几点上班|几点下班|打卡时间).{0,14}(?:吗|么|呢|是|还是|如何|怎样|多少|几天|怎么|安排)|(?:是双休|单双休|大小周))");
+    private static final Pattern WORK_SCHEDULE_REASON = Pattern.compile(
+            "(?:(?:为什么|为何|什么原因).{0,12}(?:上班|下班|开始|下午|上午|早上|晚上|中午)|(?:下午|上午|早上|晚上|中午).{0,8}(?:开始)?上班)");
     private static final Pattern PAYDAY_QUESTION = Pattern.compile(
             "(?:发薪日|发工资日|工资几号|几号发薪|哪天发薪|什么时候发工资)");
     private static final Pattern ROLE_CONFIRMATION_QUESTION = Pattern.compile(
@@ -606,19 +608,27 @@ class InboundJobReplyService {
                                             ConversationMemory memory, ConversationRuntime runtime) {
         if (RESUME_ATTACHMENT_RECEIPT_CONTEXT.equals(context)) {
             return new Decision(true, "RESUME_SENT", 1.0,
-                    "已收到简历，我们审核完后，再和你联系。",
+                    "收到，过后看完简历再和你联系",
                     "简历附件已完成提取，发送一次性收件确认，不重复索要简历");
         }
+        if (isCandidateDecline(message)) {
+            return candidateDeclineReply("已识别候选人明确暂不考虑，发送礼貌收尾，不再继续自动跟进");
+        }
+        if (runtime.resumeAlreadyReceived() || memory.resumeSentByCandidate()) {
+            return new Decision(true, "RESUME_SENT", 1.0, "收到，过后看完简历再和你联系",
+                    "候选人已发送简历，后续消息统一发送收件确认，不重复展开岗位问答");
+        }
+        if (JobReplyIntentMatcher.isMealsLodgingQuestion(message)) {
+            return new Decision(true, "MEALS_LODGING", 1.0, "吃住自理",
+                    "已命中吃住类统一回复，不调用 AI 或引用岗位事实");
+        }
         if (isPureAcknowledgement(message)) {
-            return new Decision(false, "SOCIAL_ACKNOWLEDGEMENT", 1.0, null,
-                    "候选人仅回复“好的”，已保持静默，避免误发“你好”或机械客套");
+            return new Decision(true, "SOCIAL_ACKNOWLEDGEMENT", 1.0, "好的",
+                    "已命中确认类统一回复，使用“好的”保持简洁自然");
         }
         if (isPureGreeting(message)) {
             return new Decision(true, "SOCIAL_GREETING", 1.0, "你好",
                     "已命中纯问候固定回复，使用“你好”避免机械回复“好的”");
-        }
-        if (isCandidateDecline(message)) {
-            return candidateDeclineReply("已识别候选人明确暂不考虑，发送礼貌收尾，不再继续自动跟进");
         }
         if (isPaydayQuestion(message)) {
             String base = "每月15号发薪，具体安排面试时再沟通。";
@@ -656,13 +666,11 @@ class InboundJobReplyService {
             }
         }
         if (isWorkTimeQuestion(message)) {
-            return new Decision(true, "WORK_TIME", 1.0, "不同岗位上班时间不同，具体的等面试详细聊。",
-                    "已命中上班时间固定回复，避免在资料不完整时臆测具体时段");
+            return new Decision(true, "WORK_TIME", 1.0, "工作方面的具体情况，面试的时候会详细解答。",
+                    "已命中工作安排问题固定回复，将具体细节留待面试说明");
         }
-        if (RESUME_ALREADY_SENT_SIGNAL.matcher(normalize(message)).find()
-                || (runtime.resumeAlreadyReceived() || memory.resumeSentByCandidate())
-                && isResumeFollowUp(message)) {
-            return new Decision(true, "RESUME_SENT", 1.0, "我已收到简历，具体了解后再回复。",
+        if (RESUME_ALREADY_SENT_SIGNAL.matcher(normalize(message)).find()) {
+            return new Decision(true, "RESUME_SENT", 1.0, "收到，过后看完简历再和你联系",
                     "已确认候选人简历已发送，发送固定收件确认，不重复索要简历");
         }
         if (isDetailedJobQuestion(message)) {
@@ -675,10 +683,6 @@ class InboundJobReplyService {
                     reply.equals(base) ? "已命中在招状态固定回复" : "已命中在招状态固定回复并完成轻量 AI 润色");
         }
         if (!isResumePermissionOrJobInterest(message)) return null;
-        if (runtime.resumeAlreadyReceived() || memory.resumeSentByCandidate()) {
-            return new Decision(true, "RESUME_SENT", 1.0, "我已收到简历，具体了解后再回复。",
-                    "已确认简历已收到，未重复索要简历");
-        }
         String base = "可以，您先发一份简历过来，我看过后再和您沟通。";
         String reply = shouldPolishFixedReplies() ? polishSocialReply(base) : base;
         if (!reply.contains("简历")) reply = base;
@@ -726,7 +730,7 @@ class InboundJobReplyService {
 
     static boolean isWorkTimeQuestion(String rawMessage) {
         String message = normalize(rawMessage);
-        return !message.isBlank() && WORK_TIME_QUESTION.matcher(message).find();
+        return !message.isBlank() && (WORK_TIME_QUESTION.matcher(message).find() || WORK_SCHEDULE_REASON.matcher(message).find());
     }
 
     static boolean isRestDaysQuestion(String rawMessage) {
@@ -755,7 +759,7 @@ class InboundJobReplyService {
     }
 
     private Decision candidateDeclineReply(String reason) {
-        String base = "好的，感谢您的投递。";
+        String base = "感谢您的投递";
         String reply = shouldPolishFixedReplies() ? polishSocialReply(base) : base;
         if (reply.isBlank()) reply = base;
         return new Decision(true, "CANDIDATE_DECLINE", 1.0, reply,
@@ -1060,7 +1064,7 @@ class InboundJobReplyService {
     private GeneratedReply buildActionableFallback(JobPosition job, String rawMessage, Topic topic) {
         String message = normalize(rawMessage);
         if ("RESUME_SENT".equals(topic.category())) {
-            return new GeneratedReply("我已收到简历，具体了解后再回复。", List.of());
+            return new GeneratedReply("收到，过后看完简历再和你联系", List.of());
         }
         if ("RESUME_WILL_SEND".equals(topic.category())) {
             return new GeneratedReply("可以，您直接把简历发来即可，我收到后和您沟通。", List.of());
@@ -1200,7 +1204,7 @@ class InboundJobReplyService {
                 .add("GREETING").add("SOCIAL_GREETING").add("SOCIAL_THANKS").add("SOCIAL_ACKNOWLEDGEMENT")
                 .add("CANDIDATE_CONSIDERING").add("RESUME_WILL_SEND").add("RESUME_SENT").add("CANDIDATE_DECLINE").add("CONVERSATION_CLOSING")
                 .add("JOB_INTEREST").add("JOB_STATUS").add("LOCATION").add("SALARY")
-                .add("WORK_TIME").add("BENEFITS").add("EXPERIENCE").add("EDUCATION").add("RESPONSIBILITIES").add("GENERAL_JOB_CONSULTATION")
+                .add("WORK_TIME").add("BENEFITS").add("MEALS_LODGING").add("EXPERIENCE").add("EDUCATION").add("RESPONSIBILITIES").add("GENERAL_JOB_CONSULTATION")
                 .add("CLARIFICATION_REQUIRED").add("OTHER_RECRUITMENT")
                 .add("TRUE_OFF_TOPIC").add("UNRELATED").add("SENSITIVE").add("UNCERTAIN");
     }
@@ -1296,7 +1300,7 @@ class InboundJobReplyService {
         return switch (value) {
             case "GREETING", "SOCIAL_GREETING", "SOCIAL_THANKS", "SOCIAL_ACKNOWLEDGEMENT",
                  "CANDIDATE_CONSIDERING", "RESUME_WILL_SEND", "RESUME_SENT", "CANDIDATE_DECLINE", "CONVERSATION_CLOSING",
-                 "JOB_INTEREST", "JOB_STATUS", "LOCATION", "SALARY", "EXPERIENCE", "EDUCATION",
+                 "JOB_INTEREST", "JOB_STATUS", "LOCATION", "SALARY", "MEALS_LODGING", "EXPERIENCE", "EDUCATION",
                  "RESPONSIBILITIES", "GENERAL_JOB_CONSULTATION", "CLARIFICATION_REQUIRED", "OTHER_RECRUITMENT",
                  "TRUE_OFF_TOPIC", "UNRELATED", "SENSITIVE", "UNCERTAIN" -> true;
             default -> false;

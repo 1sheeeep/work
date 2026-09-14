@@ -21,13 +21,14 @@ public class JobReplyTemplateService {
             new TemplateDefinition("EDUCATION", "您好，岗位学历要求是{{EDUCATION_VALUE}}，欢迎结合您的情况进一步沟通。", "EDUCATION_VALUE"),
             new TemplateDefinition("WORK_TIME", "您好，上班时间为{{WORK_TIME_VALUE}}。如果您对岗位感兴趣，可以继续沟通。", "WORK_TIME_VALUE"),
             new TemplateDefinition("BENEFITS", "您好，公司福利待遇包括{{BENEFITS_VALUE}}。如果您想了解更多，我可以继续介绍。", "BENEFITS_VALUE"),
+            new TemplateDefinition("MEALS_LODGING", "吃住自理", ""),
             new TemplateDefinition("SOCIAL_GREETING", "您好，已收到您的消息，方便的话可以继续了解这个岗位。", ""),
             new TemplateDefinition("SOCIAL_THANKS", "不客气，您后续有问题可以随时沟通。", ""),
-            new TemplateDefinition("SOCIAL_ACKNOWLEDGEMENT", "好的，收到，您有问题可以继续沟通。", ""),
+            new TemplateDefinition("SOCIAL_ACKNOWLEDGEMENT", "好的", ""),
             new TemplateDefinition("CANDIDATE_CONSIDERING", "好的，您可以先了解和考虑，有需要时随时联系我。", ""),
             new TemplateDefinition("RESUME_WILL_SEND", "好的，您方便时发过来即可，我收到后会及时查看。", ""),
-            new TemplateDefinition("RESUME_SENT", "好的，简历已收到，我先看一下，稍后和您沟通。", ""),
-            new TemplateDefinition("CANDIDATE_DECLINE", "好的，感谢您的投递。", ""),
+            new TemplateDefinition("RESUME_SENT", "收到，过后看完简历再和你联系", ""),
+            new TemplateDefinition("CANDIDATE_DECLINE", "感谢您的投递", ""),
             new TemplateDefinition("CONVERSATION_CLOSING", "好的，后续有需要欢迎随时联系。", "")
     );
 
@@ -64,7 +65,7 @@ public class JobReplyTemplateService {
         if (template == null) return Optional.empty();
         Map<String, String> facts = facts(job);
         for (String key : template.getRequiredFactKeys().split(",")) {
-            if (!facts.containsKey(key) || facts.get(key).isBlank()) return Optional.empty();
+            if (!key.isBlank() && (!facts.containsKey(key) || facts.get(key).isBlank())) return Optional.empty();
         }
         String rendered = template.getTemplateText();
         for (Map.Entry<String, String> fact : facts.entrySet()) {

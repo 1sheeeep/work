@@ -27,6 +27,8 @@ class InboundAiReplyTask {
     @Column(name="message_digest",nullable=false,length=64) private String messageDigest;
     @Column(name="message_text",columnDefinition="TEXT") private String messageText;
     @Column(name="conversation_context",columnDefinition="TEXT") private String conversationContext;
+    @Column(name="purpose",nullable=false,length=24) private String purpose="STANDARD_REPLY";
+    @Column(name="resume_intake_id") private UUID resumeIntakeId;
     @Column(nullable=false,length=24) private String status;
     @Column(name="reply_allowed") private Boolean replyAllowed;
     @Column(length=40) private String category;
@@ -61,9 +63,19 @@ class InboundAiReplyTask {
 
     InboundAiReplyTask(UUID accountId, UUID observationId, UUID jobPositionId, String chatDigest,
                        String messageDigest, String messageText, String conversationContext, Instant now) {
+        this(accountId, observationId, jobPositionId, chatDigest, messageDigest, messageText,
+                conversationContext, "STANDARD_REPLY", null, now);
+    }
+
+    InboundAiReplyTask(UUID accountId, UUID observationId, UUID jobPositionId, String chatDigest,
+                       String messageDigest, String messageText, String conversationContext,
+                       String purpose, UUID resumeIntakeId, Instant now) {
         this.id=UUID.randomUUID();this.accountId=accountId;this.observationId=observationId;
         this.jobPositionId=jobPositionId;this.chatDigest=chatDigest;this.messageDigest=messageDigest;
-        this.messageText=messageText;this.conversationContext=conversationContext;this.status="QUEUED";this.createdAt=now;this.updatedAt=now;this.nextAttemptAt=now;
+        this.messageText=messageText;this.conversationContext=conversationContext;
+        this.purpose="RESUME_RECEIPT".equals(purpose)?"RESUME_RECEIPT":"STANDARD_REPLY";
+        this.resumeIntakeId="RESUME_RECEIPT".equals(this.purpose)?resumeIntakeId:null;
+        this.status="QUEUED";this.createdAt=now;this.updatedAt=now;this.nextAttemptAt=now;
     }
 
     void start(Instant now){status="PROCESSING";attemptCount++;startedAt=now;updatedAt=now;}
@@ -72,8 +84,19 @@ class InboundAiReplyTask {
     void fail(String code,String reason,Instant now){status="FAILED";replyAllowed=false;category="UNCERTAIN";confidence=0d;replyContent=null;resultReason=bounded(reason);lastErrorCode=boundedCode(code);sendStatus="SKIPPED";conversationContext=null;nextAttemptAt=null;completedAt=now;updatedAt=now;}
     boolean retry(String code,String reason,Instant now){if(attemptCount>=MAX_AI_ATTEMPTS){lastErrorCode=code;fail(code,"AI 输出重试已耗尽（"+MAX_AI_ATTEMPTS+" 次）："+reason,now);return false;}status="RETRY_WAIT";lastErrorCode=boundedCode(code);resultReason=bounded(reason);startedAt=null;long delay=Math.min(MAX_RETRY_DELAY_SECONDS,5L*(1L<<Math.max(0,attemptCount-1)));nextAttemptAt=now.plusSeconds(delay);updatedAt=now;return true;}
     void releaseRetry(Instant now){if("RETRY_WAIT".equals(status)&&nextAttemptAt!=null&&!nextAttemptAt.isAfter(now)){status="QUEUED";updatedAt=now;}}
-    void recoverIfStale(Instant now){if("PROCESSING".equals(status)&&startedAt!=null&&Duration.between(startedAt,now).toMinutes()>=3){status="QUEUED";startedAt=null;nextAttemptAt=now;updatedAt=now;}}
+    boolean recoverIfStale(Instant now){
+        if(!"PROCESSING".equals(status)||startedAt==null||Duration.between(startedAt,now).toMinutes()<3)return false;
+        if(attemptCount>=MAX_AI_ATTEMPTS){
+            fail("INBOUND_REPLY_AI_STALE_PROCESSING","AI 回复任务处理超过 3 分钟且已达到最大尝试次数，已停止自动重试",now);
+            return true;
+        }
+        status="QUEUED";startedAt=null;nextAttemptAt=now;updatedAt=now;return true;
+    }
     boolean isReplayableFailure(){
+        // 2026-09-14 前的恢复任务曾把“自动打开会话后未读角标消失”误判为 HR 已处理。
+        // 这类任务允许再做一次受控复核；真正重入队前仍必须由插件重新读取当前正文，
+        // 并通过消息摘要、方向、岗位归属和详情时效校验。
+        if (wasUnreadBadgeMisclassified()) return safeReplayCount < 2;
         if (safeReplayCount >= MAX_SAFE_REPLAYS) return false;
         if ("FAILED".equals(sendStatus)) return "COMPLETED".equals(status) && Boolean.TRUE.equals(replyAllowed);
         if (!"SKIPPED".equals(sendStatus)) return false;
@@ -101,6 +124,10 @@ class InboundAiReplyTask {
                 || resultReason.startsWith("无法可靠判断消息意图")
                 || resultReason.startsWith("AI 判断该消息需要人工复核")
                 || resultReason.startsWith("正常静默：");
+    }
+    boolean wasUnreadBadgeMisclassified(){
+        return "COMPLETED".equals(status) && "SKIPPED".equals(sendStatus)
+                && "会话已由 HR 处理或已不再处于候选人未读状态，待发送回复已安全作废".equals(sendResultReason);
     }
     boolean isReplayableFailure(Instant now, Duration silentDelay){
         if (!isReplayableFailure()) return false;
@@ -155,6 +182,7 @@ class InboundAiReplyTask {
     String getChatDigest(){return chatDigest;} String getMessageDigest(){return messageDigest;} String getReplyContent(){return replyContent;} String getCategory(){return category;} Double getConfidence(){return confidence;} String getResultReason(){return resultReason;} String getSendStatus(){return sendStatus;} String getSendResultReason(){return sendResultReason;} UUID getSendDeviceId(){return sendDeviceId;} String getSendLeaseTokenHash(){return sendLeaseTokenHash;} Instant getSendLeaseUntil(){return sendLeaseUntil;} Instant getCompletedAt(){return completedAt;} Instant getSendCompletedAt(){return sendCompletedAt;} Instant getUpdatedAt(){return updatedAt;}
     boolean isPartialReply(){return resultReason!=null&&resultReason.startsWith("已部分回答，仍需 HR 补充：");}
     boolean isExpectedSilence(){return resultReason!=null&&resultReason.startsWith("正常静默：");}
+    boolean isResumeReceipt(){return "RESUME_RECEIPT".equals(purpose)||"RESUME_SENT".equals(category)||"[SYSTEM_RESUME_ATTACHMENT_RECEIPT]".equals(conversationContext);}
     boolean isShadowEvaluation(){return resultReason!=null&&resultReason.startsWith("影子评测：");}
     boolean wasReplyApproved(){return Boolean.TRUE.equals(replyAllowed)||isShadowEvaluation();}
 }

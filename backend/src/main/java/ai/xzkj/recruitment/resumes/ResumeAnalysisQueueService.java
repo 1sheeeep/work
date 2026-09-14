@@ -160,7 +160,7 @@ public class ResumeAnalysisQueueService {
     private boolean isNonRetryableProviderFailure(String code) {
         return switch (code == null ? "" : code) {
             case "OPENAI_NOT_CONFIGURED", "OPENAI_CONFIGURATION_REQUIRED", "OPENAI_AUTH_FAILED",
-                    "OPENAI_MODEL_INVALID", "OPENAI_BASE_URL_INVALID" -> true;
+                    "OPENAI_MODEL_INVALID", "OPENAI_BASE_URL_INVALID", "OPENAI_BILLING_REQUIRED" -> true;
             default -> false;
         };
     }

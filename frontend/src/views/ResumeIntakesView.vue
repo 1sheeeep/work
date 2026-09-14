@@ -15,7 +15,6 @@ import type {
   CandidateMergeRequest,
   Company,
   OpenAiConfigurationStatus,
-  ResumeAnalysisFeedbackType,
   ResumeAnalysisRecommendation,
   ResumeAnalysisResult,
   ResumeAnalysisRun,
@@ -35,7 +34,7 @@ type ResumeDocumentPreview = {
 
 const loading = ref(true)
 const saving = ref(false)
-const feedbackSaving = ref(false)
+
 const fileSubmitting = ref(false)
 const externalSubmitting = ref(false)
 const externalDragOver = ref(false)
@@ -46,7 +45,7 @@ const contacts = ref<CandidateContact[]>([])
 const companies = ref<Company[]>([])
 const aiStatus = ref<OpenAiConfigurationStatus | null>(null)
 const dialogOpen = ref(false)
-const feedbackDialogOpen = ref(false)
+
 const fileDialogOpen = ref(false)
 const textDialogOpen = ref(false)
 const analyzingId = ref<string>()
@@ -76,7 +75,7 @@ const mergePreview = ref<CandidateMergePreview | null>(null)
 const mergeOperations = ref<CandidateMergeOperation[]>([])
 
 const form = reactive({ contactId: '', displayLabel: '候选人已提供附件简历', reference: '' })
-const feedbackForm = reactive({ runId: '', feedbackType: 'ADOPTED' as ResumeAnalysisFeedbackType, note: '' })
+
 const fileForm = reactive({ intakeId: '', file: null as File | null })
 const analysisForm = reactive({ intakeId: '', resumeText: '', consent: false, source: '' })
 type ExternalResumeAnalysisResponse = { intake: ResumeIntake; analysis: ResumeAnalysisRun; comparedJobCount: number }
@@ -114,11 +113,6 @@ const recommendationMeta: Record<ResumeAnalysisRecommendation, { label: string; 
   INFORMATION_NEEDED: { label: '信息不足待确认', type: 'warning' },
 }
 
-const feedbackMeta: Record<ResumeAnalysisFeedbackType, { label: string; type: 'success' | 'warning' | 'info' }> = {
-  ADOPTED: { label: '作为参考采纳', type: 'success' },
-  AMENDED: { label: 'HR 已修正', type: 'warning' },
-  NOT_USED: { label: '本次未采用', type: 'info' },
-}
 
 function formatDate(value?: string) {
   return value ? new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : '无'
@@ -665,34 +659,6 @@ function chooseExternalPdf() { if (!externalSubmitting.value) externalFileInput.
 function handleExternalFileChange(event: Event) { void submitExternalPdf((event.target as HTMLInputElement).files?.[0]) }
 function dropExternalPdf(event: DragEvent) { externalDragOver.value = false; void submitExternalPdf(event.dataTransfer?.files?.[0]) }
 
-function openFeedback(run: ResumeAnalysisRun) {
-  feedbackForm.runId = run.id
-  feedbackForm.feedbackType = 'ADOPTED'
-  feedbackForm.note = ''
-  feedbackDialogOpen.value = true
-}
-
-async function saveFeedback() {
-  if (!feedbackForm.note.trim()) {
-    ElMessage.warning('请填写 HR 复核说明')
-    return
-  }
-  feedbackSaving.value = true
-  try {
-    await ensureCsrf()
-    await api.post(`/resume-analysis-runs/${feedbackForm.runId}/feedback`, {
-      feedbackType: feedbackForm.feedbackType,
-      note: feedbackForm.note,
-    })
-    ElMessage.success('HR 复核已追加到该次分析记录')
-    feedbackDialogOpen.value = false
-    await loadAnalysis(intakes.value)
-  } catch (error) {
-    ElMessage.error(apiErrorMessage(error, 'HR 复核保存失败'))
-  } finally {
-    feedbackSaving.value = false
-  }
-}
 
 onMounted(() => {
   void load()
@@ -828,7 +794,6 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
                 </template>
                 <template v-else-if="selectedAnalysis?.status === 'SUCCEEDED'">
                   <el-button :loading="analyzingId === selectedIntake.id" @click="reanalyzeStored(selectedIntake)">重新分析</el-button>
-                  <el-button v-if="selectedAnalysis" type="primary" @click="openFeedback(selectedAnalysis)">记录 HR 复核</el-button>
                 </template>
                 <template v-else-if="selectedIntake.status === 'APPROVED_FOR_AI'">
                   <el-button :icon="Cpu" :loading="analyzingId === selectedIntake.id" @click="openTextAnalysis(selectedIntake)">粘贴文本</el-button>
@@ -884,7 +849,7 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
             </div>
 
             <section v-if="selectedAnalysis?.resultPurgedAt" class="analysis-content">
-              <el-alert type="info" :closable="false" title="AI 分析内容已按保留策略清除" :description="`已于 ${formatDate(selectedAnalysis.resultPurgedAt)} 清除结构化结果与 HR 复核内容；输入摘要和审计记录仍保留。`" />
+              <el-alert type="info" :closable="false" title="AI 分析内容已按保留策略清除" :description="`已于 ${formatDate(selectedAnalysis.resultPurgedAt)} 清除结构化结果；输入摘要和审计记录仍保留。`" />
             </section>
 
             <section v-else-if="selectedAnalysis?.status === 'SUCCEEDED' && selectedAnalysis.result" class="analysis-content">
@@ -939,15 +904,7 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
                   <ol><li v-for="question in selectedAnalysis.result.followUpQuestions" :key="question">{{ question }}</li></ol>
                 </article>
               </div>
-              <div class="feedback-section">
-                <div class="feedback-heading"><div><h3>HR 复核</h3><p>AI 结论仅供参考，最终判断由 HR 作出。</p></div></div>
-                <p v-if="!selectedAnalysis.feedback.length" class="feedback-empty">尚未添加复核记录</p>
-                <article v-for="entry in selectedAnalysis.feedback" :key="entry.id" class="feedback-item">
-                  <el-tag size="small" :type="feedbackMeta[entry.feedbackType].type">{{ feedbackMeta[entry.feedbackType].label }}</el-tag>
-                  <span>{{ entry.note }}</span>
-                  <small>{{ entry.createdBy }} · {{ formatDate(entry.createdAt) }}</small>
-                </article>
-              </div>
+
               <small class="analysis-footnote">
                 {{ selectedAnalysis.provider }} · {{ selectedAnalysis.modelVersion }} · {{ formatDate(selectedAnalysis.createdAt) }}
                 <template v-if="selectedAnalysis.resultExpiresAt"> · 预计清除 {{ formatDate(selectedAnalysis.resultExpiresAt) }}</template>
@@ -1019,20 +976,7 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
       <template #footer><el-button @click="autoAnalysisDialogOpen = false">取消</el-button><el-button type="primary" :loading="autoAnalysisSaving" @click="saveAutoAnalysisAuthorization">保存</el-button></template>
     </el-dialog>
 
-    <el-dialog append-to-body v-model="feedbackDialogOpen" title="记录 HR 复核" width="520px">
-      <el-alert type="info" :closable="false" title="复核不会自动改变候选人状态，也不会发送招聘消息。" />
-      <el-form label-position="top" class="intake-form">
-        <el-form-item label="复核结论" required>
-          <el-radio-group v-model="feedbackForm.feedbackType">
-            <el-radio-button label="ADOPTED">作为参考采纳</el-radio-button>
-            <el-radio-button label="AMENDED">HR 已修正</el-radio-button>
-            <el-radio-button label="NOT_USED">本次未采用</el-radio-button>
-          </el-radio-group>
-        </el-form-item>
-        <el-form-item label="HR 复核说明" required><el-input v-model="feedbackForm.note" type="textarea" :rows="4" maxlength="1000" show-word-limit placeholder="例如：需在电话沟通中确认实际职责" /></el-form-item>
-      </el-form>
-      <template #footer><el-button @click="feedbackDialogOpen = false">取消</el-button><el-button type="primary" :loading="feedbackSaving" @click="saveFeedback">保存复核</el-button></template>
-    </el-dialog>
+
 
     <el-dialog append-to-body v-model="fileDialogOpen" title="提取简历文本" width="560px">
       <el-alert type="warning" :closable="false" title="文件仅在本机临时处理。支持 PDF、DOCX、PNG、JPG/JPEG（最大 8MB），提取后不会自动发送给 AI。" />
@@ -1192,11 +1136,11 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
 .resume-ticket:hover { background:linear-gradient(135deg, rgba(255,255,255,.96) 0%, rgba(255,255,255,.84) 100%); transform:translateY(-2px); box-shadow:0 2px 4px rgba(17,28,45,.05), 0 8px 24px rgba(17,28,45,.10), inset 0 1px 0 rgba(255,255,255,.88), 2px 0 0 0 rgba(13,148,136,.12); }
 .resume-ticket:active { animation:card-press 180ms ease-out both; }
 .resume-ticket--selected { background:linear-gradient(135deg, rgba(240,253,250,.96) 0%, rgba(255,255,255,.82) 100%); box-shadow:0 0 0 2px rgba(13,148,136,.28), 0 4px 18px rgba(13,148,136,.10), inset 0 1px 0 rgba(255,255,255,.78); animation:card-select-breathe 420ms cubic-bezier(.2,0,0,1) both; }
-.resume-ticket--dragging { opacity: .5; cursor: grabbing; transform:rotate(1.5deg) scale(.97); }
+.resume-ticket--dragging { opacity: 1; cursor: grabbing; transform:translateY(-1px); outline:2px dashed color-mix(in srgb, var(--primary) 55%, transparent); outline-offset:-3px; }
 .resume-ticket--pending { background:linear-gradient(135deg, var(--surface-amber) 0%, rgba(255,255,255,.78) 100%); box-shadow:0 1px 2px rgba(17,28,45,.03), 0 2px 8px rgba(17,28,45,.04), inset 0 1px 0 rgba(255,255,255,.72), 2px 0 0 0 rgba(183,110,0,.12); }
 .resume-ticket--rejected { background:linear-gradient(135deg, var(--surface-rose) 0%, rgba(255,255,255,.78) 100%); box-shadow:0 1px 2px rgba(17,28,45,.03), 0 2px 8px rgba(17,28,45,.04), inset 0 1px 0 rgba(255,255,255,.72), 2px 0 0 0 rgba(180,35,24,.10); }
-.ticket-tags, .resume-ticket footer, .candidate-header, .candidate-status, .recommendation-card, .insight-card header, .feedback-heading { display: flex; align-items: center; }
-.resume-ticket footer, .recommendation-card, .insight-card header, .feedback-heading { justify-content: space-between; }
+.ticket-tags, .resume-ticket footer, .candidate-header, .candidate-status, .recommendation-card, .insight-card header { display: flex; align-items: center; }
+.resume-ticket footer, .recommendation-card, .insight-card header { justify-content: space-between; }
 .drag-hint { margin-left: auto; color: var(--text-tertiary); font-size: 11px; }
 .ticket-person { display: grid; min-width: 0; gap: 4px; margin: 0; }
 .candidate-avatar { display: grid; flex: 0 0 auto; width: 38px; height: 38px; place-items: center; border-radius: 12px; background:linear-gradient(145deg, #14b8a6 0%, #0d9488 40%, #0f766e 100%); color: white; font-weight: 800; box-shadow:0 3px 10px rgba(13,148,136,.18), 0 1px 2px rgba(0,0,0,.06), inset 0 1px 0 rgba(255,255,255,.16); }
@@ -1205,12 +1149,12 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
 .ticket-person strong { overflow: hidden; color: var(--text-main); font-size: 15px; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
 .ticket-job { display: -webkit-box; overflow: hidden; color: var(--text-secondary); font-size: 12px; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .ticket-tags, .candidate-status { flex-wrap: wrap; gap: 6px; }
-.resume-ticket footer { gap: 10px; margin-top: 11px; padding-top: 9px; border-top: 1px solid var(--border-subtle); }
-.resume-ticket footer span, .resume-ticket footer time { min-width: 0; overflow-wrap: anywhere; }
+.resume-ticket footer { gap: 10px; margin-top: 11px; padding-top: 9px; border-top: 1px solid var(--border-subtle); color: var(--text-secondary); }
+.resume-ticket footer span, .resume-ticket footer time { min-width: 0; overflow-wrap: anywhere; color: var(--text-secondary); }
 .resume-ticket footer time { text-align: right; }
 .analysis-board { min-height: 640px; transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease; }
 .analysis-board--dragover { border-color: var(--primary); box-shadow: 0 0 0 4px rgba(15,118,110,.12), var(--shadow-md); }
-.analysis-dropzone { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 86px; padding: 18px 22px; border-bottom: 1px dashed var(--border-teal); background:linear-gradient(135deg, rgba(238,249,246,.94), rgba(255,255,255,.66)); transition: background .18s ease; }
+.analysis-dropzone { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 86px; padding: 18px 22px; border-bottom: 1px dashed var(--border-teal); background:linear-gradient(135deg, var(--surface-teal), var(--surface)); transition: background .18s ease; }
 .analysis-dropzone--active { background: var(--surface-blue); }
 .analysis-dropzone > div { min-width: 0; }
 .analysis-dropzone strong, .analysis-dropzone small { display: block; }
@@ -1223,7 +1167,7 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
 .board-empty h2 { margin: 17px 0 7px; font-size: 20px; }
 .board-empty p { max-width: 460px; margin: 0; color: var(--text-secondary); line-height: 1.7; }
 .empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 9px; margin-top: 20px; }
-.candidate-header { align-items:center; flex-wrap:wrap; gap:14px; padding:22px; border-bottom:1px solid var(--border); background:linear-gradient(180deg, rgba(255,255,255,.72), rgba(247,249,250,.82)); }
+.candidate-header { align-items:center; flex-wrap:wrap; gap:14px; padding:22px; border-bottom:1px solid var(--border); background:linear-gradient(180deg, var(--surface-soft), var(--surface)); }
 .candidate-title { flex: 1; }
 .candidate-title > span { color: var(--primary); font-size: 11px; font-weight: 800; }
 .candidate-title h2 { margin: 4px 0 3px; font-size: 21px; }
@@ -1232,10 +1176,10 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
 .status-alert { display: grid; gap: 4px; margin: 18px 22px 0; padding: 13px 15px; border-radius: var(--radius-panel); font-size: 13px; }
 .status-alert--danger { border: 1px solid var(--status-alert-danger-border); background: var(--status-alert-danger-bg); color: var(--status-alert-danger-text); }
 .analysis-content { display: grid; gap: 16px; padding: 22px; }
-.recommendation-card { gap: 14px; padding: 18px 20px; border: 1px solid var(--color-violet-border); border-radius: var(--radius-panel); background:linear-gradient(145deg, var(--surface-violet), rgba(255,255,255,.72)); position:relative; overflow:hidden; box-shadow:var(--shadow-ground), inset 0 1px 0 rgba(255,255,255,.6); }
+.recommendation-card { gap: 14px; padding: 18px 20px; border: 1px solid var(--color-violet-border); border-radius: var(--radius-panel); background:linear-gradient(145deg, var(--surface-violet), var(--surface)); position:relative; overflow:hidden; box-shadow:var(--shadow-ground), inset 0 1px 0 rgba(255,255,255,.16); }
 .recommendation-card span, .summary-card > span { color: var(--text-secondary); font-size: 12px; font-weight: 700; position:relative; z-index:1; }
 .recommendation-card h3 { margin: 5px 0 0; font-size: 21px; position:relative; z-index:1; }
-.summary-card, .insight-card, .feedback-section { padding:18px 0 0; border-top:1px solid var(--border); }
+.summary-card, .insight-card { padding:18px 0 0; border-top:1px solid var(--border); }
 .summary-card { padding:0; }
 .summary-card p { margin: 8px 0 0; line-height: 1.75; overflow-wrap: anywhere; }
 .job-comparison-section { margin-top:20px; padding-top:18px; border-top:1px solid var(--border); }
@@ -1284,14 +1228,6 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
 .insight-card--questions ol { counter-reset: questions; }
 .insight-card--questions li { position: relative; padding-left: 50px; counter-increment: questions; overflow-wrap: anywhere; }
 .insight-card--questions li::before { position: absolute; top: 12px; left: 16px; display: grid; width: 23px; height: 23px; place-items: center; border-radius: var(--radius-control); background: var(--color-question-marker-bg); color: var(--color-question-marker-text); content: counter(questions); font-weight: 800; }
-.feedback-section { padding: 17px; }
-.feedback-heading { gap: 14px; }
-.feedback-heading h3 { margin: 0; font-size: 15px; }
-.feedback-heading p { margin: 4px 0 0; color: var(--text-secondary); font-size: 12px; }
-.feedback-empty { margin: 14px 0 0; padding: 12px; border-radius: var(--radius-control); background: var(--surface-muted); color: var(--text-secondary); font-size: 12px; text-align: center; }
-.feedback-item { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 7px 10px; align-items: start; margin-top: 11px; padding: 12px; border-radius: var(--radius-control); background: var(--surface-soft); color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
-.feedback-item span { overflow-wrap: anywhere; }
-.feedback-item small { grid-column: 2; }
 .analysis-footnote { color: var(--text-secondary); font-size: 11px; line-height: 1.6; }
 .intake-details { display: flex; flex-wrap: wrap; gap: 8px 16px; padding: 14px 22px; border-top: 1px solid var(--border); background: var(--surface-soft); color: var(--text-secondary); font-size: 11px; }
 .intake-details span { max-width: 100%; overflow-wrap: anywhere; }
@@ -1308,7 +1244,7 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
 .evidence-coverage :deep(.el-progress-bar__outer) { background:var(--border); }
 .evidence-coverage :deep(.el-progress-bar__inner) { background:var(--primary); }
 .recommendation-card { flex-wrap:wrap; }
-.talent-profile-strip { display:grid; gap:9px; margin:0 22px 4px; border:1px solid rgba(13,148,136,.16); border-radius:var(--radius-control); background:linear-gradient(135deg,rgba(238,249,246,.76),rgba(255,255,255,.82)); }
+.talent-profile-strip { display:grid; gap:9px; margin:0 22px 4px; border:1px solid rgba(13,148,136,.16); border-radius:var(--radius-control); background:linear-gradient(135deg,var(--surface-teal),var(--surface)); }
 .talent-profile-strip__toggle { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 16px; cursor:pointer; list-style:none; transition:background var(--transition-fast); }
 .talent-profile-strip__toggle::-webkit-details-marker { display:none; }
 .talent-profile-strip__toggle::before { content:'›'; color:var(--primary); font-size:16px; line-height:1; transition:transform var(--transition-fast); margin-right:6px; }
@@ -1319,7 +1255,7 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
 .talent-resume-list { display:grid; gap:7px; margin:0; padding:8px 16px; border-top:1px dashed rgba(13,148,136,.2); }
 .talent-resume-list__heading { display:flex; align-items:center; justify-content:space-between; gap:10px; color:var(--text-main); font-size:12px; font-weight:800; }
 .talent-resume-list__heading small { color:var(--text-tertiary); font-size:11px; font-weight:500; }
-.talent-resume-item { display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%; padding:9px 10px; border:1px solid var(--border); border-radius:10px; background:rgba(255,255,255,.58); color:inherit; text-align:left; cursor:pointer; transition:border-color .18s ease, background .18s ease, transform .18s ease; }
+.talent-resume-item { display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%; padding:9px 10px; border:1px solid var(--border); border-radius:10px; background:var(--surface-soft); color:inherit; text-align:left; cursor:pointer; transition:border-color .18s ease, background .18s ease, transform .18s ease; }
 .talent-resume-item:hover, .talent-resume-item--active { border-color:var(--border-teal); background:var(--surface-teal); transform:translateY(-1px); }
 .talent-resume-item__main { display:grid; min-width:0; gap:3px; }
 .talent-resume-item__main strong, .talent-resume-item__main small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -1377,4 +1313,17 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
 :global(:root[data-theme="dark"]) .resume-ticket--pending { background:linear-gradient(135deg, rgba(42,34,22,.88) 0%, rgba(30,36,51,.78) 100%); box-shadow:0 1px 2px rgba(0,0,0,.22), 0 2px 8px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.04), 2px 0 0 0 rgba(183,110,0,.16); }
 :global(:root[data-theme="dark"]) .resume-ticket--rejected { background:linear-gradient(135deg, rgba(42,19,19,.88) 0%, rgba(30,36,51,.78) 100%); box-shadow:0 1px 2px rgba(0,0,0,.22), 0 2px 8px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.04), 2px 0 0 0 rgba(180,35,24,.14); }
 :global(:root[data-theme="dark"]) .talent-profile-strip { border-color:rgba(45,212,191,.18); background:linear-gradient(135deg,rgba(15,31,29,.9),rgba(30,36,51,.8)); }
+:global(:root[data-theme="dark"]) .resume-queue-panel,
+:global(:root[data-theme="dark"]) .analysis-board { background:var(--surface) !important; }
+:global(:root[data-theme="dark"]) .analysis-dropzone,
+:global(:root[data-theme="dark"]) .candidate-header { background:linear-gradient(135deg, var(--surface-soft), var(--surface)); }
+:global(:root[data-theme="dark"]) .ai-service-inline { background:var(--surface-soft); }
+:global(:root[data-theme="dark"]) .recommendation-card { background:linear-gradient(145deg, var(--surface-violet), var(--surface)); box-shadow:var(--shadow-ground), inset 0 1px 0 rgba(255,255,255,.05); }
+:global(:root[data-theme="dark"]) .board-empty__icon { background:linear-gradient(145deg, var(--surface-teal), var(--surface-raised)); box-shadow:var(--shadow-raised), inset 0 1px 0 rgba(255,255,255,.05); }
+:global(:root[data-theme="dark"]) .talent-resume-item { background:rgba(22,27,34,.82); }
+:global(:root[data-theme="dark"]) .match-percent--high { color:#34d399; background:rgba(52,211,153,.12); border-color:rgba(52,211,153,.24); }
+:global(:root[data-theme="dark"]) .match-percent--mid { color:#fbbf24; background:rgba(251,191,36,.12); border-color:rgba(251,191,36,.24); }
+:global(:root[data-theme="dark"]) .match-percent--low { color:#e58a8a; background:rgba(180,55,55,.16); border-color:rgba(210,90,90,.28); }
+:global(:root[data-theme="dark"]) .flag--danger,
+:global(:root[data-theme="dark"]) .status-alert--danger { color:#e58a8a; }
 </style>

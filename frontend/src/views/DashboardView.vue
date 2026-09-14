@@ -107,8 +107,12 @@ function qualityLabel(key: string): string {
 }
 
 // 「需要关注」区：待确认发送结果 + 待 HR 复核会话，两者共同构成行动入口
+const successfulDutyReplies = computed(() => dutyReplies.value.filter(event => event.sendStatus === 'SUCCEEDED'))
+const unsuccessfulDutyReplies = computed(() => dutyReplies.value.filter(event => event.sendStatus !== 'SUCCEEDED'))
+const reviewOnlyItems = computed(() => dutyReviewRequired.value.filter(item => !dutyReplies.value.some(event => event.observationId === item.observationId)))
+const reviewItemCount = computed(() => unsuccessfulDutyReplies.value.length + reviewOnlyItems.value.length)
 const attentionUnconfirmed = computed(() => qualitySummary.value?.unconfirmedSends ?? 0)
-const attentionReview = computed(() => dutyReviewRequired.value.length)
+const attentionReview = computed(() => reviewItemCount.value)
 const attentionTotal = computed(() => attentionUnconfirmed.value + attentionReview.value)
 const reviewRequiredSection = ref<HTMLElement | null>(null)
 const qualityDetailPanel = ref<HTMLDetailsElement | null>(null)
@@ -220,7 +224,7 @@ function dutyEventState(event:AiDutyEvent){
 
 function dutyEventTime(event:AiDutyEvent){return event.completedAt||event.updatedAt}
 
-async function locateBossConversation(item:AiDutyReviewRequired){
+async function locateBossConversation(item:Pick<AiDutyReviewRequired, 'observationId'>){
   if (locatingObservationId.value) return
   locatingObservationId.value = item.observationId
   try {
@@ -403,18 +407,18 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
                 aria-label="展开/折叠 AI 值守回顾"
               ><span class="duty-review__eyebrow">最近 7 天</span></button>
               <h2 id="duty-review-title">AI 值守回顾</h2>
-              <p>展示最近 7 天 AI 处理过的全部消息，包括成功、静默、失败和重试。</p>
+              <p>最近 7 天已确认成功回复的消息；静默、失败和重试记录统一在右侧复核。</p>
             </div>
             <div class="duty-review__header-right">
-              <span class="duty-review__count"><b>{{ dutyReplies.length }}</b> 条已处理</span>
+              <span class="duty-review__count"><b>{{ successfulDutyReplies.length }}</b> 条成功回复</span>
             </div>
           </header>
           <div v-show="reviewExpanded" class="duty-review__body">
-            <AsyncState v-if="!dutyReplies.length" state="empty" embedded title="暂无 AI 处理记录" message="挂机期间 AI 处理过的任务会在这里显示。">
+            <AsyncState v-if="!successfulDutyReplies.length" state="empty" embedded title="暂无成功回复" message="最近 7 天确认发送成功的回复会在这里显示。">
               <template #icon><el-icon><ChatDotRound /></el-icon></template>
             </AsyncState>
             <div v-else ref="dutyRepliesListRef" class="duty-review__vertical-list">
-              <button v-for="(reply, idx) in dutyReplies" :key="reply.id" class="duty-reply-item" :class="`duty-reply-item--hue-${idx % 6}`" type="button" @click="openDutyReply(reply)">
+              <button v-for="(reply, idx) in successfulDutyReplies" :key="reply.id" class="duty-reply-item" :class="`duty-reply-item--hue-${idx % 6}`" type="button" @click="openDutyReply(reply)">
                 <span class="duty-reply-item__status" :class="{ followup: ['warning','danger'].includes(dutyEventState(reply).tone) }"></span>
                 <div class="duty-reply-item__content">
                   <div class="duty-reply-item__header">
@@ -424,6 +428,7 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
                   <small>{{ reply.accountName }} · {{ reply.category || '未分类' }}</small>
                   <p v-if="reply.messageText" class="duty-reply-item__incoming">候选人：{{ reply.messageText }}</p>
                   <p class="duty-reply-item__reason">{{ dutyEventState(reply).label }} · {{ reply.detail || '暂无处理原因' }}</p>
+                  <p v-if="reply.attemptCount > 1" class="duty-reply-item__note">已重试 {{ reply.attemptCount - 1 }} 次后成功</p>
                   <p v-if="reply.replyContent" class="duty-reply-item__outgoing">回复：{{ reply.replyContent }}</p>
                 </div>
               </button>
@@ -439,20 +444,40 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
                 :class="{ 'duty-review__toggle--open': reviewRequiredExpanded }"
                 @click="reviewRequiredExpanded = !reviewRequiredExpanded"
                 aria-label="展开/折叠已读未回复"
-              ><span class="duty-review__eyebrow">过去 24 小时</span></button>
+              ><span class="duty-review__eyebrow">最近 7 天</span></button>
               <h2 id="duty-review-required-title">已读未回复 · 待 HR 复核</h2>
-              <p>收录收到简历、面试协商、无关或敏感内容、含义不清及事实校验未通过的会话。</p>
+              <p>收录静默、跳过、失败、重试和发送待确认的会话，并显示候选人最后一条消息及处理原因。</p>
             </div>
             <div class="duty-review__header-right">
-              <span class="duty-review__count duty-review__count--warning"><b>{{ dutyReviewRequired.length }}</b> 条待复核</span>
+              <span class="duty-review__count duty-review__count--warning"><b>{{ reviewItemCount }}</b> 条待复核</span>
             </div>
           </header>
           <div v-show="reviewRequiredExpanded" class="duty-review__body">
-            <AsyncState v-if="!dutyReviewRequired.length" state="empty" embedded title="暂无待跟进会话" message="收到简历或 AI 安全跳过的会话会出现在这里。">
+            <AsyncState v-if="!reviewItemCount" state="empty" embedded title="暂无待跟进会话" message="最近 7 天没有静默、失败或待确认的 AI 处理记录。">
               <template #icon><el-icon><CircleCheck /></el-icon></template>
             </AsyncState>
             <div v-else ref="dutyReviewRequiredListRef" class="duty-review__vertical-list">
-              <article v-for="item in dutyReviewRequired" :key="item.id" class="duty-reply-item duty-reply-item--required">
+              <article v-for="(event, idx) in unsuccessfulDutyReplies" :key="event.id" class="duty-reply-item duty-reply-item--required" :class="`duty-reply-item--hue-${idx % 6}`">
+                <span class="duty-reply-item__status followup"></span>
+                <div class="duty-reply-item__content">
+                  <div class="duty-reply-item__header">
+                    <strong>{{ event.jobTitle }}</strong>
+                    <time :datetime="dutyEventTime(event)">{{ new Date(dutyEventTime(event)).toLocaleTimeString('zh-CN', { hour:'2-digit', minute:'2-digit' }) }}</time>
+                  </div>
+                  <small>{{ event.accountName }} · {{ event.category || '未分类' }}</small>
+                  <p v-if="event.messageText" class="duty-reply-item__incoming">候选人：{{ event.messageText }}</p>
+                  <p class="duty-reply-item__reason">{{ dutyEventState(event).label }} · {{ event.detail || '暂无处理原因' }}</p>
+                  <p v-if="event.attemptCount > 1" class="duty-reply-item__note">已重试 {{ event.attemptCount - 1 }} 次</p>
+                  <div class="duty-reply-item__actions">
+                    <em class="duty-reply-item__note">AI 未成功回复，待 HR 判断</em>
+                    <button class="duty-reply-item__locate" type="button" :disabled="locatingObservationId === event.observationId" @click.stop="locateBossConversation({ observationId: event.observationId })" :aria-label="`定位 ${event.jobTitle} 的 BOSS 会话`">
+                      <el-icon><Location /></el-icon>
+                      {{ locatingObservationId === event.observationId ? '定位中…' : '定位 BOSS 会话' }}
+                    </button>
+                  </div>
+                </div>
+              </article>
+              <article v-for="item in reviewOnlyItems" :key="item.id" class="duty-reply-item duty-reply-item--required">
                 <span class="duty-reply-item__status followup"></span>
                 <div class="duty-reply-item__content">
                   <div class="duty-reply-item__header">

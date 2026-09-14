@@ -8,9 +8,9 @@ const router = useRouter()
 
 const navItems = [
   { path: '/dashboard', label: '值守', icon: Grid },
-  { path: '/boss-accounts', label: '账号', icon: Connection },
+  { path: '/resume-intakes', label: '人才', icon: DocumentChecked },
   { path: '/job-positions', label: '岗位', icon: Briefcase },
-  { path: '/resume-intakes', label: '简历', icon: DocumentChecked },
+  { path: '/boss-accounts', label: '账号', icon: Connection },
 ]
 
 const activePath = computed(() => route.path)

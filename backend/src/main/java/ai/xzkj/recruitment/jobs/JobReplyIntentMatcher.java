@@ -10,7 +10,9 @@ public final class JobReplyIntentMatcher {
     private static final Pattern LOCATION = Pattern.compile("(工作地址|上班地址|工作地点|上班地点|办公地址|在哪里上班|在哪上班|工作地)");
     private static final Pattern RESPONSIBILITIES = Pattern.compile("(工作内容|主要做什么|主要负责|岗位职责|职责是什么|平时做什么|日常工作|干什么|干嘛)");
     private static final Pattern WORK_TIME = Pattern.compile("(上班时间|工作时间|上下班时间|几点上班|几点下班|打卡时间|休息时间|月休|休息几天|每周休息|单双休|大小周)");
+    private static final Pattern WORK_SCHEDULE_REASON = Pattern.compile("(?:(?:为什么|为何|什么原因).{0,12}(?:上班|下班|开始|下午|上午|早上|晚上|中午)|(?:下午|上午|早上|晚上|中午).{0,8}(?:开始)?上班)");
     private static final Pattern BENEFITS = Pattern.compile("(福利待遇|福利|五险一金|五险|社保|公积金|补贴|奖金|年终奖|带薪年假)");
+    private static final Pattern MEALS_LODGING = Pattern.compile("(吃住|食宿|住宿|宿舍|租房|住房|包吃|包住)");
     private static final Pattern EXPERIENCE = Pattern.compile("(经验要求|需要经验|工作经验|几年经验|无经验|没有经验|没经验|应届生|应届毕业)");
     private static final Pattern EDUCATION = Pattern.compile("(学历要求|学历|什么学历|大专|本科|中专|高中|硕士|博士)");
     private static final Pattern SOCIAL_GREETING = Pattern.compile("^(?:你?好|哈喽|hello|hi)[啊呀呢哈哦的了～~。！!，,\\s]*$", Pattern.CASE_INSENSITIVE);
@@ -31,8 +33,9 @@ public final class JobReplyIntentMatcher {
         if (SALARY.matcher(value).find()) matches.add("SALARY");
         if (LOCATION.matcher(value).find()) matches.add("LOCATION");
         if (RESPONSIBILITIES.matcher(value).find()) matches.add("RESPONSIBILITIES");
-        if (WORK_TIME.matcher(value).find()) matches.add("WORK_TIME");
+        if (WORK_TIME.matcher(value).find() || WORK_SCHEDULE_REASON.matcher(value).find()) matches.add("WORK_TIME");
         if (BENEFITS.matcher(value).find()) matches.add("BENEFITS");
+        if (MEALS_LODGING.matcher(value).find()) matches.add("MEALS_LODGING");
         if (EXPERIENCE.matcher(value).find()) matches.add("EXPERIENCE");
         if (EDUCATION.matcher(value).find()) matches.add("EDUCATION");
         return matches.size() == 1 ? matches.getFirst() : null;
@@ -54,6 +57,10 @@ public final class JobReplyIntentMatcher {
 
     public static boolean isCandidateDecline(String message) {
         return message != null && DECLINE.matcher(normalize(message)).find();
+    }
+
+    public static boolean isMealsLodgingQuestion(String message) {
+        return message != null && MEALS_LODGING.matcher(normalize(message)).find();
     }
 
     private static String normalize(String message) {

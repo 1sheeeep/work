@@ -134,8 +134,14 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
 
     UUID submit(UUID accountId, UUID observationId, UUID jobId, String chatDigest,
                 String messageDigest, String text, String context) {
+        return submit(accountId, observationId, jobId, chatDigest, messageDigest, text, context,
+                "STANDARD_REPLY", null);
+    }
+
+    UUID submit(UUID accountId, UUID observationId, UUID jobId, String chatDigest,
+                String messageDigest, String text, String context, String purpose, UUID resumeIntakeId) {
         InboundAiReplyTask submitted = transactions.execute(status ->
-                enqueue(accountId, observationId, jobId, chatDigest, messageDigest, text, context));
+                enqueue(accountId, observationId, jobId, chatDigest, messageDigest, text, context, purpose, resumeIntakeId));
         if (submitted == null) throw unavailable("AI_REPLY_QUEUE_ENQUEUE_FAILED", "AI 回复任务入队失败，稍后将重试");
         triggerDrain(accountId);
         return submitted.getId();
@@ -152,14 +158,26 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
                 .stream()
                 .filter(task -> task.isReplayableFailure(now, silentRevalidationDelay))
                 .filter(task -> observations.findById(task.getObservationId()).map(observation ->
-                        (!task.isExpectedSilence() || !observation.isSelectedConversationUnread())
-                                && task.getChatDigest().equals(observation.getChatDigest())
+                        task.getChatDigest().equals(observation.getChatDigest())
+                                && (task.wasUnreadBadgeMisclassified()
+                                // 误判任务的详情字段可能已被权威列表刷新清空；这里只允许它进入
+                                // 插件定位清单，retryFailed 仍会对重新读取的详情执行完整强校验。
+                                || ((!task.isExpectedSilence() || !observation.isSelectedConversationUnread())
                                 && task.getMessageDigest().equals(observation.getLatestMessageDigest())
                                 && "INBOUND".equals(observation.getLatestDirection())
-                                && task.getJobPositionId().equals(observation.getMatchedJobPositionId()))
+                                && task.getJobPositionId().equals(observation.getMatchedJobPositionId()))))
                         .orElse(false))
                 .map(task -> new InboundReplyRetryCandidateResponse(task.getId(), task.getChatDigest(),
                         task.getMessageDigest(), task.getLastErrorCode(), task.getAttemptCount(), task.getUpdatedAt()))
+                .toList());
+    }
+
+    List<InboundReplyPendingSendResponse> pendingSends(UUID accountId) {
+        return transactions.execute(status -> tasks
+                .findTop100ByAccountIdAndStatusAndSendStatusOrderByUpdatedAtAsc(accountId, "COMPLETED", "READY")
+                .stream()
+                .map(task -> new InboundReplyPendingSendResponse(task.getId(), task.getChatDigest(),
+                        task.getMessageDigest(), task.isResumeReceipt(), task.getUpdatedAt()))
                 .toList());
     }
 
@@ -316,6 +334,13 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
 
     private InboundAiReplyTask enqueue(UUID accountId, UUID observationId, UUID jobId,
                                        String chatDigest, String messageDigest, String text, String context) {
+        return enqueue(accountId, observationId, jobId, chatDigest, messageDigest, text, context,
+                "STANDARD_REPLY", null);
+    }
+
+    private InboundAiReplyTask enqueue(UUID accountId, UUID observationId, UUID jobId,
+                                       String chatDigest, String messageDigest, String text, String context,
+                                       String purpose, UUID resumeIntakeId) {
         InboundAiReplyTask existing = tasks.findByAccountIdAndChatDigestAndMessageDigest(accountId, chatDigest, messageDigest).orElse(null);
         if (existing != null) return existing;
         // PostgreSQL transaction advisory lock: serialize only the short global capacity check + insert.
@@ -334,7 +359,8 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
         if (globalOutstanding >= maxPendingGlobal)
             throw unavailable("AI_REPLY_GLOBAL_QUEUE_FULL","AI 回复系统当前繁忙，请稍后重试");
         try {
-            InboundAiReplyTask created = tasks.saveAndFlush(new InboundAiReplyTask(accountId, observationId, jobId, chatDigest, messageDigest, text, context, Instant.now()));
+            InboundAiReplyTask created = tasks.saveAndFlush(new InboundAiReplyTask(accountId, observationId, jobId,
+                    chatDigest, messageDigest, text, context, purpose, resumeIntakeId, Instant.now()));
             meters.counter("recruitment.inbound.reply.enqueued").increment();
             return created;
         } catch (DataIntegrityViolationException duplicate) {
@@ -488,19 +514,19 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
     void recover() {
         Instant now = Instant.now();
         transactions.executeWithoutResult(status -> {
-            tasks.findByStatusAndStartedAtBefore("PROCESSING", now.minusSeconds(180)).forEach(task -> task.recoverIfStale(now));
+            tasks.findByStatusAndStartedAtBefore("PROCESSING", now.minusSeconds(180)).forEach(task -> {
+                if (!task.recoverIfStale(now)) return;
+                String stage = "FAILED".equals(task.getStatus()) ? "STALE_FAILED" : "STALE_REQUEUED";
+                LOG.log(System.Logger.Level.WARNING, "AI_TASK_STAGE stage=" + stage + " task=" + task.getId()
+                        + " detail=PROCESSING 超过 180 秒；attempt=" + task.getAttemptCount());
+                meters.counter("recruitment.inbound.reply.stale_recovery", "stage", stage).increment();
+            });
             tasks.findTop100ByStatusAndNextAttemptAtBeforeOrderByNextAttemptAtAsc("RETRY_WAIT", now).forEach(task -> task.releaseRetry(now));
             tasks.findBySendStatusAndSendLeaseUntilBefore("CLAIMED", now).forEach(task -> task.expireSendLease(now));
             tasks.findTop100BySendStatusOrderByCompletedAtDesc("READY").forEach(task -> {
                 BrowserUnreadObservation observation = observations.findById(task.getObservationId()).orElse(null);
-                if (observation == null) {
-                    task.skipSend("原会话观察记录已不存在，待发送回复已安全作废", now);
-                } else if (!observation.isUnread() || !"INBOUND".equals(observation.getLatestDirection())) {
-                    task.skipSend("会话已由 HR 处理或已不再处于候选人未读状态，待发送回复已安全作废", now);
-                } else if (!task.getMessageDigest().equals(observation.getLatestMessageDigest())
-                        || !task.getJobPositionId().equals(observation.getMatchedJobPositionId())) {
-                    task.skipSend("候选人最新消息或岗位归属已变化，旧待发送回复已安全作废", now);
-                }
+                String invalidationReason = readySendInvalidationReason(task, observation);
+                if (invalidationReason != null) task.skipSend(invalidationReason, now);
             });
         });
         Set<UUID> accounts = ConcurrentHashMap.newKeySet();
@@ -509,6 +535,25 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
             return null;
         });
         accounts.forEach(this::triggerDrain);
+    }
+
+    /**
+     * BOSS 会在自动打开未读会话时立即清除列表角标，因此 unread=false 不能证明 HR 已处理。
+     * READY 回复只在存在确定的新证据时失效：会话记录消失、最新消息已是 HR 外发、
+     * 候选人消息摘要变化，或岗位归属明确变化。详情暂不可读/null 时保留任务，待插件
+     * 重新选中会话并通过 claimSend 的强校验后再发送。
+     */
+    static String readySendInvalidationReason(InboundAiReplyTask task, BrowserUnreadObservation observation) {
+        if (observation == null) return "原会话观察记录已不存在，待发送回复已安全作废";
+        if ("OUTBOUND".equals(observation.getLatestDirection()))
+            return "会话最新消息已确认为 HR 外发，待发送回复已安全作废";
+        if (observation.getLatestMessageDigest() != null
+                && !task.getMessageDigest().equals(observation.getLatestMessageDigest()))
+            return "候选人最新消息已变化，旧待发送回复已安全作废";
+        if (observation.getMatchedJobPositionId() != null
+                && !task.getJobPositionId().equals(observation.getMatchedJobPositionId()))
+            return "会话岗位归属已变化，旧待发送回复已安全作废";
+        return null;
     }
 
     @Scheduled(fixedDelayString = "${app.inbound-reply.queue-cleanup-interval:1h}",
