@@ -20,7 +20,6 @@
   const TEST_DRAFT_TEXT = '【草稿测试，不会自动发送】您好，已收到您的消息。';
   const RESUME_ATTACHMENT_RECEIPT_CONTEXT = '[SYSTEM_RESUME_ATTACHMENT_RECEIPT]';
   const SINGLE_ACCOUNT_PREFETCH_LIMIT = 5;
-  const BRIDGE_RUNTIME_MESSAGE_TIMEOUT_MS = 15_000;
   let collectTimer = null;
   let collecting = false;
   let autoReplyArm = null;
@@ -3889,21 +3888,9 @@
   function stripSelected(value) { return { chatDigest: value.chatDigest, messageDigest: value.messageDigest, direction: value.direction, messageAt: value.messageAt, selectedUnread: value.selectedUnread, conversationSignals: value.conversationSignals, observedAt: new Date().toISOString() }; }
   function delay(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
   async function send(message) {
-    let timer = null;
-    try {
-      const response = await Promise.race([
-        chrome.runtime.sendMessage(message),
-        new Promise((_, reject) => {
-          timer = setTimeout(() => reject(new Error(`扩展后台通信超时（${BRIDGE_RUNTIME_MESSAGE_TIMEOUT_MS}ms）`)), BRIDGE_RUNTIME_MESSAGE_TIMEOUT_MS);
-        }),
-      ]);
-      return response;
-    }
+    try { return await chrome.runtime.sendMessage(message); }
     catch (error) {
       return { ok: false, error: `扩展后台通信失败：${String(error?.message || error || '未知错误')}` };
-    }
-    finally {
-      if (timer) clearTimeout(timer);
     }
   }
 })();

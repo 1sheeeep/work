@@ -64,7 +64,6 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
     @Value("${app.inbound-reply.auto-send-enabled:false}") private boolean autoSendEnabled;
     @Value("${app.inbound-reply.shadow-evaluation-enabled:false}") private boolean shadowEvaluationEnabled;
     @Value("${app.inbound-reply.silent-revalidation-delay:PT10S}") private Duration silentRevalidationDelay = Duration.ofSeconds(10);
-    @Value("${app.inbound-reply.model-slot-wait-timeout:10s}") private Duration modelSlotWaitTimeout = Duration.ofSeconds(10);
 
     InboundAiReplyQueueService(InboundAiReplyTaskRepository tasks, BrowserUnreadObservationRepository observations,
                                BossAccountRepository accounts, JobPositionRepository jobs,
@@ -368,14 +367,7 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
                     if (job == null) { fail(task.getId(), "INBOUND_REPLY_JOB_MISSING", "队列任务对应岗位已不存在"); continue; }
                     InboundJobReplyService.Decision evaluated;
                     Timer.Sample modelTimer = Timer.start(meters);
-                    if (!execution.tryAcquireModelSlot(modelSlotWaitTimeout)) {
-                        transactions.executeWithoutResult(status -> tasks.findById(task.getId())
-                                .ifPresent(value -> value.requeueAfterModelCapacity(Instant.now())));
-                        meters.counter("recruitment.inbound.reply.model.slot.timeout").increment();
-                        modelTimer.stop(Timer.builder("recruitment.inbound.reply.model.duration")
-                                .description("AI 理解与受控生成耗时").register(meters));
-                        return;
-                    }
+                    execution.acquireModelSlot();
                     try {
                         InboundJobReplyService.ConversationRuntime runtime = observations.findById(task.getObservationId())
                                 .map(value -> InboundJobReplyService.ConversationRuntime.from(

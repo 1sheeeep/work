@@ -4,7 +4,6 @@ const SETTINGS_KEY = 'bridgeSettingsV1';
 const RUNTIME_KEY = 'bridgeRuntimeV1';
 const ALARM_NAME = 'bridge-observe';
 const MIN_SYNC_INTERVAL_MS = 10_000;
-const BRIDGE_MESSAGE_TIMEOUT_MS = 15_000;
 const BOSS_TAB_PATTERNS = ['https://zhipin.com/*', 'https://*.zhipin.com/*'];
 const AUTO_REPLY_TRACE_LIMIT = 200;
 let syncInFlight = null;
@@ -1112,33 +1111,14 @@ async function collectJobsFromAllFrames(tabId, refreshRequested = false) {
 }
 
 async function sendToBossTab(tabId, message) {
-  const withTimeout = (promise, label) => new Promise((resolve, reject) => {
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      reject(new Error(`${label} 超时（${BRIDGE_MESSAGE_TIMEOUT_MS}ms）`));
-    }, BRIDGE_MESSAGE_TIMEOUT_MS);
-    Promise.resolve(promise).then((value) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(value);
-    }, (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      reject(error);
-    });
-  });
   try {
-    return await withTimeout(chrome.tabs.sendMessage(tabId, message), 'BOSS 页面桥接通信');
+    return await chrome.tabs.sendMessage(tabId, message);
   } catch (error) {
     const reason = safeError(error);
     if (!/receiving end does not exist|could not establish connection/i.test(reason)) throw error;
-    await withTimeout(chrome.scripting.executeScript({ target: { tabId }, files: ['src/content.js'] }), '注入页面桥接脚本');
+    await chrome.scripting.executeScript({ target: { tabId }, files: ['src/content.js'] });
     await new Promise((resolve) => setTimeout(resolve, 120));
-    return withTimeout(chrome.tabs.sendMessage(tabId, message), 'BOSS 页面桥接重试通信');
+    return chrome.tabs.sendMessage(tabId, message);
   }
 }
 
