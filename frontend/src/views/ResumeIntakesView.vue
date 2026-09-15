@@ -97,6 +97,28 @@ const selectedCandidateDisplayName = computed(() => selectedTalentDetail.value?.
   || (selectedIntake.value ? candidateNameForIntake(selectedIntake.value) : '')
   || selectedIntake.value?.candidateName
   || '')
+const queueSearch = ref('')
+const queueFilter = ref<'all' | 'pending' | 'processing' | 'analyzed' | 'exception'>('all')
+const filteredIntakes = computed(() => {
+  const q = queueSearch.value.trim().toLowerCase()
+  return intakes.value.filter((item) => {
+    if (q) {
+      const name = candidateNameForIntake(item).toLowerCase()
+      const job = (item.jobTitle || '').toLowerCase()
+      if (!name.includes(q) && !job.includes(q)) return false
+    }
+    if (queueFilter.value === 'pending') return item.status === 'PENDING_REVIEW'
+    if (queueFilter.value === 'processing') return item.processingStatus === 'PROCESSING' || item.analysisStatus === 'ANALYZING' || item.analysisQueueStatus === 'QUEUED' || item.analysisQueueStatus === 'PROCESSING' || item.analysisQueueStatus === 'RETRY_WAIT'
+    if (queueFilter.value === 'analyzed') return latestAnalysis(item.id)?.status === 'SUCCEEDED'
+    if (queueFilter.value === 'exception') return (item.processingStatus === 'FAILED') || (item.analysisStatus !== undefined && ['FAILED', 'NOT_AUTHORIZED', 'NOT_CONFIGURED'].includes(item.analysisStatus))
+    return true
+  })
+})
+const currentIntakeIndex = computed(() => filteredIntakes.value.findIndex((item) => item.id === selectedIntakeId.value))
+const canNavigatePrev = computed(() => currentIntakeIndex.value > 0)
+const canNavigateNext = computed(() => currentIntakeIndex.value >= 0 && currentIntakeIndex.value < filteredIntakes.value.length - 1)
+function navigatePrev() { if (canNavigatePrev.value) selectIntake(filteredIntakes.value[currentIntakeIndex.value - 1].id) }
+function navigateNext() { if (canNavigateNext.value) selectIntake(filteredIntakes.value[currentIntakeIndex.value + 1].id) }
 const candidateOptions = computed(() => contacts.value.filter((item) => item.privacyStatus === 'ACTIVE'))
 const canConfigureAutoAnalysis = computed(() => authStore.state.user?.role === 'SYSTEM_ADMIN')
 const canManageCandidateMerge = computed(() => ['SYSTEM_ADMIN', 'RECRUITMENT_ADMIN'].includes(authStore.state.user?.role ?? ''))
@@ -660,6 +682,12 @@ function handleExternalFileChange(event: Event) { void submitExternalPdf((event.
 function dropExternalPdf(event: DragEvent) { externalDragOver.value = false; void submitExternalPdf(event.dataTransfer?.files?.[0]) }
 
 
+function handleWorkspaceKeydown(event: KeyboardEvent) {
+  if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return
+  if (event.key === 'ArrowUp' && canNavigatePrev.value) { event.preventDefault(); navigatePrev() }
+  else if (event.key === 'ArrowDown' && canNavigateNext.value) { event.preventDefault(); navigateNext() }
+}
+
 onMounted(() => {
   void load()
   refreshTimer = window.setInterval(() => {
@@ -708,9 +736,19 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
               <el-button v-if="canConfigureAutoAnalysis" link type="primary" @click="openAutoAnalysisAuthorization">授权设置</el-button>
             </div>
           </div>
+          <div class="queue-filter-row">
+            <el-input v-model="queueSearch" size="small" placeholder="搜索姓名或岗位" clearable class="queue-search-input" />
+            <div class="queue-filter-pills">
+              <button type="button" class="filter-pill" :class="{ 'filter-pill--active': queueFilter === 'all' }" @click="queueFilter = 'all'">全部</button>
+              <button type="button" class="filter-pill filter-pill--amber" :class="{ 'filter-pill--active': queueFilter === 'pending' }" @click="queueFilter = 'pending'">待处理</button>
+              <button type="button" class="filter-pill filter-pill--violet" :class="{ 'filter-pill--active': queueFilter === 'processing' }" @click="queueFilter = 'processing'">分析中</button>
+              <button type="button" class="filter-pill filter-pill--teal" :class="{ 'filter-pill--active': queueFilter === 'analyzed' }" @click="queueFilter = 'analyzed'">已完成</button>
+              <button type="button" class="filter-pill filter-pill--red" :class="{ 'filter-pill--active': queueFilter === 'exception' }" @click="queueFilter = 'exception'">需关注</button>
+            </div>
+          </div>
           <div class="resume-queue">
             <article
-              v-for="item in intakes"
+              v-for="item in filteredIntakes"
               :key="item.id"
               class="entity-card card-entity resume-ticket"
               :class="{
@@ -719,6 +757,9 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
                 'resume-ticket--boss': item.source === 'BOSS_VISIBLE',
                 'resume-ticket--pending': item.status === 'PENDING_REVIEW',
                 'resume-ticket--rejected': item.status === 'REJECTED',
+                'resume-ticket--analyzing': item.analysisStatus === 'ANALYZING' || item.analysisQueueStatus === 'PROCESSING' || item.analysisQueueStatus === 'QUEUED' || item.analysisQueueStatus === 'RETRY_WAIT',
+                'resume-ticket--succeeded': latestAnalysis(item.id)?.status === 'SUCCEEDED',
+                'resume-ticket--dimmed': draggingId && item.source !== 'BOSS_VISIBLE',
               }"
               :draggable="item.source === 'BOSS_VISIBLE'"
               role="button"
@@ -753,6 +794,10 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
         <main
           class="surface-panel section-card card-panel analysis-board"
           :class="{ 'analysis-board--dragover': dragOver }"
+          role="region"
+          aria-label="简历分析结果"
+          tabindex="-1"
+          @keydown="handleWorkspaceKeydown"
           @dragenter.prevent="dragOver = true"
           @dragover.prevent="dragOver = true"
           @dragleave.self="dragOver = false"
@@ -765,10 +810,11 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
             <el-tag v-if="selectedIntake" type="success" effect="light">已选择 1 份</el-tag>
           </div>
 
-          <div v-if="!selectedIntake" class="board-empty">
+          <div v-if="!selectedIntake" class="board-empty board-empty--workspace">
             <div class="board-empty__icon"><Cpu /></div>
             <h2>把 BOSS 简历拖到这里</h2>
             <p>也可以直接点击左侧卡片，在这里查看处理状态和分析结果。</p>
+            <small class="board-empty__hint">使用 ↑↓ 键快速切换简历</small>
           </div>
 
           <template v-else>
@@ -786,7 +832,11 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
             </header>
 
             <div class="analysis-actionbar" aria-label="当前简历操作">
-              <div class="analysis-actionbar__info"><strong>{{ selectedCandidateDisplayName }}</strong><span>{{ analysisLabel(selectedIntake) }}</span></div>
+              <div class="analysis-actionbar__hint">
+                <template v-if="selectedIntake.status === 'PENDING_REVIEW'">确认来源后可提交 AI 分析</template>
+                <template v-else-if="selectedAnalysis?.status === 'SUCCEEDED'">可重新分析或查看详细匹配结果</template>
+                <template v-else-if="selectedIntake.status === 'APPROVED_FOR_AI'">选择文件或粘贴文本开始 AI 分析</template>
+              </div>
               <div class="analysis-actionbar__buttons">
                 <template v-if="selectedIntake.status === 'PENDING_REVIEW'">
                   <el-button @click="review(selectedIntake, 'REJECTED')">拒绝登记</el-button>
@@ -854,8 +904,14 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
 
             <section v-else-if="selectedAnalysis?.status === 'SUCCEEDED' && selectedAnalysis.result" class="analysis-content">
               <div class="decision-card card-emphasis recommendation-card">
-                <div><span>AI 辅助结论</span><h3>{{ recommendationMeta[selectedAnalysis.result.recommendation].label }}</h3></div>
-                <div class="evidence-coverage"><span>总体匹配度 {{ evidenceCoverage(selectedAnalysis.result) }}%</span><el-progress :percentage="evidenceCoverage(selectedAnalysis.result)" :show-text="false" :stroke-width="7" /></div>
+                <div class="recommendation-card__main"><span>AI 辅助结论</span><h3>{{ recommendationMeta[selectedAnalysis.result.recommendation].label }}</h3></div>
+                <div class="evidence-coverage evidence-coverage--prominent">
+                  <div class="coverage-ring">
+                    <svg viewBox="0 0 48 48" class="coverage-ring__svg"><circle cx="24" cy="24" r="20" fill="none" stroke="var(--border)" stroke-width="4" /><circle cx="24" cy="24" r="20" fill="none" stroke="var(--primary)" stroke-width="4" stroke-linecap="round" :stroke-dasharray="`${evidenceCoverage(selectedAnalysis.result) * 1.2566} 125.66`" transform="rotate(-90 24 24)" /></svg>
+                    <strong class="coverage-ring__value">{{ evidenceCoverage(selectedAnalysis.result) }}</strong>
+                  </div>
+                  <span>总体匹配度</span>
+                </div>
 
               </div>
               <div class="summary-card">
@@ -869,7 +925,7 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
               <section v-if="selectedAnalysis.result.jobComparisons?.length" class="job-comparison-section" aria-label="逐岗位职责匹配">
                 <div class="comparison-heading"><div><span>逐岗位职责匹配</span><p>逐项对照岗位职责与简历中的可见证据；100% 证据匹配，50% 证据待确认，0% 暂无匹配证据。</p></div><strong>{{ selectedAnalysis.result.jobComparisons.length }} 个岗位</strong></div>
                 <details v-for="(comparison, index) in selectedAnalysis.result.jobComparisons" :key="`${comparison.jobId || comparison.jobTitle}-${index}`" class="job-comparison-card" :open="index === 0">
-                  <summary><span class="comparison-summary-title">{{ comparison.jobTitle }}</span><span class="comparison-summary-count">{{ comparisonMatchPercent(comparison) }}% · {{ comparison.responsibilities.length + (comparison.skillMatches?.length || 0) }} 项职责/技能</span></summary>
+                  <summary><span class="comparison-summary-title">{{ comparison.jobTitle }}</span><span class="comparison-heatmap"><span v-for="(item, hi) in comparison.responsibilities.slice(0, 5)" :key="hi" class="heatmap-dot" :class="`heatmap-dot--${item.status.toLowerCase()}`"></span></span><span class="comparison-summary-count">{{ comparisonMatchPercent(comparison) }}% · {{ comparison.responsibilities.length + (comparison.skillMatches?.length || 0) }} 项</span></summary>
                   <p class="comparison-summary">{{ comparison.summary }}</p>
                   <ul class="responsibility-list">
                     <li v-for="(item, itemIndex) in comparison.responsibilities" :key="`${item.responsibility}-${itemIndex}`" :class="`responsibility--${item.status.toLowerCase()}`">
@@ -934,6 +990,11 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
               <span>摘要 {{ selectedIntake.anonymousKey }}</span>
               <span>接收于 {{ formatDate(selectedIntake.receivedAt) }}</span>
             </footer>
+            <nav v-if="filteredIntakes.length > 1" class="intake-nav" aria-label="简历切换">
+              <el-button size="small" :disabled="!canNavigatePrev" @click="navigatePrev">↑ 上一份</el-button>
+              <span class="intake-nav__position">{{ currentIntakeIndex + 1 }} / {{ filteredIntakes.length }}</span>
+              <el-button size="small" :disabled="!canNavigateNext" @click="navigateNext">↓ 下一份</el-button>
+            </nav>
           </template>
         </main>
       </section>
@@ -1127,6 +1188,17 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
 .ai-service-inline strong { font-size: 12px; }
 .ai-service-inline small { margin-top: 3px; color: var(--text-secondary); font-size: 11px; line-height: 1.4; }
 .ai-service-inline__actions { grid-column:1/-1; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:6px; }
+.queue-filter-row { display:flex; align-items:center; gap:8px; padding:8px 18px 10px; border-bottom:1px solid var(--border); }
+.queue-search-input { flex:1; min-width:0; }
+.queue-search-input :deep(.el-input__wrapper) { border-radius:var(--radius-pill); }
+.queue-filter-pills { display:flex; flex-wrap:wrap; gap:4px; }
+.filter-pill { padding:3px 10px; border:1px solid var(--border); border-radius:var(--radius-pill); background:var(--surface); color:var(--text-secondary); font-size:11px; font-weight:600; cursor:pointer; transition:all var(--transition-fast); }
+.filter-pill:hover { border-color:var(--primary); color:var(--text-main); }
+.filter-pill--active { border-color:var(--primary); background:var(--surface-teal); color:var(--primary); }
+.filter-pill--amber.filter-pill--active { background:var(--surface-amber); border-color:rgba(183,110,0,.3); color:#92400e; }
+.filter-pill--violet.filter-pill--active { background:var(--surface-violet); border-color:rgba(114,83,166,.3); color:#5b21b6; }
+.filter-pill--teal.filter-pill--active { background:var(--surface-teal); border-color:rgba(13,148,136,.3); color:var(--primary); }
+.filter-pill--red.filter-pill--active { background:var(--surface-rose); border-color:rgba(180,35,24,.3); color:#991b1b; }
 .authorization-checks { display: grid; gap: 12px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface-muted); }
 .authorization-checks .el-checkbox { height: auto; margin: 0; white-space: normal; }
 .resume-queue { display:grid; align-content:start; max-height:760px; overflow:auto; padding:8px; gap:6px; scrollbar-width:thin; }
@@ -1137,8 +1209,14 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
 .resume-ticket:active { animation:card-press 180ms ease-out both; }
 .resume-ticket--selected { background:linear-gradient(135deg, rgba(240,253,250,.96) 0%, rgba(255,255,255,.82) 100%); box-shadow:0 0 0 2px rgba(13,148,136,.28), 0 4px 18px rgba(13,148,136,.10), inset 0 1px 0 rgba(255,255,255,.78); animation:card-select-breathe 420ms cubic-bezier(.2,0,0,1) both; }
 .resume-ticket--dragging { opacity: 1; cursor: grabbing; transform:translateY(-1px); outline:2px dashed color-mix(in srgb, var(--primary) 55%, transparent); outline-offset:-3px; }
-.resume-ticket--pending { background:linear-gradient(135deg, var(--surface-amber) 0%, rgba(255,255,255,.78) 100%); box-shadow:0 1px 2px rgba(17,28,45,.03), 0 2px 8px rgba(17,28,45,.04), inset 0 1px 0 rgba(255,255,255,.72), 2px 0 0 0 rgba(183,110,0,.12); }
-.resume-ticket--rejected { background:linear-gradient(135deg, var(--surface-rose) 0%, rgba(255,255,255,.78) 100%); box-shadow:0 1px 2px rgba(17,28,45,.03), 0 2px 8px rgba(17,28,45,.04), inset 0 1px 0 rgba(255,255,255,.72), 2px 0 0 0 rgba(180,35,24,.10); }
+.resume-ticket--pending { background:linear-gradient(135deg, var(--surface-amber) 0%, rgba(255,255,255,.78) 100%); box-shadow:0 1px 2px rgba(17,28,45,.03), 0 2px 8px rgba(17,28,45,.04), inset 0 1px 0 rgba(255,255,255,.72), 4px 0 0 0 rgba(183,110,0,.45); animation:pending-pulse 2.4s ease-in-out infinite; }
+.resume-ticket--rejected { background:linear-gradient(135deg, var(--surface-rose) 0%, rgba(255,255,255,.78) 100%); box-shadow:0 1px 2px rgba(17,28,45,.03), 0 2px 8px rgba(17,28,45,.04), inset 0 1px 0 rgba(255,255,255,.72), 4px 0 0 0 rgba(180,35,24,.40); }
+.resume-ticket--analyzing { box-shadow:0 1px 2px rgba(17,28,45,.03), 0 2px 8px rgba(17,28,45,.04), inset 0 1px 0 rgba(255,255,255,.72), 4px 0 0 0 rgba(114,83,166,.45); }
+.resume-ticket--analyzing::after { content:''; position:absolute; inset:0; border-radius:inherit; background:linear-gradient(90deg, transparent 0%, rgba(114,83,166,.06) 40%, rgba(114,83,166,.12) 50%, rgba(114,83,166,.06) 60%, transparent 100%); animation:shimmer 1.8s ease-in-out infinite; pointer-events:none; }
+.resume-ticket--succeeded { box-shadow:0 1px 2px rgba(17,28,45,.03), 0 2px 8px rgba(17,28,45,.04), inset 0 1px 0 rgba(255,255,255,.72), 4px 0 0 0 rgba(13,148,136,.40); }
+.resume-ticket--dimmed { opacity:.4; pointer-events:none; }
+@keyframes pending-pulse { 0%,100% { opacity:1; } 50% { opacity:.82; } }
+@keyframes shimmer { 0% { transform:translateX(-100%); } 100% { transform:translateX(100%); } }
 .ticket-tags, .resume-ticket footer, .candidate-header, .candidate-status, .recommendation-card, .insight-card header { display: flex; align-items: center; }
 .resume-ticket footer, .recommendation-card, .insight-card header { justify-content: space-between; }
 .drag-hint { margin-left: auto; color: var(--text-tertiary); font-size: 11px; }
@@ -1153,7 +1231,8 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
 .resume-ticket footer span, .resume-ticket footer time { min-width: 0; overflow-wrap: anywhere; color: var(--text-secondary); }
 .resume-ticket footer time { text-align: right; }
 .analysis-board { min-height: 640px; transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease; }
-.analysis-board--dragover { border-color: var(--primary); box-shadow: 0 0 0 4px rgba(15,118,110,.12), var(--shadow-md); }
+.analysis-board--dragover { border-color: var(--primary); box-shadow: 0 0 0 4px rgba(15,118,110,.12), var(--shadow-md); animation:drag-border-pulse 1.5s ease-in-out infinite; }
+@keyframes drag-border-pulse { 0%,100% { box-shadow:0 0 0 4px rgba(15,118,110,.12), var(--shadow-md); } 50% { box-shadow:0 0 0 6px rgba(15,118,110,.22), var(--shadow-md); } }
 .analysis-dropzone { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 86px; padding: 18px 22px; border-bottom: 1px dashed var(--border-teal); background:linear-gradient(135deg, var(--surface-teal), var(--surface)); transition: background .18s ease; }
 .analysis-dropzone--active { background: var(--surface-blue); }
 .analysis-dropzone > div { min-width: 0; }
@@ -1162,6 +1241,8 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
 .analysis-dropzone small { margin-top: 4px; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
 .board-empty { display: grid; justify-items: center; align-content: center; min-height: 520px; padding: 42px; text-align: center; }
 .board-empty--compact { min-height: 360px; }
+.board-empty--workspace { background-image:radial-gradient(circle, var(--border) 1px, transparent 1px); background-size:24px 24px; }
+.board-empty__hint { margin-top:12px; color:var(--text-tertiary); font-size:11px; }
 .board-empty__icon { display: grid; width: 64px; height: 64px; place-items: center; border-radius: 20px; background:linear-gradient(145deg, var(--surface-teal), rgba(255,255,255,.7)); color: var(--primary); font-size: 26px; box-shadow:var(--shadow-raised), inset 0 1px 0 rgba(255,255,255,.62); }
 .board-empty__icon--danger { background: var(--surface-rose); color: var(--danger); }
 .board-empty h2 { margin: 17px 0 7px; font-size: 20px; }
@@ -1231,7 +1312,8 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
 .analysis-footnote { color: var(--text-secondary); font-size: 11px; line-height: 1.6; }
 .intake-details { display: flex; flex-wrap: wrap; gap: 8px 16px; padding: 14px 22px; border-top: 1px solid var(--border); background: var(--surface-soft); color: var(--text-secondary); font-size: 11px; }
 .intake-details span { max-width: 100%; overflow-wrap: anywhere; }
-.analysis-actionbar { position:sticky; z-index:5; top:0; display:flex; min-height:48px; align-items:center; justify-content:space-between; gap:14px; padding:10px 22px; border-bottom:1px solid var(--border-teal); background:color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter:blur(14px) saturate(1.08); -webkit-backdrop-filter:blur(14px) saturate(1.08); }
+.analysis-actionbar { position:sticky; z-index:5; top:0; display:flex; min-height:48px; align-items:center; justify-content:space-between; gap:14px; padding:10px 22px; border-bottom:1px solid var(--border-teal); background:color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter:blur(18px) saturate(1.12); -webkit-backdrop-filter:blur(18px) saturate(1.12); }
+.analysis-actionbar__hint { color:var(--text-secondary); font-size:12px; min-width:0; }
 .analysis-actionbar__info { display:flex; align-items:center; gap:8px; min-width:0; }
 .analysis-actionbar__info strong { color:var(--text-main); font-size:13px; }
 .analysis-actionbar__info span { color:var(--text-secondary); font-size:11px; }
@@ -1243,7 +1325,19 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
 .evidence-coverage { flex:0 1 200px; min-width:130px; margin-left:auto; }.evidence-coverage > span { display:block; margin-bottom:8px; font-size:11px; }
 .evidence-coverage :deep(.el-progress-bar__outer) { background:var(--border); }
 .evidence-coverage :deep(.el-progress-bar__inner) { background:var(--primary); }
+.evidence-coverage--prominent { display:flex; flex-direction:column; align-items:center; gap:6px; flex:0 0 auto; margin-left:auto; padding:6px 0; }
+.coverage-ring { position:relative; width:72px; height:72px; }
+.coverage-ring__svg { width:100%; height:100%; }
+.coverage-ring__value { position:absolute; inset:0; display:grid; place-items:center; font-size:22px; font-variant-numeric:tabular-nums; color:var(--primary); }
+.recommendation-card__main { flex:1; min-width:0; }
 .recommendation-card { flex-wrap:wrap; }
+.comparison-heatmap { display:inline-flex; gap:3px; margin:0 8px; }
+.heatmap-dot { width:8px; height:8px; border-radius:2px; }
+.heatmap-dot--found { background:#087f5b; }
+.heatmap-dot--unclear { background:#8a6500; }
+.heatmap-dot--not_found { background:#c0392b; }
+.intake-nav { display:flex; align-items:center; justify-content:center; gap:10px; padding:10px 22px; border-top:1px solid var(--border); background:var(--surface-soft); }
+.intake-nav__position { color:var(--text-secondary); font-size:12px; font-variant-numeric:tabular-nums; }
 .talent-profile-strip { display:grid; gap:9px; margin:0 22px 4px; border:1px solid rgba(13,148,136,.16); border-radius:var(--radius-control); background:linear-gradient(135deg,var(--surface-teal),var(--surface)); }
 .talent-profile-strip__toggle { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 16px; cursor:pointer; list-style:none; transition:background var(--transition-fast); }
 .talent-profile-strip__toggle::-webkit-details-marker { display:none; }
@@ -1299,6 +1393,10 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
  .analysis-workspace { height:calc(100dvh - 80px); min-height:620px; }
  .resume-queue-panel { display:flex; flex-direction:column; min-height:0; }.resume-queue { flex:1; max-height:none; min-height:0; }.analysis-board { overflow-y:auto; overscroll-behavior:contain; }
 }
+@media(min-width:1181px) and (max-width:1480px) {
+ .analysis-workspace { grid-template-columns:min(320px, 25vw) minmax(0,1fr); }
+ .insight-grid { grid-template-columns:1fr; }
+}
 @media(max-width:1180px) { .analysis-workspace { grid-template-columns:1fr; }.resume-queue { grid-template-columns:repeat(2,minmax(0,1fr)); max-height:400px; }.insight-grid { grid-template-columns:1fr; }.analysis-actionbar { position:static; flex-wrap:wrap; }.candidate-status { justify-content:flex-start; } }
 @media(max-width:600px) { .external-pdf-drop { grid-template-columns:32px minmax(0,1fr); }.external-pdf-drop > .el-button { grid-column:1/-1; width:100%; }.resume-queue { grid-template-columns:1fr; }.candidate-header,.analysis-content,.analysis-dropzone,.intake-details,.analysis-actionbar { padding:16px; }.candidate-title { flex-basis:calc(100% - 80px); }.candidate-status { flex-basis:100%; }.analysis-actionbar__buttons { flex-wrap:wrap; width:100%; }.analysis-actionbar__buttons .el-button { flex:1; margin:0; }.recommendation-card { padding:16px; }.evidence-coverage { flex-basis:100%; margin:0; }.board-empty { padding:24px 16px; min-height:280px; }.talent-profile-strip { margin-inline:16px; }.duplicate-workspace { grid-template-columns:1fr; }.duplicate-groups { grid-template-columns:repeat(2,minmax(0,1fr)); max-height:180px; }.duplicate-group small { display:none; }.merge-preview-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }.merge-preview-grid > div:last-child { grid-column:1/-1; } }
 
@@ -1326,4 +1424,14 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
 :global(:root[data-theme="dark"]) .match-percent--low { color:#e58a8a; background:rgba(180,55,55,.16); border-color:rgba(210,90,90,.28); }
 :global(:root[data-theme="dark"]) .flag--danger,
 :global(:root[data-theme="dark"]) .status-alert--danger { color:#e58a8a; }
+:global(:root[data-theme="dark"]) .resume-ticket--analyzing { box-shadow:0 1px 2px rgba(0,0,0,.22), 0 2px 8px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.04), 4px 0 0 0 rgba(139,92,246,.5); }
+:global(:root[data-theme="dark"]) .resume-ticket--analyzing::after { background:linear-gradient(90deg, transparent 0%, rgba(139,92,246,.08) 40%, rgba(139,92,246,.16) 50%, rgba(139,92,246,.08) 60%, transparent 100%); }
+:global(:root[data-theme="dark"]) .resume-ticket--succeeded { box-shadow:0 1px 2px rgba(0,0,0,.22), 0 2px 8px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.04), 4px 0 0 0 rgba(20,184,166,.45); }
+:global(:root[data-theme="dark"]) .resume-ticket--pending { box-shadow:0 1px 2px rgba(0,0,0,.22), 0 2px 8px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.04), 4px 0 0 0 rgba(183,110,0,.5); }
+:global(:root[data-theme="dark"]) .resume-ticket--rejected { box-shadow:0 1px 2px rgba(0,0,0,.22), 0 2px 8px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.04), 4px 0 0 0 rgba(180,35,24,.45); }
+:global(:root[data-theme="dark"]) .heatmap-dot--found { background:#34d399; }
+:global(:root[data-theme="dark"]) .heatmap-dot--unclear { background:#fbbf24; }
+:global(:root[data-theme="dark"]) .heatmap-dot--not_found { background:#e58a8a; }
+:global(:root[data-theme="dark"]) .coverage-ring__value { color:var(--primary); }
+:global(:root[data-theme="dark"]) .board-empty--workspace { background-image:radial-gradient(circle, rgba(255,255,255,.06) 1px, transparent 1px); }
 </style>
