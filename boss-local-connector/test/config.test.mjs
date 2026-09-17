@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { resolve } from 'node:path';
 import { ConfigError, validateConfig } from '../src/lib/config.mjs';
 
 const account = {
@@ -17,7 +18,7 @@ test('accepts isolated multi-account configuration', () => {
     accounts: [account, { ...account, accountId: '22222222-2222-4222-8222-222222222222', label: '技术招聘账号', profileKey: 'engineering', cdpPort: 54102 }],
   }, '/private/tmp/connector-test');
   assert.equal(config.accounts.length, 2);
-  assert.match(config.accounts[0].profileDirectory, /profiles\/shanghai-social$/);
+  assert.equal(config.accounts[0].profileDirectory, resolve('/private/tmp/connector-test', 'profiles', 'shanghai-social'));
 });
 
 test('rejects a reused Chrome profile or CDP port', () => {

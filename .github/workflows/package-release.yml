@@ -1,0 +1,51 @@
+name: Prepare release package
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recruitment-release-package
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Require organization main branch
+        run: |
+          test "$GITHUB_REPOSITORY" = 'xz-development/recruitment-console'
+          test "$GITHUB_REF" = 'refs/heads/main'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Test and package backend
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/backend:/workspace" -w /workspace \
+            maven:3.9-eclipse-temurin-21 mvn -B -ntp package
+      - name: Test and build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm test
+          npm run build
+      - name: Check browser components
+        run: |
+          (cd boss-browser-bridge && npm run check && npm test)
+          (cd boss-local-connector && npm ci && npm run check && npm test)
+      - name: Bundle exact revision
+        run: bash scripts/package-release.sh "$RUNNER_TEMP/recruitment-package"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: recruitment-${{ github.sha }}
+          path: ${{ runner.temp }}/recruitment-package/
+          if-no-files-found: error
+          retention-days: 7
