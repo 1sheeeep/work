@@ -20,6 +20,12 @@
   const TEST_DRAFT_TEXT = '【草稿测试，不会自动发送】您好，已收到您的消息。';
   const RESUME_ATTACHMENT_RECEIPT_CONTEXT = '[SYSTEM_RESUME_ATTACHMENT_RECEIPT]';
   const SINGLE_ACCOUNT_PREFETCH_LIMIT = 5;
+  // A full BOSS virtual list can contain thousands of rows. Give the page
+  // loop back to READY sends after a small read-only scan window instead of
+  // monopolising it for an 80-position sweep.
+  const LIST_SCAN_MAX_POSITIONS_PER_TURN = 8;
+  const LIST_SCAN_MAX_TURN_MS = 1_800;
+  const LIST_SCAN_CONTINUE_DELAY_MS = 200;
   const READ_REPLY_REVIEW_INTERVAL_MS = 30_000;
   const READ_REPLY_REVIEW_MAX_AGE_MS = 30 * 24 * 60 * 60_000;
   let collectTimer = null;
@@ -40,7 +46,15 @@
   let singleAccountUnreadBaseline = new Map();
   let singleAccountSelectedMessageBaseline = new Map();
   let singleAccountConversationLocators = new Map();
+  let conversationScanCursors = new Map();
   let singleAccountPendingReplies = new Map();
+  let singleAccountUnknownReconciliations = new Map();
+  // Keep pipeline lanes explicit. The scan queue only contains page targets;
+  // analysis tasks are durable backend jobs; send/revalidation queues contain
+  // task ids and never perform page operations concurrently.
+  let singleAccountAnalysisQueue = [];
+  let singleAccountSendQueue = [];
+  let singleAccountRevalidationQueue = [];
   let singleAccountRetryLocateDeferrals = new Map();
   let singleAccountRetryRefreshAt = 0;
   let singleAccountConversationQueue = [];
@@ -61,8 +75,12 @@
   const RETRY_TARGET_MAX_WAIT_MS = 30_000;
   const RETRY_TARGET_DEFER_MS = 5 * 60_000;
   const CURRENT_CONVERSATION_AI_HOLD_MS = 45_000;
+  const READY_SEND_WAKE_AFTER_MS = 15_000;
+  const READY_SEND_WAKE_INTERVAL_MS = 10_000;
+  const READY_SEND_RELOCATE_DELAY_MS = 4_000;
   const LIST_DOM_RETRY_DELAY_MS = 4_000;
   const LIST_POINTER_IDLE_FOCUS_MS = 10_000;
+  const AUTO_REPLY_WAKE_WATCHDOG_MS = 5_000;
   // Content-script calls to the background service worker used to have no
   // outer deadline. A stuck page operation could therefore keep the whole
   // automation loop waiting forever. Keep the normal bridge calls bounded,
@@ -70,7 +88,9 @@
   const BRIDGE_MESSAGE_TIMEOUT_MS = 30_000;
   const BRIDGE_MESSAGE_TIMEOUTS = Object.freeze({
     BRIDGE_DECIDE_INBOUND_REPLY: 145_000,
+    BRIDGE_CLASSIFY_RESUME_ATTACHMENT: 130_000,
     BRIDGE_VISIBLE_RESUME_PDF_CAPTURE: 130_000,
+    BRIDGE_SYNC_CURRENT_TRANSCRIPT: 25_000,
   });
   let jobConfirmationTimer = null;
   let pendingJobConfirmationSignature = '';
@@ -80,6 +100,12 @@
   let resumeCardScanTimer = null;
   let resumeAttachmentProcessing = false;
   let resumePreviewOpenPending = false;
+  let resumePreviewCloseFirstFailureAt = 0;
+  let resumePreviewCloseAttempts = 0;
+  // A transcript export is strictly read-only. MutationObserver events from
+  // its scroll/rerender must not be interpreted as a new resume attachment.
+  let transcriptCaptureInProgress = false;
+  let resumeCaptureRequest = null;
   let resumePreviewOpenAttempts = 0;
   let resumeAttachmentEpoch = 0;
   const RESUME_ATTACHMENT_WAIT_MS = 30_000;
@@ -99,6 +125,7 @@
   let autoReplyTraceRunId = '';
   let autoReplyTraceRunStartedAt = 0;
   let autoReplyTraceRunSequence = 0;
+  let autoReplyWakeWatchdogTimer = null;
   const clickedResumeCardControls = new WeakSet();
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -153,7 +180,7 @@
     scheduleCollect(1_200);
     scheduleAutoReplyCheck(500);
     scheduleSingleAccountAutoReply(300);
-    scheduleResumeCardScan(1_000);
+    if (!transcriptCaptureInProgress) scheduleResumeCardScan(1_000);
   });
   observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'data-id'] });
   document.addEventListener('click', (event) => {
@@ -421,8 +448,13 @@
     let initialUnreadCount = 0;
     singleAccountAutoReplyEnabled = enabled;
     if (!enabled) {
+      clearInterval(autoReplyWakeWatchdogTimer);
+      autoReplyWakeWatchdogTimer = null;
       resumePreviewOpenPending = false;
+      resumeCaptureRequest = null;
       resumePreviewOpenAttempts = 0;
+      resumePreviewCloseFirstFailureAt = 0;
+      resumePreviewCloseAttempts = 0;
       clearTimeout(resumeCardScanTimer);
       resumeCardScanTimer = null;
       singleAccountPendingChatDigest = null;
@@ -430,7 +462,12 @@
       singleAccountUnreadBaseline = new Map();
       singleAccountSelectedMessageBaseline = new Map();
       singleAccountConversationLocators = new Map();
+      conversationScanCursors = new Map();
       singleAccountPendingReplies = new Map();
+      singleAccountUnknownReconciliations = new Map();
+      singleAccountAnalysisQueue = [];
+      singleAccountSendQueue = [];
+      singleAccountRevalidationQueue = [];
       singleAccountRetryLocateDeferrals = new Map();
       singleAccountRetryRefreshAt = 0;
       singleAccountConversationQueue = [];
@@ -441,14 +478,20 @@
       singleAccountQueueWindowInitialized = false;
     } else if (!wasEnabled) {
       resumePreviewOpenPending = false;
+      resumeCaptureRequest = null;
       resumePreviewOpenAttempts = 0;
+      resumePreviewCloseFirstFailureAt = 0;
+      resumePreviewCloseAttempts = 0;
       singleAccountActiveChatDigest = null;
+      conversationScanCursors = new Map();
       const saved = restore ? await send({ type: 'BRIDGE_GET_SINGLE_ACCOUNT_BASELINE' }) : null;
       const currentUnread = await collectUnreadBaseline();
       initialUnreadCount = currentUnread.size;
       traceAutoReply('INITIAL_LIST_SWEEP', {
-        outcome: ['SCROLLER_NOT_FOUND', 'PAGE_NOT_READY', 'PREVIEW_OPEN'].includes(lastConversationSweepCode) ? 'WAITING' : 'SUCCESS',
-        reason: ['SCROLLER_NOT_FOUND', 'PAGE_NOT_READY', 'PREVIEW_OPEN'].includes(lastConversationSweepCode)
+        outcome: ['SCROLLER_NOT_FOUND', 'PAGE_NOT_READY', 'PREVIEW_OPEN', 'PARTIAL'].includes(lastConversationSweepCode) ? 'WAITING' : 'SUCCESS',
+        reason: lastConversationSweepCode === 'PARTIAL'
+          ? `首次扫描已覆盖当前滚动窗口，暂见 ${lastConversationSweepCount} 条未读；列表其余部分将在后续轮次继续扫描。`
+          : ['SCROLLER_NOT_FOUND', 'PAGE_NOT_READY', 'PREVIEW_OPEN'].includes(lastConversationSweepCode)
           ? lastConversationSweepCode === 'PAGE_NOT_READY'
             ? '首次扫描时会话列表尚未挂载可见 DOM，暂不判断为没有未读消息。'
             : `首次扫描仅覆盖可见会话 ${lastConversationSweepCount} 条，未找到列表滚动容器，暂不宣称全量扫描。`
@@ -469,7 +512,25 @@
         singleAccountSelectedMessageBaseline.set(selected.chatDigest, selected.messageDigest);
       }
       const pending = await send({ type: 'BRIDGE_GET_PENDING_INBOUND_REPLIES' });
-      singleAccountPendingReplies = new Map((pending?.tasks || []).map((task) => [task.taskId, { ...task, nextPollAt: 0 }]));
+      const unresolvedSends = await send({ type: 'BRIDGE_GET_PENDING_SEND_RECONCILIATIONS' });
+      singleAccountUnknownReconciliations = new Map((unresolvedSends?.tasks || [])
+        .map((task) => [task.taskId, { ...task, nextCheckAt: 0 }]));
+      singleAccountPendingReplies = new Map((pending?.tasks || []).map((task) => [task.taskId, {
+        ...task, nextPollAt: 0,
+        readyDiscoveredAt: task.recoveredSend && Number.isFinite(Date.parse(task.updatedAt || ''))
+          ? Date.parse(task.updatedAt) : undefined,
+      }]));
+      singleAccountAnalysisQueue = [];
+      singleAccountSendQueue = [];
+      singleAccountRevalidationQueue = [];
+      for (const task of singleAccountPendingReplies.values()) {
+        if (task.recoveredSend === true || task.queueLane === 'SEND') enqueuePipelineTask(task.taskId, 'SEND');
+        else if (task.retryable === true || task.queueLane === 'REVALIDATION') enqueuePipelineTask(task.taskId, 'REVALIDATION');
+        else enqueuePipelineTask(task.taskId, 'ANALYSIS');
+      }
+      for (const task of singleAccountPendingReplies.values()) {
+        if (task.recoveredSend === true) markReadyTaskDiscovered(task);
+      }
       singleAccountRetryRefreshAt = Date.now() + 10_000;
       singleAccountConversationQueue = [];
       singleAccountReadReviewInventory = [];
@@ -483,7 +544,10 @@
     }
     clearTimeout(singleAccountAutoReplyTimer);
     singleAccountAutoReplyTimer = null;
-    if (enabled) scheduleSingleAccountAutoReply(800);
+    if (enabled) {
+      ensureAutoReplyWakeWatchdog();
+      scheduleSingleAccountAutoReply(800);
+    }
     return { ok: true, enabled, baselineCount: singleAccountUnreadBaseline.size,
       initialUnreadCount: enabled && !restore ? initialUnreadCount : 0 };
   }
@@ -500,6 +564,41 @@
     await send({ type: 'BRIDGE_SAVE_SINGLE_ACCOUNT_BASELINE', payload: {
       unread, selected, locators,
     } });
+  }
+
+  function pipelineQueueFor(lane) {
+    if (lane === 'SEND') return singleAccountSendQueue;
+    if (lane === 'REVALIDATION') return singleAccountRevalidationQueue;
+    return singleAccountAnalysisQueue;
+  }
+
+  function removePipelineTask(taskId) {
+    if (!taskId) return;
+    for (const queue of [singleAccountAnalysisQueue, singleAccountSendQueue, singleAccountRevalidationQueue]) {
+      const index = queue.indexOf(taskId);
+      if (index >= 0) queue.splice(index, 1);
+    }
+  }
+
+  function enqueuePipelineTask(taskId, lane = 'ANALYSIS') {
+    if (!taskId) return;
+    removePipelineTask(taskId);
+    const queue = pipelineQueueFor(lane);
+    queue.push(taskId);
+  }
+
+  function removePendingPipelineTask(taskId) {
+    removePipelineTask(taskId);
+    singleAccountPendingReplies.delete(taskId);
+  }
+
+  function pipelineQueueDepths() {
+    return {
+      scan: singleAccountConversationQueue.length,
+      analysis: singleAccountAnalysisQueue.length,
+      send: singleAccountSendQueue.length,
+      revalidation: singleAccountRevalidationQueue.length,
+    };
   }
 
   async function collectUnreadBaseline() {
@@ -559,7 +658,10 @@
         });
       } else {
         lastConversationSweepCode = 'SCANNED';
-        await scanConversationPages(async (item) => add(item), { stopOnMatch: false, keepMatchPosition: true });
+        const sweep = await scanConversationPages(async (item) => add(item), {
+          scanKey: `COLLECT_${mode}`, stopOnMatch: false, keepMatchPosition: true,
+        });
+        if (!sweep.complete) lastConversationSweepCode = 'PARTIAL';
         if (![...document.querySelectorAll(SELECTORS.conversation)].some(visible)) {
           lastConversationSweepCode = 'PAGE_NOT_READY';
           if (singleAccountAutoReplyEnabled) traceAutoReply('LIST_PAGE_NOT_READY', {
@@ -616,7 +718,7 @@
       }
       let target = selectedItem;
       if (!target) target = await findConversationByDigest(current.chatDigest);
-      if (!target) target = await findConversationByDigestDeep(current.chatDigest);
+      if (!target) target = (await findConversationByDigestDeep(current.chatDigest)).item;
       return { item: target || null, snapshot: current, readReview: true };
     }
     if (baselineMessageDigest === current.messageDigest) return { item: null, snapshot: current };
@@ -633,7 +735,7 @@
 
     let target = selectedItem;
     if (!target) target = await findConversationByDigest(current.chatDigest);
-    if (!target) target = await findConversationByDigestDeep(current.chatDigest);
+    if (!target) target = (await findConversationByDigestDeep(current.chatDigest)).item;
     return { item: target || null, snapshot: current };
   }
 
@@ -709,10 +811,11 @@
       singleAccountConversationQueue.push({ chatDigest, signature });
       queued.add(chatDigest);
       added += 1;
-      traceAutoReply('QUEUE_ENQUEUED', { chatDigest, queuePosition: singleAccountConversationQueue.length, outcome: 'INFO', reason: '新会话已加入有限预取队列。' });
+      traceAutoReply('QUEUE_ENQUEUED', { chatDigest, queueLane: 'SCAN', queuePosition: singleAccountConversationQueue.length, outcome: 'INFO', reason: '新会话已加入扫描预取队列。' });
     }
     const unreadScanCode = lastConversationSweepCode;
-    const readReview = singleAccountConversationQueue.length === 0 && added === 0
+    const readReview = lastConversationSweepCode !== 'PARTIAL'
+      && singleAccountConversationQueue.length === 0 && added === 0
       ? await refillReadReplyReviewQueue()
       : { observedRead: null, added: 0, skipped: 'UNREAD_PRIORITY' };
     return {
@@ -738,7 +841,8 @@
         .filter(({ chatDigest }) => ![...singleAccountPendingReplies.values()]
           .some((task) => task.chatDigest === chatDigest))
         .map(({ chatDigest, signature }) => ({ chatDigest, signature, readReview: true }));
-      singleAccountReadReviewNextAt = now + READ_REPLY_REVIEW_INTERVAL_MS;
+      singleAccountReadReviewNextAt = now + (lastConversationSweepCode === 'PARTIAL'
+        ? LIST_SCAN_CONTINUE_DELAY_MS : READ_REPLY_REVIEW_INTERVAL_MS);
       traceAutoReply('READ_UNREPLIED_REVIEW_DISCOVERED', {
         outcome: 'INFO',
         reason: `已滚动检查 ${rows.length} 条已读会话，其中 ${singleAccountReadReviewInventory.length} 条列表摘要未处理或已变化；将按每批 ${SINGLE_ACCOUNT_PREFETCH_LIMIT} 条逐个打开，以最后一条消息方向为准。`,
@@ -907,7 +1011,7 @@
 
   async function scanConversationPages(matcher, options = {}) {
     const scroller = conversationScrollContainer();
-    if (!scroller) return null;
+    if (!scroller) return { match: null, complete: false };
     activateConversationListForAutomation(scroller, '鼠标超过 10 秒未停留在会话列表');
     const originalTop = scroller.scrollTop;
     const step = Math.max(120, Math.floor(scroller.clientHeight * .75));
@@ -916,10 +1020,23 @@
     const nominalPageCount = Math.max(1, Math.ceil(maxTop / step));
     const pageCount = Math.min(80, nominalPageCount);
     for (let index = 0; index <= pageCount; index++) positions.push(Math.round(maxTop * index / pageCount));
+    const uniquePositions = [...new Set(positions)];
+    const scanKey = options.scanKey || 'DEFAULT';
+    const cursor = conversationScanCursors.get(scanKey);
+    // BOSS may increase scrollHeight as it virtualizes rows. Continue at the
+    // same approximate fraction instead of restarting at the top indefinitely.
+    const startIndex = cursor?.scroller === scroller
+      ? Math.min(uniquePositions.length - 1, Math.floor(cursor.fraction * uniquePositions.length)) : 0;
+    const startedAt = Date.now();
     let firstMatch = null;
     let firstMatchTop = originalTop;
+    let nextIndex = startIndex;
+    let complete = false;
     try {
-      for (const top of [...new Set(positions)]) {
+      for (; nextIndex < uniquePositions.length; nextIndex++) {
+        if (nextIndex > startIndex && (nextIndex - startIndex >= LIST_SCAN_MAX_POSITIONS_PER_TURN
+            || Date.now() - startedAt >= LIST_SCAN_MAX_TURN_MS)) break;
+        const top = uniquePositions[nextIndex];
         scroller.scrollTop = top;
         scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
         await delay(120);
@@ -933,17 +1050,27 @@
             firstMatchTop = top;
           }
           if (match && options.stopOnMatch !== false) {
+            conversationScanCursors.delete(scanKey);
             scroller.scrollTop = top;
             scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
-            return match;
+            return { match, complete: true };
           }
         }
       }
+      complete = nextIndex >= uniquePositions.length;
+      if (complete) conversationScanCursors.delete(scanKey);
+      else conversationScanCursors.set(scanKey, {
+        scroller, fraction: nextIndex / uniquePositions.length,
+      });
       if (firstMatch && options.keepMatchPosition) {
         scroller.scrollTop = firstMatchTop;
         scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
       }
-      return firstMatch;
+      if (!complete && singleAccountAutoReplyEnabled) traceAutoReply('LIST_SCAN_PARTIAL', {
+        outcome: 'WAITING',
+        reason: `本轮只读扫描 ${nextIndex - startIndex} 个滚动位置；已让出页面执行权，下一轮从 ${Math.round(nextIndex / uniquePositions.length * 100)}% 继续，并优先检查待发送任务。`,
+      });
+      return { match: firstMatch, complete };
     } finally {
       if (!firstMatch || options.restorePosition === true) {
         scroller.scrollTop = originalTop;
@@ -955,19 +1082,24 @@
 
   async function findConversationByDigestDeep(chatDigest) {
     const hinted = await findConversationAtLocatorHint(chatDigest);
-    if (hinted) return hinted;
-    const found = await scanConversationPages(async (item) => {
+    if (hinted) return { item: hinted, complete: true };
+    const result = await scanConversationPages(async (item) => {
       const identity = stableIdentity(item);
       return identity && await digest(identity) === chatDigest ? item : null;
-    });
-    return found;
+    }, { scanKey: `TARGET_${chatDigest}` });
+    return { item: result.match, complete: result.complete };
   }
 
   async function locateConversation(chatDigest) {
     if (!/^[a-f0-9]{64}$/.test(chatDigest || '')) return blocked('INVALID_TARGET', '定位目标无效。');
     let target = await findConversationByDigest(chatDigest);
-    if (!target) target = await findConversationByDigestDeep(chatDigest);
-    if (!target) return blocked('CONVERSATION_NOT_VISIBLE', '当前会话列表中未找到目标，可能已不在已加载范围。');
+    let deepLookup = null;
+    if (!target) {
+      deepLookup = await findConversationByDigestDeep(chatDigest);
+      target = deepLookup.item;
+    }
+    if (!target) return blocked(deepLookup?.complete === false ? 'CONVERSATION_SCAN_IN_PROGRESS' : 'CONVERSATION_NOT_VISIBLE',
+      deepLookup?.complete === false ? '正在分段扫描会话列表，请稍后重试定位。' : '当前会话列表中未找到目标，可能已不在已加载范围。');
     target.scrollIntoView({ block: 'center', behavior: 'auto' });
     target.click();
     await delay(260);
@@ -978,7 +1110,7 @@
   }
 
   async function findNewOrChangedUnreadConversationDeep() {
-    return scanConversationPages(async (item) => {
+    const result = await scanConversationPages(async (item) => {
       if (!hasUnread(item)) return null;
       const identity = stableIdentity(item);
       if (!identity) return null;
@@ -987,28 +1119,60 @@
       if (pendingReplyCoversUnreadRow(chatDigest, signature)) return null;
       return !singleAccountUnreadBaseline.has(chatDigest) || singleAccountUnreadBaseline.get(chatDigest) !== signature
         ? { item, chatDigest } : null;
+    }, { scanKey: 'CHANGED_UNREAD' });
+    return { ...(result.match || { item: null, chatDigest: null }), scanComplete: result.complete };
+  }
+
+  function readyTaskAgeMs(task, now = Date.now()) {
+    const backendReadyAt = Date.parse(task?.updatedAt || '');
+    const firstSeenAt = Number(task?.readyDiscoveredAt || 0);
+    const startedAt = Number.isFinite(backendReadyAt) ? backendReadyAt : firstSeenAt || now;
+    return Math.max(0, now - startedAt);
+  }
+
+  function markReadyTaskDiscovered(task) {
+    if (!task) return;
+    task.readyDiscoveredAt = Number(task.readyDiscoveredAt || Date.now());
+    if (task.readyDiscoveryLogged) return;
+    task.readyDiscoveryLogged = true;
+    traceAutoReply(task.recoveredSend ? 'READY_TASK_RECOVERED' : 'READY_TASK_DISCOVERED', {
+      chatDigest: task.chatDigest, messageDigest: task.messageDigest, taskId: task.taskId, queueLane: 'SEND',
+      outcome: 'SUCCESS', reason: task.recoveredSend
+        ? `已从后端恢复待发送结果，当前等待 ${Math.ceil(readyTaskAgeMs(task) / 1_000)} 秒；提升为页面最高优先级。`
+        : 'AI 已生成可发送结果，提升为页面最高优先级。',
     });
   }
 
-  async function nextReadyInboundReply(preferredTaskId = null) {
+  async function nextReadyInboundReply(preferredTaskId = null, { includeRetryable = true } = {}) {
     const now = Date.now();
     const preferredTask = preferredTaskId ? singleAccountPendingReplies.get(preferredTaskId) : null;
-    const entries = preferredTask ? [[preferredTaskId, preferredTask]] : [...singleAccountPendingReplies];
+    const orderedTaskIds = preferredTask
+      ? [preferredTaskId]
+      : [...singleAccountSendQueue, ...singleAccountAnalysisQueue, ...singleAccountRevalidationQueue,
+        ...singleAccountPendingReplies.keys()];
+    const seenTaskIds = new Set();
+    const entries = orderedTaskIds
+      .filter((taskId) => taskId && !seenTaskIds.has(taskId) && seenTaskIds.add(taskId))
+      .map((taskId) => [taskId, singleAccountPendingReplies.get(taskId)])
+      .filter((entry) => entry[1]);
     for (const [taskId, task] of entries) {
+      if (!includeRetryable && task.retryable === true) continue;
       if (Number(task.nextPollAt || 0) > now) continue;
       task.nextPollAt = now + 1_000;
       try {
         const result = await send({ type: 'BRIDGE_POLL_INBOUND_REPLY', payload: task });
         if (!result?.ok) {
-          traceAutoReply('AI_POLL_ERROR', { chatDigest: task.chatDigest, messageDigest: task.messageDigest, taskId: task.taskId, outcome: 'FAILED', reason: result?.error || 'AI 任务查询失败，稍后重试。' });
+          traceAutoReply('AI_POLL_ERROR', { chatDigest: task.chatDigest, messageDigest: task.messageDigest, taskId: task.taskId, queueLane: 'ANALYSIS', outcome: 'FAILED', reason: result?.error || 'AI 任务查询失败，稍后重试。' });
           task.nextPollAt = now + 5_000;
           continue;
         }
         if (result.status === 'RETRY_WAIT') {
+          enqueuePipelineTask(task.taskId, 'ANALYSIS');
           const nextAttemptAt = Date.parse(result.nextAttemptAt || '');
           const waitMs = Number.isFinite(nextAttemptAt) ? Math.max(1_000, nextAttemptAt - Date.now()) : 5_000;
           traceAutoReply('AI_RETRY_SCHEDULED', {
             chatDigest: task.chatDigest, messageDigest: task.messageDigest, taskId: task.taskId,
+            queueLane: 'ANALYSIS',
             attempt: Number.isInteger(result.attemptCount) ? result.attemptCount : null,
             outcome: 'WAITING',
             reason: `${result.resultReason || result.lastErrorCode || 'AI 输出暂不可用'}；将在 ${Math.ceil(waitMs / 1_000)} 秒后重试。`,
@@ -1017,25 +1181,24 @@
           continue;
         }
         if (result.status === 'COMPLETED' && ['SUCCEEDED', 'UNKNOWN'].includes(result.sendStatus)) {
+          removePipelineTask(task.taskId);
           const sent = result.sendStatus === 'SUCCEEDED';
           traceAutoReply(sent ? 'AI_TASK_ALREADY_SENT' : 'AI_TASK_SEND_TERMINAL', {
-            chatDigest: task.chatDigest, messageDigest: task.messageDigest, taskId: task.taskId,
+            chatDigest: task.chatDigest, messageDigest: task.messageDigest, taskId: task.taskId, queueLane: 'TERMINAL',
             outcome: sent ? 'SUCCESS' : 'UNKNOWN',
             reason: result.sendResultReason || (sent
               ? '后端已确认该任务发送成功，已清理插件残留等待记录。'
               : '该任务发送结果已冻结，禁止自动重发。'),
           });
-          await reportSingleAccountResult(task, sent ? 'SENT' : 'UNKNOWN',
-            result.sendResultReason || (sent ? '后端已确认发送成功。' : '发送结果已冻结。'), {
-              skipUnreadBaseline: true,
-              skipSelectedMessageBaseline: true,
-            });
-          singleAccountPendingReplies.delete(taskId);
-          continue;
+          return { terminalTask: task, terminalOutcome: sent ? 'SENT' : 'UNKNOWN',
+            terminalReason: result.sendResultReason || (sent ? '后端已确认发送成功。' : '发送结果已冻结。'),
+            terminalSkipUnreadBaseline: true, terminalSkipSelectedMessageBaseline: true };
         }
         if (result.status === 'COMPLETED' && result.sendStatus === 'CLAIMED') {
+          enqueuePipelineTask(task.taskId, 'SEND');
           traceAutoReply('AI_SEND_RECEIPT_WAITING', {
             chatDigest: task.chatDigest, messageDigest: task.messageDigest, taskId: task.taskId,
+            queueLane: 'SEND',
             outcome: 'WAITING', reason: '发送租约已被领取，等待页面回执或租约超时。',
           });
           task.nextPollAt = now + 2_000;
@@ -1043,8 +1206,10 @@
         }
         if (task.retryable === true && ['COMPLETED', 'FAILED'].includes(result.status)
             && ['FAILED', 'SKIPPED'].includes(result.sendStatus)) {
+          enqueuePipelineTask(task.taskId, 'REVALIDATION');
           traceAutoReply('AI_RETRY_READY', {
             chatDigest: task.chatDigest, messageDigest: task.messageDigest, taskId: task.taskId,
+            queueLane: 'REVALIDATION',
             attempt: Number.isInteger(result.attemptCount) ? result.attemptCount : null,
             outcome: 'WAITING',
             reason: '库存任务处于不可直接发送终态，等待重新读取当前会话后执行一次安全复核。',
@@ -1053,18 +1218,16 @@
         }
         if (result.status === 'COMPLETED' && ['FAILED', 'SKIPPED'].includes(result.sendStatus)
             && task.retryable !== true && result.decision?.replyAllowed) {
+          removePipelineTask(task.taskId);
           traceAutoReply('AI_TASK_SEND_TERMINAL', {
-            chatDigest: task.chatDigest, messageDigest: task.messageDigest, taskId: task.taskId,
+            chatDigest: task.chatDigest, messageDigest: task.messageDigest, taskId: task.taskId, queueLane: 'TERMINAL',
             outcome: result.sendStatus === 'FAILED' ? 'FAILED' : 'SKIPPED',
             reason: result.sendResultReason || '该 AI 回复已终止发送，已清理插件残留等待记录。',
           });
-          await reportSingleAccountResult(task, result.sendStatus === 'FAILED' ? 'UNKNOWN' : 'SILENT',
-            result.sendResultReason || '该 AI 回复已终止发送。', {
-              skipUnreadBaseline: true,
-              skipSelectedMessageBaseline: true,
-            });
-          singleAccountPendingReplies.delete(taskId);
-          continue;
+          return { terminalTask: task,
+            terminalOutcome: result.sendStatus === 'FAILED' ? 'UNKNOWN' : 'SILENT',
+            terminalReason: result.sendResultReason || '该 AI 回复已终止发送。',
+            terminalSkipUnreadBaseline: true, terminalSkipSelectedMessageBaseline: true };
         }
         if (result.status === 'CANCELLED' || result.status === 'FAILED'
             || (result.status === 'COMPLETED' && !result.decision?.replyAllowed)) {
@@ -1072,31 +1235,31 @@
             || (result.status === 'CANCELLED' ? 'AI 任务已取消或过期。' : 'AI 判定无需回复。');
           const failed = result.status === 'FAILED';
           if (task.retryable === true) {
-            traceAutoReply('AI_RETRY_READY', { chatDigest: task.chatDigest, messageDigest: task.messageDigest, taskId: task.taskId, attempt: Number.isInteger(result.attemptCount) ? result.attemptCount : null, outcome: 'WAITING', reason: `未回复任务已达到二次复核条件，等待重新定位会话并采集最新正文：${terminalReason}` });
+            enqueuePipelineTask(task.taskId, 'REVALIDATION');
+            traceAutoReply('AI_RETRY_READY', { chatDigest: task.chatDigest, messageDigest: task.messageDigest, taskId: task.taskId, queueLane: 'REVALIDATION', attempt: Number.isInteger(result.attemptCount) ? result.attemptCount : null, outcome: 'WAITING', reason: `未回复任务已达到二次复核条件，等待重新定位会话并采集最新正文：${terminalReason}` });
             return { retryTask: task, failure: result };
           }
-          traceAutoReply(failed ? 'AI_FINAL_FAILED' : 'SAFETY_SILENT', { chatDigest: task.chatDigest, messageDigest: task.messageDigest, taskId: task.taskId, attempt: Number.isInteger(result.attemptCount) ? result.attemptCount : null, outcome: failed ? 'FAILED' : 'SKIPPED', reason: terminalReason });
-          const retryableSilent = !failed && isRetryableSilentReason(terminalReason);
+          traceAutoReply(failed ? 'AI_FINAL_FAILED' : 'SAFETY_SILENT', { chatDigest: task.chatDigest, messageDigest: task.messageDigest, taskId: task.taskId, queueLane: 'TERMINAL', attempt: Number.isInteger(result.attemptCount) ? result.attemptCount : null, outcome: failed ? 'FAILED' : 'SKIPPED', reason: terminalReason });
+          removePipelineTask(task.taskId);
+          const retryableSilent = !failed && result.retryEligible === true;
           if (retryableSilent) traceAutoReply('AI_RETRY_PENDING', {
             chatDigest: task.chatDigest, messageDigest: task.messageDigest, taskId: task.taskId,
+            queueLane: 'REVALIDATION',
             attempt: Number.isInteger(result.attemptCount) ? result.attemptCount : null,
             outcome: 'WAITING', reason: '旧版终态任务属于 AI 输出质量问题，保留未读基线等待重新分析。',
           });
-          try {
-            await reportSingleAccountResult({ chatDigest: task.chatDigest, messageDigest: task.messageDigest }, failed ? 'UNKNOWN' : 'SILENT', terminalReason, { skipUnreadBaseline: retryableSilent });
-            singleAccountPendingReplies.delete(taskId);
-          } catch (error) {
-            traceAutoReply('RESULT_REPORT_FAILED', { chatDigest: task.chatDigest, messageDigest: task.messageDigest, taskId: task.taskId, outcome: 'FAILED', reason: `终态回执写入失败：${String(error?.message || error || '未知错误')}` });
-            task.nextPollAt = now + 5_000;
-          }
-          continue;
+          return { terminalTask: task, terminalOutcome: failed ? 'UNKNOWN' : 'SILENT',
+            terminalReason, terminalSkipUnreadBaseline: retryableSilent };
         }
         if (result.status === 'COMPLETED' && result.decision?.replyAllowed && result.decision?.content) {
+          enqueuePipelineTask(task.taskId, 'SEND');
+          markReadyTaskDiscovered(task);
           return { task, decision: result.decision };
         }
-        traceAutoReply('AI_POLL_WAITING', { chatDigest: task.chatDigest, messageDigest: task.messageDigest, taskId: task.taskId, outcome: 'WAITING', reason: `AI 任务状态=${result.status || 'QUEUED'}。` });
+        enqueuePipelineTask(task.taskId, 'ANALYSIS');
+        traceAutoReply('AI_POLL_WAITING', { chatDigest: task.chatDigest, messageDigest: task.messageDigest, taskId: task.taskId, queueLane: 'ANALYSIS', outcome: 'WAITING', reason: `AI 任务状态=${result.status || 'QUEUED'}。` });
       } catch (_error) {
-        traceAutoReply('AI_POLL_ERROR', { chatDigest: task.chatDigest, messageDigest: task.messageDigest, taskId: task.taskId, outcome: 'FAILED', reason: 'AI 任务查询异常，稍后重试。' });
+        traceAutoReply('AI_POLL_ERROR', { chatDigest: task.chatDigest, messageDigest: task.messageDigest, taskId: task.taskId, queueLane: 'ANALYSIS', outcome: 'FAILED', reason: 'AI 任务查询异常，稍后重试。' });
         task.nextPollAt = now + 5_000;
       }
     }
@@ -1123,10 +1286,18 @@
     }
     let added = 0;
     for (const task of Array.isArray(pending?.tasks) ? pending.tasks : []) {
+      const activeReady = (task?.recoveredSend === true || task?.queueLane === 'SEND') && task?.retryable !== true;
       const deferredUntil = Number(singleAccountRetryLocateDeferrals.get(task?.taskId) || 0);
       if (deferredUntil && deferredUntil <= Date.now()) singleAccountRetryLocateDeferrals.delete(task.taskId);
-      if (!task?.taskId || deferredUntil > Date.now() || singleAccountPendingReplies.has(task.taskId)) continue;
-      singleAccountPendingReplies.set(task.taskId, { ...task, nextPollAt: 0 });
+      if (!task?.taskId || (!activeReady && deferredUntil > Date.now())
+          || singleAccountPendingReplies.has(task.taskId)) continue;
+      if (activeReady) singleAccountRetryLocateDeferrals.delete(task.taskId);
+      const restored = { ...task, nextPollAt: 0,
+        readyDiscoveredAt: Number.isFinite(Date.parse(task.updatedAt || ''))
+          ? Date.parse(task.updatedAt) : Date.now() };
+      singleAccountPendingReplies.set(task.taskId, restored);
+      enqueuePipelineTask(task.taskId, activeReady ? 'SEND' : 'REVALIDATION');
+      if (activeReady) markReadyTaskDiscovered(restored);
       added += 1;
     }
     if (added) traceAutoReply('DEFERRED_REVALIDATION_READY', {
@@ -1148,6 +1319,7 @@
       chatDigest: fields.chatDigest || null,
       messageDigest: fields.messageDigest || null,
       taskId: fields.taskId || null,
+      queueLane: ['SCAN', 'ANALYSIS', 'SEND', 'REVALIDATION', 'TERMINAL'].includes(fields.queueLane) ? fields.queueLane : null,
       queuePosition: Number.isInteger(fields.queuePosition) ? fields.queuePosition : null,
       attempt: Number.isInteger(fields.attempt) ? fields.attempt : null,
       elapsedMs: Number.isFinite(fields.elapsedMs) ? fields.elapsedMs : autoReplyTraceRunStartedAt ? now - autoReplyTraceRunStartedAt : null,
@@ -1159,6 +1331,7 @@
       payload.queuePosition != null ? `队列#${payload.queuePosition}` : '',
       payload.attempt != null ? `第${payload.attempt}次` : '',
       payload.taskId ? `任务=${payload.taskId.slice(0, 8)}` : '',
+      payload.queueLane ? `队列=${payload.queueLane}` : '',
       payload.elapsedMs != null ? `${Math.round(payload.elapsedMs)}ms` : '',
       reason,
     ].filter(Boolean).join(' · ');
@@ -1176,6 +1349,19 @@
     }, delay);
   }
 
+  function ensureAutoReplyWakeWatchdog() {
+    if (autoReplyWakeWatchdogTimer) return;
+    autoReplyWakeWatchdogTimer = setInterval(() => {
+      if (!singleAccountAutoReplyEnabled || autoReplyBusy || collecting || transcriptCaptureInProgress
+          || singleAccountAutoReplyTimer) return;
+      traceAutoReply('AUTO_REPLY_WATCHDOG_WAKE', {
+        outcome: 'WAITING',
+        reason: '自动回复循环当前没有运行中的任务或调度计时器，已执行一次自检唤醒。',
+      });
+      scheduleSingleAccountAutoReply(300);
+    }, AUTO_REPLY_WAKE_WATCHDOG_MS);
+  }
+
   function isFatalAutoReplyPageState(page) {
     return ['RISK_OR_VERIFICATION', 'LOGIN_REQUIRED'].includes(page?.code);
   }
@@ -1184,6 +1370,8 @@
     traceAutoReply('AUTO_REPLY_STOPPED', { outcome: 'STOPPED', reason: state });
     singleAccountAutoReplyEnabled = false;
     singleAccountActiveChatDigest = null;
+    clearInterval(autoReplyWakeWatchdogTimer);
+    autoReplyWakeWatchdogTimer = null;
     clearTimeout(singleAccountAutoReplyTimer);
     singleAccountAutoReplyTimer = null;
     await send({ type: 'BRIDGE_SINGLE_ACCOUNT_AUTO_REPLY_STATE', payload: {
@@ -1191,30 +1379,90 @@
     } });
   }
 
-  function isRetryableSilentReason(reason) {
-    const value = compact(reason || '');
-    return /AI 回复未通过独立意图校验|AI 回复未通过独立质量校验|AI 返回了无效风险等级|AI 返回了未授权动作|AI 返回了无效回复模式|模型未提供事实证据字段|精确字段未按已审核原文回答|部分回复未明确提示缺失信息需要招聘人员确认|社交回复为空|社交回复超过|社交回复包含多行|澄清问题为空|澄清问题超过|澄清问题包含多行|澄清内容必须是明确问题/.test(value);
-  }
-
   async function reportSingleAccountResult(selected, outcome, reason, options = {}) {
     const result = await send({ type: 'BRIDGE_SINGLE_ACCOUNT_AUTO_REPLY_RESULT', payload: {
       chatDigest: selected.chatDigest, messageDigest: selected.messageDigest,
       outcome, reason: compact(reason).slice(0, 300), occurredAt: new Date().toISOString(),
     } });
+    if (!result?.ok) throw new Error(result?.error || '自动回复终态未能写入插件状态。');
     if (result?.shouldStop) {
       singleAccountAutoReplyEnabled = false;
+      clearInterval(autoReplyWakeWatchdogTimer);
+      autoReplyWakeWatchdogTimer = null;
       clearTimeout(singleAccountAutoReplyTimer);
       singleAccountAutoReplyTimer = null;
     }
-    const matchingItem = [...document.querySelectorAll(SELECTORS.conversation)].filter(visible)
-      .find((item) => stableIdentity(item) && item.matches(SELECTORS.selectedConversation));
-    if (!options.skipUnreadBaseline && matchingItem && await digest(stableIdentity(matchingItem)) === selected.chatDigest) {
-      singleAccountUnreadBaseline.set(selected.chatDigest, await unreadRowSignature(matchingItem));
+    if (!options.skipUnreadBaseline) {
+      const matchingItem = [...document.querySelectorAll(SELECTORS.conversation)].filter(visible)
+        .find((item) => stableIdentity(item) && item.matches(SELECTORS.selectedConversation));
+      if (matchingItem && await digest(stableIdentity(matchingItem)) === selected.chatDigest) {
+        singleAccountUnreadBaseline.set(selected.chatDigest, await unreadRowSignature(matchingItem));
+      }
     }
     if (!options.skipSelectedMessageBaseline) {
       singleAccountSelectedMessageBaseline.set(selected.chatDigest, selected.messageDigest);
     }
     await persistSingleAccountBaseline();
+    if (options.archiveCurrent !== false) {
+      await archiveCurrentConversation(selected, outcome, reason);
+    }
+  }
+
+  async function archiveCurrentConversation(selected, outcome, reason) {
+    const selectedRow = [...document.querySelectorAll(SELECTORS.selectedConversation)].find(visible);
+    const selectedIdentity = selectedRow && stableIdentity(selectedRow);
+    const selectedChatDigest = selectedIdentity ? await digest(selectedIdentity) : null;
+    if (selectedChatDigest !== selected.chatDigest) {
+      traceAutoReply('TRANSCRIPT_SYNC_SKIPPED', {
+        chatDigest: selected.chatDigest, messageDigest: selected.messageDigest, outcome: 'BLOCKED',
+        reason: '处理终态已记录，但当前选中会话与任务不一致，已禁止导入错误聊天记录。',
+      });
+      return false;
+    }
+    traceAutoReply('TRANSCRIPT_SYNC_STARTED', {
+      chatDigest: selected.chatDigest, messageDigest: selected.messageDigest, outcome: 'INFO',
+      reason: `会话已进入${outcome}终态，保持页面锁并冻结当前聊天记录。`,
+    });
+    try {
+      const captured = await collectCurrentTranscript();
+      if (!captured?.ok || captured.transcript?.chatDigest !== selected.chatDigest) {
+        throw new Error(captured?.reason || '冻结后的聊天记录与当前处理会话不一致。');
+      }
+      const transcript = captured.transcript;
+      traceAutoReply('TRANSCRIPT_CAPTURED', {
+        chatDigest: selected.chatDigest, messageDigest: selected.messageDigest, outcome: 'SUCCESS',
+        reason: `已冻结 ${Number(transcript.messageCount || 0)} 条消息，后台开始同步；页面锁现在可以安全释放。`,
+      });
+      const transcriptImportStartedAt = Date.now();
+      void send({ type: 'BRIDGE_IMPORT_CAPTURED_TRANSCRIPT', transcript }).then((result) => {
+        if (!result?.ok) throw new Error(result?.error || '聊天记录同步未返回成功结果。');
+        const synced = result.transcriptSync || {};
+        const failures = [synced.importError && `示例库：${synced.importError}`,
+          synced.timelineImportError && `沟通时间线：${synced.timelineImportError}`].filter(Boolean);
+        const exampleImport = synced.import || {};
+        const timelineImport = synced.timelineImport || {};
+        const syncSummary = `沟通时间线新增 ${Number(timelineImport.created || 0)}、重复 ${Number(timelineImport.duplicates || 0)}、跳过 ${Number(timelineImport.skipped || 0)}；示例库新增 ${Number(exampleImport.created || 0)}、重复 ${Number(exampleImport.duplicates || 0)}、跳过 ${Number(exampleImport.skipped || 0)}`;
+        traceAutoReply(failures.length ? 'TRANSCRIPT_SYNC_PARTIAL' : 'TRANSCRIPT_SYNC_COMPLETED', {
+          chatDigest: selected.chatDigest, messageDigest: selected.messageDigest,
+          outcome: failures.length ? 'FAILED' : 'SUCCESS',
+          elapsedMs: Date.now() - transcriptImportStartedAt,
+          reason: failures.length
+            ? `处理结果已保留，但聊天记录仅部分同步：${failures.join('；')}`
+            : `${syncSummary}；本次冻结 ${Number(synced.messageCount || 0)} 条消息。`,
+        });
+      }).catch((error) => traceAutoReply('TRANSCRIPT_SYNC_FAILED', {
+        chatDigest: selected.chatDigest, messageDigest: selected.messageDigest, outcome: 'FAILED',
+        elapsedMs: Date.now() - transcriptImportStartedAt,
+        reason: `处理终态已保留，后台聊天记录同步失败：${compact(error?.message || error || '未知错误').slice(0, 220)}`,
+      }));
+      return true;
+    } catch (error) {
+      traceAutoReply('TRANSCRIPT_SYNC_FAILED', {
+        chatDigest: selected.chatDigest, messageDigest: selected.messageDigest, outcome: 'FAILED',
+        reason: `处理终态已保留，聊天记录同步失败：${compact(error?.message || error || '未知错误').slice(0, 220)}`,
+      });
+      return false;
+    }
   }
 
   async function enqueueLatestInboundAfterStaleTask(target, latest, staleTask) {
@@ -1262,7 +1510,7 @@
     } });
     if (!result?.ok) {
       traceAutoReply('RESUME_RECEIPT_QUEUE_FAILED', {
-        chatDigest: selected.chatDigest, messageDigest: selected.messageDigest,
+        chatDigest: selected.chatDigest, messageDigest: selected.messageDigest, queueLane: 'TERMINAL',
         outcome: 'FAILED', reason: result?.error || '简历已提取，但收件确认回复未能进入发送队列。',
       });
       return { queued: false, duplicate: false, error: result?.error || '简历收件确认入队失败。' };
@@ -1272,16 +1520,17 @@
         taskId: result.taskId, chatDigest: selected.chatDigest, messageDigest: selected.messageDigest,
         resumeReceipt: true, nextPollAt: Date.now() + 300, holdStartedAt: Date.now(),
       });
+      enqueuePipelineTask(result.taskId, 'ANALYSIS');
       singleAccountPendingChatDigest = selected.chatDigest;
       traceAutoReply('RESUME_RECEIPT_QUEUED', {
-        chatDigest: selected.chatDigest, messageDigest: selected.messageDigest, taskId: result.taskId,
+        chatDigest: selected.chatDigest, messageDigest: selected.messageDigest, taskId: result.taskId, queueLane: 'ANALYSIS',
         outcome: 'WAITING', reason: '简历提取成功，已锁定当前会话；等待 AI 生成收件确认后立即发送。',
       });
       return { queued: true, duplicate: false };
     }
     if (result.decision?.category === 'DUPLICATE') {
       traceAutoReply('RESUME_RECEIPT_DUPLICATE', {
-        chatDigest: selected.chatDigest, messageDigest: selected.messageDigest,
+        chatDigest: selected.chatDigest, messageDigest: selected.messageDigest, queueLane: 'TERMINAL',
         outcome: 'SKIPPED', reason: '该简历附件消息已经登记过收件确认，禁止重复发送。',
       });
       return { queued: false, duplicate: true };
@@ -1293,6 +1542,46 @@
     return { queued: false, duplicate: false, error: result.decision?.reason || '简历收件确认未返回可发送任务。' };
   }
 
+  async function classifyResumeAttachmentContext(selected) {
+    const active = [...document.querySelectorAll(SELECTORS.activeConversation)].find(visible);
+    const lastMessage = active
+      ? [...active.querySelectorAll(SELECTORS.message)].filter(visible).filter((item) => directionOf(item)).at(-1)
+      : null;
+    const attachmentText = compact(lastMessage?.textContent || selected.messageText || '简历附件').slice(0, 500);
+    const attachmentFingerprint = await digest(`${selected.chatDigest}|${selected.messageDigest}|${attachmentText}`);
+    traceAutoReply('RESUME_CONTEXT_CHECK_REQUESTED', {
+      chatDigest: selected.chatDigest, messageDigest: selected.messageDigest, outcome: 'INFO',
+      reason: '先将当前附件和最近对话交给 AI 只读判断，不打开、不提取、不生成回复。',
+    });
+    const result = await send({ type: 'BRIDGE_CLASSIFY_RESUME_ATTACHMENT', payload: {
+      chatDigest: selected.chatDigest,
+      messageDigest: selected.messageDigest,
+      direction: selected.direction,
+      messageAt: selected.messageAt,
+      messageText: selected.messageText || attachmentText,
+      conversationContext: selected.conversationContext || '',
+      conversationSignals: selected.conversationSignals,
+      attachmentFingerprint,
+      observedAt: new Date().toISOString(),
+    } });
+    if (!result?.ok) {
+      traceAutoReply('RESUME_CONTEXT_CHECK_FAILED', {
+        chatDigest: selected.chatDigest, messageDigest: selected.messageDigest, outcome: 'WAITING',
+        reason: result?.error || 'AI 简历事件判断暂不可用，保留当前会话等待下一轮。',
+      });
+      return { ok: false, allow: false, reason: result?.error || 'AI 简历事件判断暂不可用。' };
+    }
+    const classification = String(result.classification || 'UNCERTAIN').toUpperCase();
+    const confidence = Number(result.confidence || 0);
+    const allow = classification === 'NEW_RESUME' && confidence >= 0.82;
+    traceAutoReply('RESUME_CONTEXT_CLASSIFIED', {
+      chatDigest: selected.chatDigest, messageDigest: selected.messageDigest,
+      outcome: allow ? 'SUCCESS' : 'SKIPPED', confidence,
+      reason: `${classification}：${result.reason || '未提供原因'}${allow ? '；满足新简历阈值，允许打开' : '；不满足新简历安全阈值，不打开附件'}`,
+    });
+    return { ok: true, allow, classification, confidence, reason: result.reason || '当前附件未确认是本轮新简历。' };
+  }
+
   async function receiptInboundReplySend(lease, outcome, afterShape, reason) {
     const afterStateDigest = await digest(afterShape);
     const receiptDigest = await digest(`${lease.beforeStateDigest}|${afterStateDigest}|${outcome}`);
@@ -1300,6 +1589,120 @@
       leaseToken: lease.leaseToken, outcome, beforeStateDigest: lease.beforeStateDigest,
       afterStateDigest, receiptDigest, reason: compact(reason).slice(0, 300),
     } });
+  }
+
+  async function reconcileUnconfirmedSend(lease, selected, replyText, outboundBeforeCount,
+                                          outboundBeforeIdentities) {
+    await delay(2_000);
+    const first = await collectSelectedConversation();
+    await delay(350);
+    const second = await collectSelectedConversation();
+    if (!first.ok || !second.ok || first.chatDigest !== selected.chatDigest
+        || second.chatDigest !== selected.chatDigest || first.messageDigest !== second.messageDigest
+        || second.direction !== 'OUTBOUND' || second.messageDigest === selected.messageDigest) return null;
+    const active = [...document.querySelectorAll(SELECTORS.activeConversation)].find(visible);
+    const outbound = active
+      ? [...active.querySelectorAll(SELECTORS.message)].filter(visible).filter((item) => directionOf(item) === 'OUTBOUND')
+      : [];
+    const last = outbound.at(-1);
+    if (!last || cleanOutboundReplyText(last) !== replyText) return null;
+    const identity = stableIdentity(last);
+    if (outbound.length <= outboundBeforeCount && (!identity || outboundBeforeIdentities.has(identity))) return null;
+    const controls = findReplyControls();
+    if (!controls.editor || readEditorText(controls.editor).trim()) return null;
+    const result = await send({ type: 'BRIDGE_RECONCILE_INBOUND_REPLY_SEND', payload: {
+      leaseToken: lease.leaseToken, chatDigest: selected.chatDigest, messageDigest: selected.messageDigest,
+      outboundMessageDigest: second.messageDigest, outboundTextDigest: await digest(replyText),
+      outboundAt: second.messageAt, observedAt: new Date().toISOString(),
+    } });
+    return result?.status === 'SUCCEEDED' ? result : null;
+  }
+
+  async function clearPendingSendReconciliation(taskId) {
+    singleAccountUnknownReconciliations.delete(taskId);
+    await send({ type: 'BRIDGE_CLEAR_SEND_RECONCILIATION', taskId }).catch(() => {});
+  }
+
+  async function reconcileRecoveredUnknownSend() {
+    const now = Date.now();
+    for (const task of singleAccountUnknownReconciliations.values()) {
+      if (Number(task.expiresAt) <= now) {
+        await clearPendingSendReconciliation(task.taskId);
+        traceAutoReply('SEND_RECOVERY_EXPIRED', {
+          chatDigest: task.chatDigest, messageDigest: task.messageDigest, taskId: task.taskId,
+          queueLane: 'TERMINAL', outcome: 'UNKNOWN',
+          reason: '发送后只读复核期限已过；仍无法确认的任务保持 UNKNOWN，绝不重新点击发送。',
+        });
+      }
+    }
+    const task = [...singleAccountUnknownReconciliations.values()]
+      .find((item) => Number(item.nextCheckAt || 0) <= now);
+    if (!task) return false;
+    task.nextCheckAt = now + 10_000;
+    let target = await findConversationByDigest(task.chatDigest);
+    if (!target) {
+      const deepLookup = await findConversationByDigestDeep(task.chatDigest);
+      target = deepLookup.item;
+      if (!target) {
+        if (!deepLookup.complete) task.nextCheckAt = now + LIST_SCAN_CONTINUE_DELAY_MS;
+        traceAutoReply('SEND_RECOVERY_TARGET_WAITING', {
+          chatDigest: task.chatDigest, messageDigest: task.messageDigest, taskId: task.taskId,
+          queueLane: 'TERMINAL', outcome: 'WAITING',
+          reason: deepLookup.complete
+            ? '只读复核暂未定位原会话，保留 UNKNOWN 并继续处理其他会话。'
+            : '只读复核正在分段定位原会话；本轮不点击发送。',
+        });
+        return !deepLookup.complete;
+      }
+    }
+    try {
+      const selected = await collectStableAutoReplySnapshot(target, task.chatDigest);
+      const active = [...document.querySelectorAll(SELECTORS.activeConversation)].find(visible);
+      const last = active ? [...active.querySelectorAll(SELECTORS.message)].filter(visible)
+        .filter((item) => directionOf(item)).at(-1) : null;
+      const identity = last && stableIdentity(last);
+      const identityDigest = identity ? await digest(identity) : null;
+      const claimedMinute = Math.floor(Date.parse(task.claimedAt || '') / 60_000);
+      const outboundMinute = Math.floor(Date.parse(selected?.messageAt || '') / 60_000);
+      const exactNewOutbound = selected?.ok && selected.chatDigest === task.chatDigest
+        && selected.messageDigest !== task.messageDigest && selected.direction === 'OUTBOUND'
+        && last && directionOf(last) === 'OUTBOUND'
+        && task.outboundBeforeIdentitiesComplete === true
+        && identityDigest && !task.outboundBeforeIdentityDigests.includes(identityDigest)
+        && await digest(cleanOutboundReplyText(last)) === task.replyDigest
+        && Number.isFinite(claimedMinute) && Number.isFinite(outboundMinute)
+        && outboundMinute >= claimedMinute;
+      if (!exactNewOutbound) {
+        traceAutoReply('SEND_RECOVERY_UNRESOLVED', {
+          chatDigest: task.chatDigest, messageDigest: task.messageDigest, taskId: task.taskId,
+          queueLane: 'TERMINAL', outcome: 'UNKNOWN',
+          reason: '重启后仍缺少同会话、新出站身份、相同正文和发送时间的完整证据；保持结果不明，不重发。',
+        });
+        return true;
+      }
+      const result = await send({ type: 'BRIDGE_RECONCILE_INBOUND_REPLY_SEND', payload: {
+        leaseToken: task.leaseToken, chatDigest: task.chatDigest, messageDigest: task.messageDigest,
+        outboundMessageDigest: selected.messageDigest, outboundTextDigest: task.replyDigest,
+        outboundAt: selected.messageAt, observedAt: new Date().toISOString(),
+      } });
+      if (result?.status === 'SUCCEEDED') {
+        await clearPendingSendReconciliation(task.taskId);
+        traceAutoReply('SEND_RECOVERED_AFTER_RESTART', {
+          chatDigest: task.chatDigest, messageDigest: task.messageDigest, taskId: task.taskId,
+          queueLane: 'TERMINAL', outcome: 'SUCCESS',
+          reason: '重启后只读复核确认相同正文的新出站消息，后端已将 UNKNOWN 调整为成功；未再次点击发送。',
+        });
+      }
+      return true;
+    } finally {
+      singleAccountPendingChatDigest = null;
+    }
+  }
+
+  function cleanOutboundReplyText(node) {
+    const clone = node.cloneNode(true);
+    clone.querySelectorAll(`${SELECTORS.messageTime}, script, style, input, textarea, button, .message-card-buttons, .message-status, .message-read-status, [class*="delivery"], [class*="read-status"], [class*="send-status"], [aria-label*="送达"], [title*="送达"]`).forEach((item) => item.remove());
+    return cleanConversationMessageText(clone.textContent || '');
   }
 
   async function prepareAutoReplyCycle() {
@@ -1324,11 +1727,22 @@
     // conversation page. Close only the currently visible, known resume
     // preview before reading controls or selecting the next queue target.
     if (!await ensureResumePreviewClosedForAutoReply()) {
+      if (!resumePdfForwardInFlight && resumePdfBackendRequestsInFlight.size === 0) {
+        resumePreviewCloseFirstFailureAt ||= Date.now();
+        resumePreviewCloseAttempts += 1;
+        if (resumePreviewCloseAttempts >= 5
+            && Date.now() - resumePreviewCloseFirstFailureAt >= 30_000) {
+          await haltSingleAccountAutoReply('持续回复已暂停：简历预览连续 30 秒无法确认关闭。请 HR 检查并关闭预览；确认页面正常后关闭再开启今日值守。');
+          return { ready: false, stopped: true };
+        }
+      }
       traceAutoReply('RESUME_PREVIEW_CLOSE_WAITING', {
         outcome: 'WAITING', reason: '简历预览暂未确认关闭，保留挂机状态，稍后重试，不停止整个自动回复。',
       });
       return { ready: false, delay: 3_000 };
     }
+    resumePreviewCloseFirstFailureAt = 0;
+    resumePreviewCloseAttempts = 0;
     const currentControls = findReplyControls();
     if (currentControls.editor && readEditorText(currentControls.editor).trim()) {
       traceAutoReply('EDITOR_WAITING', { reason: '当前输入框已有内容，为避免覆盖 HR 草稿，等待输入框恢复为空。', outcome: 'WAITING' });
@@ -1366,6 +1780,12 @@
 
   async function processNextUnreadConversation() {
     if (!singleAccountAutoReplyEnabled) return;
+    if (transcriptCaptureInProgress) {
+      traceAutoReply('TRANSCRIPT_CAPTURE_HOLD', {
+        outcome: 'WAITING', reason: '当前正在只读采集完整聊天记录，暂不切换会话或触发简历处理。',
+      });
+      return scheduleSingleAccountAutoReply(1_000);
+    }
     if (autoReplyBusy || collecting) {
       traceAutoReply('LOOP_BUSY', { reason: collecting ? '页面快照采集中' : '上一轮自动回复尚未结束', outcome: 'WAITING' });
       return scheduleSingleAccountAutoReply(1_000);
@@ -1425,13 +1845,23 @@
           singleAccountPendingChatDigest = null;
         }
       }
+      // A completed AI result is the highest-priority page operation. Poll
+      // active tasks before scanning unread rows, then locate and revalidate
+      // their original conversation. Historical retry inventory remains behind
+      // real-time unread so it cannot monopolize the page.
+      const priorityReadyReply = heldReadyReply
+        || await nextReadyInboundReply(null, { includeRetryable: false });
+      if (!priorityReadyReply && singleAccountUnknownReconciliations.size > 0
+          && await reconcileRecoveredUnknownSend()) {
+        return scheduleSingleAccountAutoReply(LIST_SCAN_CONTINUE_DELAY_MS);
+      }
       // BOSS immediately clears the unread badge when a message arrives in the
       // conversation that is already open. Detect that changed detail first;
       // otherwise a list-only scan sees zero unread rows and silently misses it.
-      const changedCurrent = heldReadyReply ? { item: null, snapshot: null } : await findChangedCurrentConversation();
-      // 实时未读必须优先于库存二次复核。旧失败任务会触发深度列表定位，
-      // 如果先处理库存，新到消息会表现为“列表一直滚动但不打开”。
-      let realtimeUnread = heldReadyReply ? null : changedCurrent.item
+      const changedCurrent = priorityReadyReply ? { item: null, snapshot: null } : await findChangedCurrentConversation();
+      // 没有可发送结果时，实时未读仍优先于库存二次复核。旧失败任务会触发
+      // 深度列表定位，如果先处理库存，新到消息会表现为“列表一直滚动但不打开”。
+      let realtimeUnread = priorityReadyReply ? null : changedCurrent.item
         ? { item: changedCurrent.item, chatDigest: changedCurrent.snapshot.chatDigest, currentPane: true,
           readReview: changedCurrent.readReview === true }
         : await findNewOrChangedUnreadConversation();
@@ -1447,17 +1877,51 @@
           ? '当前已打开会话出现新的候选人消息，不依赖未读角标，优先进入分析。'
           : '发现新到或内容已变化的未读会话，优先于历史库存复核立即读取。',
       });
-      const readyReply = heldReadyReply || (realtimeTarget ? null : await nextReadyInboundReply());
+      const readyReply = priorityReadyReply || (realtimeTarget ? null : await nextReadyInboundReply());
+      if (readyReply?.terminalTask) {
+        const terminalTask = readyReply.terminalTask;
+        const terminalReason = readyReply.terminalReason || 'AI 任务已进入终态。';
+        try {
+          // The backend has already recorded the final send outcome. Do not
+          // scroll to, open, or archive a possibly different current chat.
+          await reportSingleAccountResult(terminalTask, readyReply.terminalOutcome || 'SILENT', terminalReason, {
+            skipUnreadBaseline: true, skipSelectedMessageBaseline: true, archiveCurrent: false,
+          });
+          removePendingPipelineTask(terminalTask.taskId);
+          if (singleAccountPendingChatDigest === terminalTask.chatDigest) singleAccountPendingChatDigest = null;
+          traceAutoReply('AI_TASK_TERMINAL_CLEARED', {
+            chatDigest: terminalTask.chatDigest, messageDigest: terminalTask.messageDigest,
+            taskId: terminalTask.taskId, queueLane: 'TERMINAL', outcome: 'SUCCESS',
+            reason: '后端终态已同步到插件并移出本地队列；未定位会话、未触发发送。',
+          });
+        } catch (error) {
+          terminalTask.nextPollAt = Date.now() + 5_000;
+          traceAutoReply('RESULT_REPORT_FAILED', {
+            chatDigest: terminalTask.chatDigest, messageDigest: terminalTask.messageDigest,
+            taskId: terminalTask.taskId, queueLane: 'TERMINAL', outcome: 'FAILED',
+            reason: `终态同步失败，已保留任务退避重试：${String(error?.message || error || '未知错误')}`,
+          });
+        }
+        return scheduleSingleAccountAutoReply(500);
+      }
       const retryTask = readyReply?.retryTask || null;
       const prioritizedTask = readyReply?.task || retryTask || null;
-      if (readyReply?.task) traceAutoReply('AI_READY', { chatDigest: readyReply.task.chatDigest, messageDigest: readyReply.task.messageDigest, taskId: readyReply.task.taskId, outcome: 'SUCCESS', reason: '后端已返回可处理的 AI 回复任务。' });
+      const readyTask = readyReply?.task || null;
+      if (readyTask) {
+        markReadyTaskDiscovered(readyTask);
+        traceAutoReply('READY_DISPATCH_STARTED', {
+          chatDigest: readyTask.chatDigest, messageDigest: readyTask.messageDigest, taskId: readyTask.taskId,
+          outcome: 'INFO', reason: `待发送结果已优先调度，当前等待 ${Math.ceil(readyTaskAgeMs(readyTask) / 1_000)} 秒；暂停扫描新未读。`,
+        });
+      }
       if (!realtimeTarget && !readyReply && singleAccountPendingReplies.size > 0
           && singleAccountConversationQueue.length === 0) {
         const nextPollAt = Math.min(...[...singleAccountPendingReplies.values()].map((task) => Number(task.nextPollAt || 0)).filter((value) => Number.isFinite(value)));
         const waitMs = Number.isFinite(nextPollAt) ? Math.max(1_000, Math.min(5_000, nextPollAt - Date.now())) : 2_000;
         traceAutoReply('QUEUE_WINDOW_WAITING_AI', {
+          queueLane: 'ANALYSIS',
           outcome: 'WAITING',
-          reason: `当前预取队列已清空，仍有 ${singleAccountPendingReplies.size} 个 AI 任务未完成；不开启下一轮列表扫描，${Math.ceil(waitMs / 1_000)} 秒后继续轮询。`,
+          reason: `当前扫描队列已清空，分析 ${singleAccountAnalysisQueue.length}、发送 ${singleAccountSendQueue.length}、复核 ${singleAccountRevalidationQueue.length}；仍有 ${singleAccountPendingReplies.size} 个 AI 任务未完成，不开启下一轮列表扫描，${Math.ceil(waitMs / 1_000)} 秒后继续轮询。`,
         });
         return scheduleSingleAccountAutoReply(waitMs);
       }
@@ -1468,6 +1932,10 @@
       let target = realtimeTarget;
       if (!target && prioritizedTask && !currentConversationAffinity) {
         target = await findConversationByDigest(prioritizedTask.chatDigest);
+        if (!target && readyTask) traceAutoReply('READY_VISIBLE_LOOKUP_MISS', {
+          chatDigest: readyTask.chatDigest, messageDigest: readyTask.messageDigest, taskId: readyTask.taskId,
+          outcome: 'WAITING', reason: '当前可见会话行中未找到待发送目标，准备使用持久化定位提示和深度扫描。',
+        });
       }
       if (!target && currentConversationAffinity && selectedItem) {
         const selectedIdentity = stableIdentity(selectedItem);
@@ -1476,28 +1944,88 @@
       let readReviewTarget = realtimeUnread?.readReview === true;
       let queuedCandidate = null;
       if (prioritizedTask && !target && !currentConversationAffinity) {
-        target = await findConversationByDigestDeep(prioritizedTask.chatDigest);
+        if (readyTask) {
+          const now = Date.now();
+          const wakeDue = readyTaskAgeMs(readyTask, now) >= READY_SEND_WAKE_AFTER_MS
+            && now - Number(readyTask.lastWakeAt || 0) >= READY_SEND_WAKE_INTERVAL_MS;
+          if (wakeDue) {
+            readyTask.lastWakeAt = now;
+            readyTask.wakeAttempts = Number(readyTask.wakeAttempts || 0) + 1;
+            const scroller = conversationScrollContainer();
+            if (scroller) activateConversationListForAutomation(scroller, '长时间 READY 主动唤醒');
+            traceAutoReply('READY_RELOCATION_WAKE', {
+              queueLane: 'SEND',
+              chatDigest: readyTask.chatDigest, messageDigest: readyTask.messageDigest, taskId: readyTask.taskId,
+              attempt: readyTask.wakeAttempts, outcome: 'WAITING',
+              reason: `待发送已等待 ${Math.ceil(readyTaskAgeMs(readyTask, now) / 1_000)} 秒，主动激活会话列表并重新执行定位。`,
+            });
+          }
+          traceAutoReply('READY_DEEP_SCAN_STARTED', {
+            queueLane: 'SEND',
+            chatDigest: readyTask.chatDigest, messageDigest: readyTask.messageDigest, taskId: readyTask.taskId,
+            outcome: 'INFO', reason: '开始按定位提示与全量虚拟列表重新查找待发送会话。',
+          });
+        }
+        const deepLookup = await findConversationByDigestDeep(prioritizedTask.chatDigest);
+        target = deepLookup.item;
+        if (!target && !deepLookup.complete) {
+          traceAutoReply('READY_DEEP_SCAN_CONTINUING', {
+            queueLane: 'SEND', chatDigest: prioritizedTask.chatDigest,
+            messageDigest: prioritizedTask.messageDigest, taskId: prioritizedTask.taskId,
+            outcome: 'WAITING', reason: '待发送目标的只读定位仍在分段扫描中；让出页面执行权，下一轮优先继续定位。',
+          });
+          return scheduleSingleAccountAutoReply(LIST_SCAN_CONTINUE_DELAY_MS);
+        }
+        if (readyTask) traceAutoReply(target ? 'READY_DEEP_SCAN_MATCHED' : 'READY_DEEP_SCAN_MISS', {
+          queueLane: 'SEND',
+          chatDigest: readyTask.chatDigest, messageDigest: readyTask.messageDigest, taskId: readyTask.taskId,
+          outcome: target ? 'SUCCESS' : 'WAITING', reason: target
+            ? '深度扫描已重新定位待发送会话，继续执行稳定快照复核。'
+            : '本轮已遍历当前可加载会话列表，仍未找到待发送目标。',
+        });
       }
       let queuedDecision = target || currentConversationAffinity ? readyReply?.decision || null : null;
       let queuedTask = target || currentConversationAffinity ? prioritizedTask : null;
+      if (readyTask && (target || currentConversationAffinity)) {
+        readyTask.locateFailures = 0;
+        readyTask.firstLocateFailureAt = null;
+        traceAutoReply('READY_TARGET_LOCATED', {
+          queueLane: 'SEND',
+          chatDigest: readyTask.chatDigest, messageDigest: readyTask.messageDigest, taskId: readyTask.taskId,
+          outcome: 'SUCCESS', reason: currentConversationAffinity
+            ? '待发送任务仍绑定当前会话，无需切换页面。'
+            : '已定位待发送任务对应会话，下一步进行两次稳定快照复核。',
+        });
+      }
       if (prioritizedTask && !target && !currentConversationAffinity) {
         const now = Date.now();
         prioritizedTask.locateFailures = Number(prioritizedTask.locateFailures || 0) + 1;
         prioritizedTask.firstLocateFailureAt = prioritizedTask.firstLocateFailureAt || now;
         const waitedMs = now - prioritizedTask.firstLocateFailureAt;
+        if (!retryTask) {
+          prioritizedTask.nextPollAt = now + READY_SEND_RELOCATE_DELAY_MS;
+          traceAutoReply('READY_RELOCATE_SCHEDULED', {
+            chatDigest: prioritizedTask.chatDigest, messageDigest: prioritizedTask.messageDigest,
+            taskId: prioritizedTask.taskId, attempt: prioritizedTask.locateFailures, outcome: 'WAITING',
+            reason: `待发送任务尚未定位，${READY_SEND_RELOCATE_DELAY_MS / 1_000} 秒后主动重试；不会进入历史任务的 5 分钟冷却。`,
+          });
+          return scheduleSingleAccountAutoReply(READY_SEND_RELOCATE_DELAY_MS);
+        }
         if (prioritizedTask.locateFailures >= RETRY_TARGET_MAX_LOCATE_FAILURES || waitedMs >= RETRY_TARGET_MAX_WAIT_MS) {
-          singleAccountPendingReplies.delete(prioritizedTask.taskId);
+          removePendingPipelineTask(prioritizedTask.taskId);
           singleAccountRetryLocateDeferrals.set(prioritizedTask.taskId, now + RETRY_TARGET_DEFER_MS);
-          traceAutoReply(retryTask ? 'AI_RETRY_TARGET_DEFERRED' : 'AI_TARGET_DEFERRED', {
+          traceAutoReply('AI_RETRY_TARGET_DEFERRED', {
+            queueLane: 'REVALIDATION',
             chatDigest: prioritizedTask.chatDigest, messageDigest: prioritizedTask.messageDigest, taskId: prioritizedTask.taskId,
             attempt: prioritizedTask.locateFailures, outcome: 'WAITING',
-            reason: '待发送任务连续无法定位原会话，已冷却 5 分钟并释放队首；任务仍在后端保留，不会丢失或误发。',
+            reason: '历史失败复核任务连续无法定位原会话，已冷却 5 分钟并释放队首；任务仍在后端保留。',
           });
           return scheduleSingleAccountAutoReply(300);
         }
-        traceAutoReply(retryTask ? 'AI_RETRY_TARGET_NOT_FOUND' : 'AI_TARGET_NOT_FOUND', {
+        traceAutoReply('AI_RETRY_TARGET_NOT_FOUND', {
+          queueLane: 'REVALIDATION',
           chatDigest: prioritizedTask.chatDigest, messageDigest: prioritizedTask.messageDigest, taskId: prioritizedTask.taskId,
-          attempt: retryTask ? prioritizedTask.locateFailures : null, outcome: 'WAITING', reason: '当前列表深度扫描仍未定位到任务对应会话，保留任务退避后再定位。',
+          attempt: prioritizedTask.locateFailures, outcome: 'WAITING', reason: '当前列表深度扫描仍未定位到历史复核会话，保留任务退避后再定位。',
         });
         return scheduleSingleAccountAutoReply(3_000);
       }
@@ -1514,18 +2042,21 @@
           // Only open a new bounded scan window after the previous FIFO window
           // has been fully consumed. The scan itself starts by moving the
           // conversation list's real scroll container.
-          traceAutoReply('QUEUE_WINDOW_SCAN_STARTED', {
+      traceAutoReply('QUEUE_WINDOW_SCAN_STARTED', {
+            queueLane: 'SCAN',
             outcome: 'INFO', reason: '当前队列已清空，先滚动扫描未读；若无未读，再复核已读但最后一条可能来自候选人的会话。',
           });
           refill = await refillSingleAccountConversationQueue();
-          singleAccountQueueWindowInitialized = !['SCROLLER_NOT_FOUND', 'PAGE_NOT_READY', 'PREVIEW_OPEN'].includes(refill?.scanCode);
+          singleAccountQueueWindowInitialized = !['SCROLLER_NOT_FOUND', 'PAGE_NOT_READY', 'PREVIEW_OPEN', 'PARTIAL'].includes(refill?.scanCode);
           traceAutoReply('QUEUE_WINDOW_SCAN_COMPLETED', {
-            outcome: ['SCROLLER_NOT_FOUND', 'PAGE_NOT_READY', 'PREVIEW_OPEN'].includes(refill?.scanCode) ? 'WAITING' : 'INFO',
-            reason: `本轮发现 ${refill?.observedUnread ?? 0} 条未读，已读安全复核入队 ${refill?.readReviewAdded ?? 0} 条，总新增 ${refill?.added ?? 0} 条，当前队列 ${refill?.queueLength ?? 0} 条。`,
+            queueLane: 'SCAN',
+            outcome: ['SCROLLER_NOT_FOUND', 'PAGE_NOT_READY', 'PREVIEW_OPEN', 'PARTIAL'].includes(refill?.scanCode) ? 'WAITING' : 'INFO',
+            reason: `${refill?.scanCode === 'PARTIAL' ? '本轮分段扫描暂见' : '本轮发现'} ${refill?.observedUnread ?? 0} 条未读，已读安全复核入队 ${refill?.readReviewAdded ?? 0} 条，总新增 ${refill?.added ?? 0} 条，当前扫描队列 ${refill?.queueLength ?? 0} 条；分析 ${singleAccountAnalysisQueue.length}，发送 ${singleAccountSendQueue.length}，复核 ${singleAccountRevalidationQueue.length}。`,
           });
         } else {
           refill = { observedUnread: null, added: 0, queueLength: singleAccountConversationQueue.length, skipped: 'QUEUE_ACTIVE' };
           traceAutoReply('QUEUE_WINDOW_ACTIVE', {
+            queueLane: 'SCAN',
             queuePosition: 1, outcome: 'INFO',
             reason: `当前队列仍有 ${singleAccountConversationQueue.length} 条，完成本批处理前不重新扫描会话列表。`,
           });
@@ -1535,6 +2066,7 @@
         if (queuedCandidate) {
           const locateFailures = Number(queuedCandidate.locateFailures || 0);
           traceAutoReply('QUEUE_PEEK', {
+            queueLane: 'SCAN',
             chatDigest: queuedCandidate.chatDigest, queuePosition: 1, attempt: locateFailures + 1, outcome: 'INFO',
             reason: locateFailures ? `第 ${locateFailures + 1} 次定位队首会话。`
               : queuedCandidate.readReview ? '开始定位队首已读未回安全复核会话。' : '开始定位队首未读会话。',
@@ -1545,13 +2077,21 @@
           // full list scan; the retry backoff below prevents a tight loop.
           if (!target) {
             lastDeepConversationScanAt = Date.now();
-            target = await findConversationByDigestDeep(queuedCandidate.chatDigest);
+            const deepLookup = await findConversationByDigestDeep(queuedCandidate.chatDigest);
+            target = deepLookup.item;
+            if (!target && !deepLookup.complete) {
+              traceAutoReply('QUEUE_TARGET_SCAN_CONTINUING', {
+                chatDigest: queuedCandidate.chatDigest, queuePosition: 1, outcome: 'WAITING',
+                reason: '队首会话仍在分段定位中；不累计定位失败次数，下一轮先检查待发送任务。',
+              });
+              return scheduleSingleAccountAutoReply(LIST_SCAN_CONTINUE_DELAY_MS);
+            }
           }
           if (target) {
             singleAccountConversationQueue.shift();
             queuedCandidate.locateFailures = 0;
             readReviewTarget = queuedCandidate.readReview === true;
-            traceAutoReply('TARGET_SELECTED', { chatDigest: queuedCandidate.chatDigest, queuePosition: 1, outcome: 'SUCCESS', reason: '已从持久化预取队列定位会话。' });
+            traceAutoReply('TARGET_SELECTED', { chatDigest: queuedCandidate.chatDigest, queueLane: 'SCAN', queuePosition: 1, outcome: 'SUCCESS', reason: '已从扫描预取队列定位会话。' });
           } else {
             const now = Date.now();
             queuedCandidate.locateFailures = locateFailures + 1;
@@ -1596,6 +2136,7 @@
           if (['SCROLLER_NOT_FOUND', 'PAGE_NOT_READY', 'PREVIEW_OPEN'].includes(refill?.scanCode)) {
             queueRetryDelay = Math.max(queueRetryDelay, LIST_DOM_RETRY_DELAY_MS);
           }
+          if (refill?.scanCode === 'PARTIAL') queueRetryDelay = LIST_SCAN_CONTINUE_DELAY_MS;
           if (refill?.readReviewSkipped === 'COOLDOWN') {
             queueRetryDelay = Math.max(queueRetryDelay, 3_000);
           }
@@ -1608,7 +2149,7 @@
           const readReviewState = refill?.readReviewSkipped === 'COOLDOWN'
             ? '；已读未回复核处于 30 秒冷却窗口'
             : refill?.readReviewAdded ? `；已读未回复核入队 ${refill.readReviewAdded} 条` : '';
-          traceAutoReply('SCAN_EMPTY', { outcome: 'WAITING', reason: `扫描到未读 ${observed}，新增入队 ${refill?.added ?? 0} 条，当前队列 ${refill?.queueLength ?? singleAccountConversationQueue.length} 条${readReviewState}；未找到可定位目标，${queueRetryDelay / 1_000} 秒后退避扫描。` });
+          traceAutoReply(refill?.scanCode === 'PARTIAL' ? 'SCAN_CONTINUING' : 'SCAN_EMPTY', { outcome: 'WAITING', reason: `${refill?.scanCode === 'PARTIAL' ? '本段暂见' : '扫描到'}未读 ${observed}，新增入队 ${refill?.added ?? 0} 条，当前队列 ${refill?.queueLength ?? singleAccountConversationQueue.length} 条${readReviewState}；${refill?.scanCode === 'PARTIAL' ? '列表尚未扫完，先检查待发送任务，' : '未找到可定位目标，'}${queueRetryDelay / 1_000} 秒后继续。` });
           return scheduleSingleAccountAutoReply(queueRetryDelay);
         }
       const identity = target instanceof HTMLElement ? stableIdentity(target) : '';
@@ -1620,6 +2161,10 @@
       traceAutoReply('TARGET_SELECTED', { chatDigest: expectedChatDigest, outcome: 'SUCCESS', reason: currentConversationAffinity
         ? 'AI 生成期间会话未切换，已继续锁定当前消息面板。'
         : '已锁定当前处理会话。' });
+      if (readyTask) traceAutoReply('READY_SNAPSHOT_REVALIDATION_STARTED', {
+        chatDigest: readyTask.chatDigest, messageDigest: readyTask.messageDigest, taskId: readyTask.taskId,
+        outcome: 'INFO', reason: '开始核对选中会话、最新消息摘要和消息方向；通过前不会申请发送租约。',
+      });
       const second = await collectStableAutoReplySnapshot(target, expectedChatDigest);
       if (!second) return scheduleSingleAccountAutoReply(1_500);
       if (second.direction === 'OUTBOUND') {
@@ -1633,7 +2178,8 @@
               const discarded = await send({ type: 'BRIDGE_DISCARD_STALE_INBOUND_REPLY', payload: {
                 taskId: task.taskId, chatDigest: task.chatDigest,
                 messageDigest: task.messageDigest, currentMessageDigest: second.messageDigest,
-                currentMessageAt: second.messageAt, currentDirection: 'OUTBOUND', selectedUnread: false,
+                currentMessageAt: second.messageAt, currentMessageText: second.messageText,
+                currentDirection: 'OUTBOUND', selectedUnread: false,
                 conversationSignals: second.conversationSignals,
               } });
               if (!discarded?.ok) throw new Error(discarded?.error || '后端未确认旧任务作废');
@@ -1645,7 +2191,7 @@
               });
             }
           }
-          singleAccountPendingReplies.delete(task.taskId);
+          removePendingPipelineTask(task.taskId);
           await reportSingleAccountResult(task, 'SILENT', 'HR 已在候选人回复后发出新消息，旧 AI 回复已安全作废。', {
             skipUnreadBaseline: true, skipSelectedMessageBaseline: true,
           });
@@ -1691,7 +2237,8 @@
             const discarded = await send({ type: 'BRIDGE_DISCARD_STALE_INBOUND_REPLY', payload: {
               taskId: retryTask.taskId, chatDigest: retryTask.chatDigest,
               messageDigest: retryTask.messageDigest, currentMessageDigest: second.messageDigest,
-              currentMessageAt: second.messageAt, selectedUnread: second.selectedUnread,
+              currentMessageAt: second.messageAt, currentMessageText: second.messageText,
+              selectedUnread: second.selectedUnread,
               conversationSignals: second.conversationSignals,
             } });
             if (!discarded?.ok) throw new Error(discarded?.error || '后端未确认旧任务作废');
@@ -1707,7 +2254,7 @@
             singleAccountPendingChatDigest = null;
             return scheduleSingleAccountAutoReply(3_000);
           }
-          singleAccountPendingReplies.delete(retryTask.taskId);
+          removePendingPipelineTask(retryTask.taskId);
           await reportSingleAccountResult(retryTask, 'SILENT', '历史失败任务对应的消息已经变化，旧 AI 结果已作废。', {
             skipUnreadBaseline: true,
             skipSelectedMessageBaseline: true,
@@ -1723,7 +2270,7 @@
         const retryHasAttachment = Boolean(stableLastMessageForRetry?.querySelector('.message-card-wrap, .hyperLink, video, audio, [class*="attachment"], [class*="resume"]'));
         if (second.direction !== 'INBOUND' || !second.messageText || retryHasAttachment) {
           traceAutoReply('AI_RETRY_SKIPPED', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, taskId: retryTask.taskId, outcome: 'SKIPPED', reason: retryHasAttachment ? '当前消息包含附件，交由简历链路处理，不重试文本回复。' : '当前消息不是可安全重试的候选人纯文本。' });
-          singleAccountPendingReplies.delete(retryTask.taskId);
+          removePendingPipelineTask(retryTask.taskId);
           await reportSingleAccountResult(second, 'SILENT', retryHasAttachment ? '当前消息包含附件，旧 AI 回复失败任务未重试。' : '当前消息不是候选人纯文本，旧 AI 回复失败任务未重试。');
           singleAccountPendingChatDigest = null;
           return scheduleSingleAccountAutoReply(300);
@@ -1738,7 +2285,7 @@
           const permanent = /(?:TARGET_CHANGED|DETAIL_REQUIRED|JOB_|RETRY_NOT_ALLOWED|RETRY_INPUT_INVALID|INTERVIEW_COMPLETED|OBSERVATION_NOT_FOUND|RETRY_READ_REQUIRED)/.test(`${retryResult?.code || ''} ${retryResult?.error || ''}`);
           traceAutoReply('AI_RETRY_REJECTED', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, taskId: retryTask.taskId, outcome: permanent ? 'SKIPPED' : 'WAITING', reason: retryResult?.error || '安全重试请求暂未完成，保留任务等待下一轮。' });
           if (permanent) {
-            singleAccountPendingReplies.delete(retryTask.taskId);
+            removePendingPipelineTask(retryTask.taskId);
             await reportSingleAccountResult(second, 'SILENT', retryResult?.error || '当前会话未通过安全重试校验，旧任务未重试。');
           } else {
             retryTask.nextPollAt = Date.now() + 5_000;
@@ -1748,7 +2295,8 @@
         }
         retryTask.retryable = false;
         retryTask.nextPollAt = Date.now() + 500;
-        traceAutoReply('AI_RETRY_REQUEUED', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, taskId: retryTask.taskId, outcome: 'SUCCESS', reason: '已使用当前会话最新正文重新进入 AI 队列；等待重新分析，不直接发送。' });
+        enqueuePipelineTask(retryTask.taskId, 'ANALYSIS');
+        traceAutoReply('AI_RETRY_REQUEUED', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, taskId: retryTask.taskId, queueLane: 'ANALYSIS', outcome: 'SUCCESS', reason: '已使用当前会话最新正文重新进入 AI 队列；等待重新分析，不直接发送。' });
         if (![...singleAccountPendingReplies.values()].some((task) => task.retryable !== true
             && task.chatDigest === second.chatDigest)) {
           singleAccountPendingChatDigest = null;
@@ -1762,7 +2310,8 @@
           const discarded = await send({ type: 'BRIDGE_DISCARD_STALE_INBOUND_REPLY', payload: {
             taskId: queuedTask.taskId, chatDigest: queuedTask.chatDigest,
             messageDigest: queuedTask.messageDigest, currentMessageDigest: second.messageDigest,
-            currentMessageAt: second.messageAt, selectedUnread: second.selectedUnread,
+            currentMessageAt: second.messageAt, currentMessageText: second.messageText,
+            selectedUnread: second.selectedUnread,
             conversationSignals: second.conversationSignals,
           } });
           if (!discarded?.ok) throw new Error(discarded?.error || '后端未确认旧任务作废');
@@ -1778,7 +2327,7 @@
           singleAccountPendingChatDigest = null;
           return scheduleSingleAccountAutoReply(3_000);
         }
-        singleAccountPendingReplies.delete(queuedTask.taskId);
+        removePendingPipelineTask(queuedTask.taskId);
         // The visible row now contains a newer candidate message. Do not mark
         // that newer row as handled, otherwise the next scan would suppress it.
         await reportSingleAccountResult(queuedTask, 'SILENT', '候选人在 AI 分析期间发来了新消息，旧结果已作废且未发送。', {
@@ -1797,7 +2346,23 @@
       const resumeReceiptTask = queuedTask?.resumeReceipt === true;
       if (!resumeReceiptTask && (second.direction !== 'INBOUND' || !second.messageText || containsStructuredAttachment)) {
         if (second.direction === 'INBOUND' && containsStructuredAttachment) {
-          traceAutoReply('ATTACHMENT_DETECTED', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, outcome: 'WAITING', reason: '检测到候选人附件，转入简历处理链路。' });
+          traceAutoReply('ATTACHMENT_DETECTED', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, outcome: 'WAITING', reason: '检测到候选人附件，先进行上下文判定；判定通过后才允许打开简历。' });
+          const contextCheck = await classifyResumeAttachmentContext(second);
+          if (!contextCheck.ok) {
+            singleAccountPendingChatDigest = null;
+            return scheduleSingleAccountAutoReply(5_000);
+          }
+          if (!contextCheck.allow) {
+            await reportSingleAccountResult(second, 'SILENT', contextCheck.reason, {
+              skipUnreadBaseline: false, skipSelectedMessageBaseline: false,
+            });
+            singleAccountPendingChatDigest = null;
+            return scheduleSingleAccountAutoReply(1_500);
+          }
+          // This marker is consumed by the background snapshot importer. A
+          // historical resumeReceived signal without this explicit marker can
+          // never open an attachment during ordinary page refreshes.
+          resumeCaptureRequest = { chatDigest: second.chatDigest, messageDigest: second.messageDigest };
           resumeAttachmentEpoch += 1;
           resumeAttachmentProcessing = true;
           resumePreviewOpenPending = true;
@@ -1853,6 +2418,7 @@
                 chatDigest: second.chatDigest, messageDigest: second.messageDigest, outcome: 'WAITING',
                 reason: '简历处理后的预览窗口暂未确认关闭，等待下一轮自动重试。',
               });
+              resumeCaptureRequest = null;
               return scheduleSingleAccountAutoReply(3_000);
             }
             if (outcome?.chatDigest === second.chatDigest && outcome.error === '简历已导入，但预览窗口未确认关闭') {
@@ -1887,6 +2453,7 @@
             await reportSingleAccountResult(second, 'SILENT',
               `候选人附件不需要文本回复；简历导入${outcome?.error ? `未完成：${outcome.error}` : '等待超时，已保留状态供后续重试'}。`);
           }
+          resumeCaptureRequest = null;
         } else {
           traceAutoReply('NON_TEXT_MESSAGE', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, outcome: 'SKIPPED', reason: '最后一条内容不是可安全处理的候选人纯文本。' });
           await reportSingleAccountResult(second, 'SILENT', '最后一条内容不是可安全处理的候选人纯文本，未回复。');
@@ -1905,12 +2472,21 @@
       }
       const controls = findReplyControls();
       if (!controls.editor || readEditorText(controls.editor).trim()) {
-        traceAutoReply('EDITOR_WAITING', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, outcome: 'WAITING', reason: !controls.editor ? '暂未找到可见回复输入框，等待页面完成渲染。' : '回复输入框已有内容，等待 HR 草稿处理完成。' });
+        traceAutoReply(queuedTask ? 'READY_EDITOR_WAITING' : 'EDITOR_WAITING', {
+          chatDigest: second.chatDigest, messageDigest: second.messageDigest, taskId: queuedTask?.taskId || null,
+          outcome: 'WAITING', reason: !controls.editor
+            ? '待发送会话已定位，但暂未找到可见回复输入框，3 秒后保持原任务重新读取 DOM。'
+            : '回复输入框已有内容，为避免覆盖 HR 草稿，保持待发送任务并等待输入框恢复为空。',
+        });
         return scheduleSingleAccountAutoReply(3_000);
       }
+      if (queuedTask) traceAutoReply('READY_EDITOR_CONFIRMED', {
+        chatDigest: second.chatDigest, messageDigest: second.messageDigest, taskId: queuedTask.taskId,
+        outcome: 'SUCCESS', reason: '已确认唯一可写回复输入框为空，准备申请一次性发送租约。',
+      });
       let decision = queuedDecision;
       if (!decision) {
-        traceAutoReply('AI_REQUESTED', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, outcome: 'INFO', reason: '已向后端提交候选人消息分析请求。' });
+        traceAutoReply('AI_REQUESTED', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, queueLane: 'ANALYSIS', outcome: 'INFO', reason: '已向后端提交候选人消息分析请求。' });
         const selectedRowAtQueue = [...document.querySelectorAll(SELECTORS.selectedConversation)].find(visible);
         const pendingRowSignature = selectedRowAtQueue && hasUnread(selectedRowAtQueue)
           ? await unreadRowSignature(selectedRowAtQueue) : null;
@@ -1962,18 +2538,28 @@
           return scheduleSingleAccountAutoReply(waitMs);
         }
         if (replyResult.pending && replyResult.taskId) {
-          traceAutoReply(replyResult.recovered ? 'AI_TASK_RECOVERED' : 'AI_QUEUED', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, taskId: replyResult.taskId, outcome: 'WAITING', reason: replyResult.recovered ? '已恢复刷新或暂停前绑定的 AI 任务，保持当前会话继续轮询。' : 'AI 分析已入队，已锁定当前会话，生成后将立即复核并发送。' });
           singleAccountPendingReplies.set(replyResult.taskId, {
             taskId: replyResult.taskId, chatDigest: second.chatDigest, messageDigest: second.messageDigest,
             resumeReceipt: replyResult.resumeReceipt === true,
             pendingRowSignature: replyResult.pendingRowSignature || pendingRowSignature,
             nextPollAt: Date.now() + 500, holdStartedAt: Date.now(),
           });
-          singleAccountPendingChatDigest = second.chatDigest;
-          return scheduleSingleAccountAutoReply(300);
+          enqueuePipelineTask(replyResult.taskId, 'ANALYSIS');
+          const keepCurrentConversation = replyResult.resumeReceipt === true;
+          singleAccountPendingChatDigest = keepCurrentConversation ? second.chatDigest : null;
+          const processingCount = singleAccountPendingReplies.size;
+          traceAutoReply(replyResult.recovered ? 'AI_TASK_RECOVERED' : 'AI_QUEUED', {
+            chatDigest: second.chatDigest, messageDigest: second.messageDigest, taskId: replyResult.taskId,
+            queueLane: 'ANALYSIS',
+            queuePosition: processingCount, outcome: 'WAITING',
+            reason: keepCurrentConversation
+              ? `简历收件回复正在生成（AI 并发任务 ${processingCount}/3），保持当前会话以优先发送。`
+              : `AI 并发处理中（${processingCount}/3）；当前会话快照已冻结，继续提交预取窗口中的其他消息。`,
+          });
+          return scheduleSingleAccountAutoReply(100);
         }
         decision = replyResult.decision;
-        traceAutoReply(decision?.replyAllowed ? 'AI_READY' : 'SAFETY_SILENT', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, outcome: decision?.replyAllowed ? 'SUCCESS' : 'SKIPPED', reason: decision?.replyAllowed ? 'AI 返回允许生成回复。' : decision?.reason || 'AI 返回无需自动回复。' });
+        traceAutoReply(decision?.replyAllowed ? 'AI_READY' : 'SAFETY_SILENT', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, queueLane: decision?.replyAllowed ? 'SEND' : 'TERMINAL', outcome: decision?.replyAllowed ? 'SUCCESS' : 'SKIPPED', reason: decision?.replyAllowed ? 'AI 返回允许生成回复。' : decision?.reason || 'AI 返回无需自动回复。' });
       }
       if (!singleAccountAutoReplyEnabled) {
         traceAutoReply('STOPPED_BEFORE_SEND', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, outcome: 'STOPPED', reason: 'HR 在 AI 判定期间停止了自动回复。' });
@@ -1993,11 +2579,9 @@
         traceAutoReply('DECISION_SILENT', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, outcome: 'SKIPPED', reason: decision?.reason || '消息不符合自动回复条件。' });
         if (decision?.category !== 'DUPLICATE') {
           const reason = decision?.reason || '消息不符合自动回复条件。';
-          const retryableSilent = isRetryableSilentReason(reason);
-          if (retryableSilent) traceAutoReply('AI_RETRY_PENDING', {
-            chatDigest: second.chatDigest, messageDigest: second.messageDigest, outcome: 'WAITING', reason: 'AI 输出质量问题未写入已读基线，等待下一轮重新分析。',
-          });
-          await reportSingleAccountResult(second, 'SILENT', reason, { skipUnreadBaseline: retryableSilent });
+          // This synchronous branch is only used for terminal pre-checks; AI
+          // failures return a task status with an explicit retryEligible flag.
+          await reportSingleAccountResult(second, 'SILENT', reason);
         } else if (decision.terminal === true) {
           // The message was already claimed in a previous run. Persist the
           // current message and row signatures for every entry path so the
@@ -2021,17 +2605,18 @@
           await collectAndPublish(true, true);
           await waitForCollectionIdle(2_500);
         }
-        traceAutoReply('SEND_LEASE_REQUESTED', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, taskId: queuedTask.taskId, outcome: 'INFO', reason: '已向后端申请一次性发送租约。' });
+        traceAutoReply('SEND_LEASE_REQUESTED', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, taskId: queuedTask.taskId, queueLane: 'SEND', outcome: 'INFO', reason: '已向后端申请一次性发送租约。' });
         const beforeStateDigest = await digest(`${second.chatDigest}|${second.messageDigest}|EMPTY_EDITOR|READY_TO_FILL`);
         const claim = await send({ type: 'BRIDGE_CLAIM_INBOUND_REPLY_SEND', payload: {
           taskId: queuedTask.taskId, chatDigest: second.chatDigest,
           messageDigest: second.messageDigest, beforeStateDigest, messageAt: second.messageAt,
-          selectedUnread: second.selectedUnread, conversationSignals: second.conversationSignals,
+          messageText: second.messageText, selectedUnread: second.selectedUnread,
+          conversationSignals: second.conversationSignals,
           observedAt: new Date().toISOString(),
         } });
         if (!claim?.available || !claim.leaseToken || !claim.content || !claim.replyDigest) {
           const claimReason = claim?.reason || claim?.error || '后端未返回可用发送租约。';
-          traceAutoReply('SEND_LEASE_UNAVAILABLE', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, taskId: queuedTask.taskId, outcome: claim?.status === 'READY' || claim?.ok === false ? 'WAITING' : 'BLOCKED', reason: claimReason });
+          traceAutoReply('SEND_LEASE_UNAVAILABLE', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, taskId: queuedTask.taskId, queueLane: 'SEND', outcome: claim?.status === 'READY' || claim?.ok === false ? 'WAITING' : 'BLOCKED', reason: claimReason });
           if (claim?.ok === false) {
             queuedTask.nextPollAt = Date.now() + 5_000;
             singleAccountPendingChatDigest = null;
@@ -2047,16 +2632,16 @@
             singleAccountPendingChatDigest = null;
             return scheduleSingleAccountAutoReply(5_000);
           }
-          singleAccountPendingReplies.delete(queuedTask.taskId);
+          removePendingPipelineTask(queuedTask.taskId);
           await reportSingleAccountResult(second, claim?.status === 'SKIPPED' ? 'SILENT' : 'UNKNOWN', claim?.reason || 'AI 回复发送租约不可用，已禁止重试。');
           singleAccountPendingChatDigest = null;
           return scheduleSingleAccountAutoReply(1_000);
         }
         if (await digest(claim.content) !== claim.replyDigest) {
-          traceAutoReply('LEASE_CONTENT_MISMATCH', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, taskId: queuedTask.taskId, outcome: 'FAILED', reason: '租约回复内容摘要不一致，已禁止写入和发送。' });
+          traceAutoReply('LEASE_CONTENT_MISMATCH', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, taskId: queuedTask.taskId, queueLane: 'SEND', outcome: 'FAILED', reason: '租约回复内容摘要不一致，已禁止写入和发送。' });
           sendLease = { ...claim, beforeStateDigest };
           await receiptInboundReplySend(sendLease, 'FAILED', `${second.chatDigest}|${second.messageDigest}|CONTENT_DIGEST_MISMATCH`, '租约回复内容摘要不一致，未写入且未发送。');
-          singleAccountPendingReplies.delete(queuedTask.taskId);
+          removePendingPipelineTask(queuedTask.taskId);
           await reportSingleAccountResult(second, 'SILENT', '租约内容校验失败，未发送。');
           singleAccountPendingChatDigest = null;
           return scheduleSingleAccountAutoReply(1_000);
@@ -2075,14 +2660,14 @@
       writeEditorText(controls.editor, replyText);
       await delay(350);
       if (readEditorText(controls.editor).trim() !== replyText) {
-        traceAutoReply('DRAFT_FILL_FAILED', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, outcome: 'FAILED', reason: '安全短回复未稳定写入输入框。' });
+        traceAutoReply('DRAFT_FILL_FAILED', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, taskId: queuedTask?.taskId || null, queueLane: 'SEND', outcome: 'FAILED', reason: '安全短回复未稳定写入输入框。' });
         writeEditorText(controls.editor, '');
         if (sendLease) await receiptInboundReplySend(sendLease, 'FAILED', `${second.chatDigest}|${second.messageDigest}|DRAFT_FILL_FAILED`, '安全短回复未稳定写入，未发送。');
         await reportSingleAccountResult(second, 'SILENT', '安全短回复未稳定写入，已清空且未发送。');
         singleAccountPendingChatDigest = null;
         return scheduleSingleAccountAutoReply(2_000);
       }
-      traceAutoReply('DRAFT_FILLED', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, outcome: 'SUCCESS', reason: '安全短回复已稳定写入输入框。' });
+      traceAutoReply('DRAFT_FILLED', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, taskId: queuedTask?.taskId || null, queueLane: 'SEND', outcome: 'SUCCESS', reason: '安全短回复已稳定写入输入框。' });
       let filledControls = findReplyControls();
       for (let attempt = 0; attempt < 5 && (!filledControls.sendButton || filledControls.sendButtonCount !== 1); attempt++) {
         await delay(200);
@@ -2107,19 +2692,49 @@
         singleAccountPendingChatDigest = null;
         return;
       }
-      traceAutoReply('SEND_CLICKED', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, outcome: 'INFO', reason: '已点击唯一可用发送按钮，开始等待页面回执。' });
+      traceAutoReply('PRE_SEND_REVALIDATED', {
+        chatDigest: second.chatDigest, messageDigest: second.messageDigest,
+        taskId: queuedTask?.taskId || null, queueLane: 'SEND', outcome: 'SUCCESS',
+        reason: '发送前已重新核对会话摘要、最新消息摘要、候选人方向与唯一发送按钮。',
+      });
       const activeBeforeClick = [...document.querySelectorAll(SELECTORS.activeConversation)].find(visible);
       const outboundBeforeClick = activeBeforeClick
         ? [...activeBeforeClick.querySelectorAll(SELECTORS.message)].filter(visible).filter((item) => directionOf(item) === 'OUTBOUND')
         : [];
       const outboundBeforeIdentities = new Set(outboundBeforeClick.map(stableIdentity).filter(Boolean));
       const outboundBeforeCount = outboundBeforeClick.length;
+      if (sendLease && queuedTask) {
+        const staged = await send({ type: 'BRIDGE_STAGE_SEND_RECONCILIATION', payload: {
+          taskId: queuedTask.taskId, leaseToken: sendLease.leaseToken,
+          chatDigest: second.chatDigest, messageDigest: second.messageDigest,
+          replyDigest: await digest(replyText), outboundBeforeCount,
+          outboundBeforeIdentitiesComplete: outboundBeforeIdentities.size === outboundBeforeCount
+            && outboundBeforeCount <= 100,
+          outboundBeforeIdentityDigests: await Promise.all(
+            [...outboundBeforeIdentities].slice(-100).map((identity) => digest(identity))),
+        } });
+        if (!staged?.ok || !staged.task) {
+          writeEditorText(controls.editor, '');
+          await receiptInboundReplySend(sendLease, 'FAILED',
+            `${second.chatDigest}|${second.messageDigest}|SEND_EVIDENCE_NOT_PERSISTED`,
+            '发送前证据未能持久化，未点击发送。');
+          traceAutoReply('SEND_EVIDENCE_BLOCKED', {
+            chatDigest: second.chatDigest, messageDigest: second.messageDigest,
+            taskId: queuedTask.taskId, queueLane: 'SEND', outcome: 'BLOCKED',
+            reason: '发送前无法保存重启后复核证据，已清空草稿且未点击。',
+          });
+          singleAccountPendingChatDigest = null;
+          return scheduleSingleAccountAutoReply(2_000);
+        }
+        singleAccountUnknownReconciliations.set(queuedTask.taskId, { ...staged.task, nextCheckAt: Date.now() + 10_000 });
+      }
       filledControls.sendButton.click();
+      traceAutoReply('SEND_CLICKED', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, taskId: queuedTask?.taskId || null, queueLane: 'SEND', outcome: 'INFO', reason: '已点击唯一可用发送按钮，开始等待页面回执。' });
       let confirmed = false;
       let confirmationMode = 'STRICT';
       let confirmationDiagnostic = `发送前出站消息=${outboundBeforeCount}`;
-      for (let attempt = 0; attempt < 36; attempt++) {
-        await delay(500);
+      for (let attempt = 0; attempt < 28; attempt++) {
+        await delay(attempt < 8 ? 250 : 500);
         const current = await collectSelectedConversation();
         if (current.ok && current.chatDigest !== second.chatDigest) {
           confirmationDiagnostic = '等待回执期间选中会话发生变化';
@@ -2135,62 +2750,57 @@
         const last = messages.at(-1) || null;
         const nextControls = findReplyControls();
         const editorCleared = Boolean(nextControls.editor && !readEditorText(nextControls.editor).trim());
-        const exactNewOutbound = outbound.some((item) => {
-          if (!compact(item.textContent).includes(replyText)) return false;
-          const identity = stableIdentity(item);
-          return outbound.length > outboundBeforeCount || (identity && !outboundBeforeIdentities.has(identity));
-        });
+        const lastOutbound = outbound.at(-1);
+        const lastOutboundIdentity = lastOutbound && stableIdentity(lastOutbound);
+        const exactNewOutbound = current.direction === 'OUTBOUND'
+          && current.messageDigest !== second.messageDigest
+          && lastOutbound && cleanOutboundReplyText(lastOutbound) === replyText
+          && ((lastOutboundIdentity && !outboundBeforeIdentities.has(lastOutboundIdentity))
+            || outbound.length > outboundBeforeCount);
         confirmationDiagnostic = `出站消息=${outbound.length}/${outboundBeforeCount}，输入框=${editorCleared ? '空' : '非空'}，最后方向=${directionOf(last) || 'UNKNOWN'}，消息摘要变化=${current.messageDigest !== second.messageDigest}`;
         if (editorCleared && exactNewOutbound) {
           confirmed = true;
           confirmationMode = 'OUTBOUND_DELTA';
           break;
         }
-        if (editorCleared && directionOf(last) === 'OUTBOUND' && compact(last?.textContent).includes(replyText)) {
-          confirmed = true;
-          break;
-        }
-        if (editorCleared && current.messageDigest && current.messageDigest !== second.messageDigest
-            && directionOf(last) === 'OUTBOUND') {
-          confirmed = true;
-          confirmationMode = 'RELAXED';
-          break;
-        }
       }
-      // BOSS may render the new outbound row without preserving the exact
-      // text node shape. Accept only a safer relaxed receipt: the selected
-      // conversation is unchanged, the input is empty, and the latest message
-      // digest changed to an outbound message after the click.
-      if (!confirmed) {
-        await delay(300);
-        const current = await collectSelectedConversation();
-        const active = [...document.querySelectorAll(SELECTORS.activeConversation)].find(visible);
-        const last = active ? [...active.querySelectorAll(SELECTORS.message)].filter(visible).filter((item) => directionOf(item)).at(-1) : null;
-        const nextControls = findReplyControls();
-        if (current.ok && current.chatDigest === second.chatDigest
-            && current.messageDigest && current.messageDigest !== second.messageDigest
-            && nextControls.editor && !readEditorText(nextControls.editor).trim()
-            && directionOf(last) === 'OUTBOUND') {
-          confirmed = true;
-          confirmationMode = 'RELAXED';
-        }
-      }
-      if (sendLease) await receiptInboundReplySend(sendLease, confirmed ? 'SUCCEEDED' : 'UNKNOWN',
+      const receipt = sendLease ? await receiptInboundReplySend(sendLease, confirmed ? 'SUCCEEDED' : 'UNKNOWN',
         `${second.chatDigest}|${second.messageDigest}|${confirmed ? 'OUTBOUND_CONFIRMED' : 'SEND_RESULT_UNCONFIRMED'}|${await digest(replyText)}`,
-        confirmed ? confirmationMode === 'RELAXED'
-          ? '页面已确认输入框清空且最后一条消息已变为新的出站消息（宽松回执）。'
-          : confirmationMode === 'OUTBOUND_DELTA'
-            ? '页面已确认输入框清空且出现新增的相同出站回复。'
-            : '页面已确认输入框清空且最后一条为相同出站回复。'
-          : `已点击一次发送，但页面结果无法确认；禁止重试。${confirmationDiagnostic}`);
-      traceAutoReply(confirmed ? 'SEND_CONFIRMED' : 'SEND_UNKNOWN', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, outcome: confirmed ? 'SUCCESS' : 'UNKNOWN', reason: confirmed
-        ? confirmationMode === 'RELAXED' ? '页面已确认输入框清空且出现新的出站消息（宽松回执）。' : confirmationMode === 'OUTBOUND_DELTA' ? '页面已确认新增的相同出站消息。' : '页面已确认输入框清空且出现相同出站消息。'
+        confirmed ? '页面已确认输入框清空且出现新增的相同出站回复。'
+          : `已点击一次发送，但页面结果无法确认；禁止重试。${confirmationDiagnostic}`) : null;
+      if (sendLease && receipt?.status !== 'SUCCEEDED') {
+        confirmed = false;
+        traceAutoReply('SEND_RECONCILIATION_STARTED', {
+          chatDigest: second.chatDigest, messageDigest: second.messageDigest, taskId: queuedTask?.taskId || null,
+          queueLane: 'SEND', outcome: 'WAITING',
+          reason: '页面回执尚未明确成功，延迟复核同一会话是否出现与租约正文完全一致的新出站消息。',
+        });
+        const reconciled = await reconcileUnconfirmedSend(sendLease, second, replyText,
+          outboundBeforeCount, outboundBeforeIdentities);
+        if (reconciled?.status === 'SUCCEEDED') {
+          confirmed = true;
+          confirmationMode = 'DELAYED_EXACT';
+          traceAutoReply('SEND_RECONCILED', {
+            chatDigest: second.chatDigest, messageDigest: second.messageDigest, taskId: queuedTask?.taskId || null,
+            queueLane: 'SEND', outcome: 'SUCCESS', reason: '同一会话的新增出站消息与租约正文完全一致，后端已确认发送。',
+          });
+        } else {
+          traceAutoReply('SEND_RECONCILIATION_UNRESOLVED', {
+            chatDigest: second.chatDigest, messageDigest: second.messageDigest, taskId: queuedTask?.taskId || null,
+            queueLane: 'SEND', outcome: 'UNKNOWN',
+            reason: '延迟复核仍缺少同一会话、相同正文、发送后新增消息的完整证据；保持结果不明，等待 HR 核对。',
+          });
+        }
+      }
+      if (sendLease && confirmed && queuedTask) await clearPendingSendReconciliation(queuedTask.taskId);
+      traceAutoReply(confirmed ? 'SEND_CONFIRMED' : 'SEND_UNKNOWN', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, taskId: queuedTask?.taskId || null, queueLane: 'SEND', outcome: confirmed ? 'SUCCESS' : 'UNKNOWN', reason: confirmed
+        ? confirmationMode === 'DELAYED_EXACT' ? '延迟复核确认新增的相同出站消息。' : '页面已确认新增的相同出站消息。'
         : `已点击发送，但页面未能确认结果；为避免重复发送不会重试。${confirmationDiagnostic}` });
       await reportSingleAccountResult(second, confirmed ? 'SENT' : 'UNKNOWN', confirmed
         ? `已识别为${decision.category}并发送一条岗位事实回复。`
         : '已点击一次发送，但页面结果无法确认；该消息不会自动重试。');
       singleAccountPendingChatDigest = null;
-      if (queuedTask) singleAccountPendingReplies.delete(queuedTask.taskId);
+      if (queuedTask) removePendingPipelineTask(queuedTask.taskId);
       scheduleSingleAccountAutoReply(2_000);
     } catch (error) {
       singleAccountPendingChatDigest = null;
@@ -3579,28 +4189,60 @@
   async function collectActiveConversationDetail(chatDigest, selectedUnread) {
     const active = [...document.querySelectorAll(SELECTORS.activeConversation)].find(visible);
     if (!active) return blocked('MESSAGE_CONTAINER_NOT_FOUND', '当前会话消息容器尚未就绪。');
-    const messages = [...active.querySelectorAll(SELECTORS.message)].filter(visible);
-    const last = messages.filter((item) => directionOf(item)).at(-1);
+    const turns = readConversationTurns(active);
+    const last = turns.at(-1);
     if (!last) return blocked('LAST_MESSAGE_NOT_FOUND', '当前会话没有可识别的最后消息。');
-    const direction = directionOf(last);
-    const content = String(last.textContent || '').trim();
-    const timeline = [...active.querySelectorAll(`${SELECTORS.messageTime}, ${SELECTORS.message}`)];
-    const lastIndex = timeline.indexOf(last);
-    const precedingTime = timeline.slice(0, Math.max(0, lastIndex)).reverse().find((item) => item.matches(SELECTORS.messageTime));
-    const messageAt = parseTime(String(last.querySelector(SELECTORS.messageTime)?.textContent || precedingTime?.textContent || '').trim());
+    const { direction, messageAt } = last;
+    const content = last.rawText;
     if (!messageAt) return blocked('TIME_UNRECOGNISED', '当前会话最后消息时间无法解析。');
-    const mediaShape = [...last.querySelectorAll('img, video, audio, svg')].map((node) => node.tagName.toLowerCase()).join(',') || 'non-text';
-    const messageDigest = await digest(stableIdentity(last) || `derived:${direction}:${messageAt}:${content || mediaShape}`);
+    const messageDigest = await digest(last.identity);
     const conversationSignals = collectConversationSignals();
     const signalSignature = Object.values(conversationSignals).map((value) => value ? '1' : '0').join('');
     const messageText = content ? compact(content).slice(0, 1000) : null;
-    const conversationContext = messages.filter((item) => directionOf(item)).slice(-7, -1)
+    const contextLines = turns.slice(-13, -1)
       .map((item) => {
-        const text = compact(item.textContent).slice(0, 300);
+        const text = item.rawText.slice(0, 300);
         if (!text) return null;
-        return `${directionOf(item) === 'INBOUND' ? '候选人' : 'HR'}：${text}`;
-      }).filter(Boolean).join('\n').slice(0, 2400);
+        return `${item.direction === 'INBOUND' ? '候选人' : 'HR'}：${text}`;
+      }).filter(Boolean);
+    while (contextLines.length > 1 && contextLines.join('\n').length > 2400) contextLines.shift();
+    const conversationContext = contextLines.join('\n');
     return { ok: true, chatDigest, messageDigest, direction, messageAt, selectedUnread, conversationSignals, messageText, conversationContext, signature: `${chatDigest}:${messageDigest}:${direction}:${messageAt}:${selectedUnread}:${signalSignature}` };
+  }
+
+  // Use the same identity for the latest-message snapshot and the full BOSS
+  // transcript. The old transcript fallback included the chat id and array
+  // index while the snapshot did not, creating two IDs for one real turn.
+  function readConversationTurns(active) {
+    const timeline = [...active.querySelectorAll(`${SELECTORS.messageTime}, ${SELECTORS.message}`)];
+    const turns = [];
+    let currentTime = '';
+    for (const node of timeline) {
+      if (node.matches(SELECTORS.messageTime)) {
+        currentTime = compact(node.textContent || '').slice(0, 40);
+        continue;
+      }
+      if (!visible(node) || node.parentElement?.closest(SELECTORS.message)) continue;
+      const direction = directionOf(node);
+      if (!direction) continue;
+      const timeLabel = compact(node.querySelector(SELECTORS.messageTime)?.textContent || currentTime).slice(0, 40);
+      const messageAt = parseTime(timeLabel);
+      const rawText = cleanConversationMessageText(node.textContent || '');
+      const mediaShape = [...node.querySelectorAll('img, video, audio, svg')]
+        .map((item) => item.tagName.toLowerCase()).join(',') || 'non-text';
+      const stable = stableIdentity(node);
+      const derived = `derived:${direction}:${messageAt}:${rawText || mediaShape}`;
+      turns.push({ node, direction, timeLabel, messageAt, rawText, stable, derived });
+    }
+    const totals = new Map();
+    for (const turn of turns) if (!turn.stable) totals.set(turn.derived, (totals.get(turn.derived) || 0) + 1);
+    const occurrences = new Map();
+    return turns.map((turn) => {
+      if (turn.stable) return { ...turn, identity: turn.stable };
+      const occurrence = (occurrences.get(turn.derived) || 0) + 1;
+      occurrences.set(turn.derived, occurrence);
+      return { ...turn, identity: totals.get(turn.derived) > 1 ? `${turn.derived}|occurrence:${occurrence}` : turn.derived };
+    });
   }
 
   async function collectCurrentTranscript() {
@@ -3610,57 +4252,70 @@
     if (!active) return blocked('MESSAGE_CONTAINER_NOT_FOUND', '当前会话消息区域尚未加载完成，请稍后重试。');
     const identity = stableIdentity(selected);
     if (!identity) return blocked('CHAT_ID_MISSING', '当前会话缺少稳定标识，已停止复制以免读取错误会话。');
-
-    const scroller = findTranscriptScroller(active);
-    const distanceFromBottom = scroller ? scroller.scrollHeight - scroller.scrollTop : 0;
-    let stableRounds = 0;
-    let previousShape = '';
-    let reachedBeginning = !scroller;
-    for (let attempt = 0; scroller && attempt < 18; attempt++) {
-      scroller.scrollTop = 0;
-      scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
-      await delay(350);
-      const count = active.querySelectorAll(SELECTORS.message).length;
-      const shape = `${count}:${scroller.scrollHeight}`;
-      stableRounds = shape === previousShape ? stableRounds + 1 : 0;
-      previousShape = shape;
-      if (scroller.scrollTop <= 2 && stableRounds >= 3) { reachedBeginning = true; break; }
-    }
-
-    const timeline = [...active.querySelectorAll(`${SELECTORS.messageTime}, ${SELECTORS.message}`)];
-    const records = [];
-    let currentTime = '';
-    for (const node of timeline) {
-      if (node.matches(SELECTORS.messageTime)) {
-        currentTime = compact(node.textContent || '').slice(0, 40);
-        continue;
+    transcriptCaptureInProgress = true;
+    try {
+      const scroller = findTranscriptScroller(active);
+      const initialLastNode = readConversationTurns(active).at(-1)?.node || null;
+      const initialLastText = cleanConversationMessageText(initialLastNode?.textContent || '');
+      const distanceFromBottom = scroller ? scroller.scrollHeight - scroller.scrollTop : 0;
+      let stableRounds = 0;
+      let previousShape = '';
+      let reachedBeginning = !scroller;
+      for (let attempt = 0; scroller && attempt < 18; attempt++) {
+        scroller.scrollTop = 0;
+        scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
+        await delay(350);
+        const count = active.querySelectorAll(SELECTORS.message).length;
+        const shape = `${count}:${scroller.scrollHeight}`;
+        stableRounds = shape === previousShape ? stableRounds + 1 : 0;
+        previousShape = shape;
+        if (scroller.scrollTop <= 2 && stableRounds >= 3) { reachedBeginning = true; break; }
       }
-      const direction = directionOf(node);
-      if (!direction) continue;
-      const text = transcriptMessageText(node);
-      if (!text) continue;
-      const ownTime = compact(node.querySelector(SELECTORS.messageTime)?.textContent || '').slice(0, 40);
-      records.push({ speaker: direction === 'INBOUND' ? '候选人' : 'HR', time: ownTime || currentTime, text });
-    }
-    if (scroller) scroller.scrollTop = Math.max(0, scroller.scrollHeight - distanceFromBottom);
-    const selectedAfter = [...document.querySelectorAll(SELECTORS.selectedConversation)].find(visible);
-    if (!selectedAfter || stableIdentity(selectedAfter) !== identity) {
-      return blocked('SELECTED_CONVERSATION_CHANGED', '读取期间当前会话发生变化，已停止复制以避免混入其他候选人的消息。');
-    }
-    if (!records.length) return blocked('TRANSCRIPT_EMPTY', '当前会话没有可复制的文字或附件记录。');
 
-    const limited = records.slice(-1000);
-    const jobTitle = compact(selected.querySelector(SELECTORS.job)?.textContent || '').slice(0, 120);
-    const lines = ['BOSS 当前会话记录（已脱敏）', jobTitle ? `岗位：${redactTranscript(jobTitle)}` : null,
-      `导出时间：${new Date().toLocaleString('zh-CN')}`, ''];
-    for (const record of limited) lines.push(`${record.time ? `[${record.time}] ` : ''}${record.speaker}：${record.text}`);
-    const raw = lines.filter((line) => line !== null).join('\n');
-    const text = raw.length > 120_000 ? raw.slice(raw.length - 120_000) : raw;
-    return { ok: true, transcript: {
-      text, messageCount: limited.length,
-      possiblyTruncated: !reachedBeginning || records.length > limited.length || raw.length > text.length,
-      redacted: true,
-    } };
+      const coveredLatest = !scroller || (initialLastNode && active.contains(initialLastNode)
+        && cleanConversationMessageText(initialLastNode.textContent || '') === initialLastText);
+      const records = readConversationTurns(active).map((turn) => ({
+        speaker: turn.direction === 'INBOUND' ? '候选人' : 'HR', direction: turn.direction,
+        time: turn.timeLabel, messageIdentity: turn.identity,
+        messageAt: turn.messageAt || null, text: transcriptMessageText(turn.node), node: turn.node,
+      })).filter((record) => record.text);
+      const firstCapturedNode = records[0]?.node || null;
+      const firstCapturedText = cleanConversationMessageText(firstCapturedNode?.textContent || '');
+      if (scroller) scroller.scrollTop = Math.max(0, scroller.scrollHeight - distanceFromBottom);
+      if (scroller) await delay(100);
+      const coveredBeginning = !scroller || (firstCapturedNode && active.contains(firstCapturedNode)
+        && cleanConversationMessageText(firstCapturedNode.textContent || '') === firstCapturedText);
+      const selectedAfter = [...document.querySelectorAll(SELECTORS.selectedConversation)].find(visible);
+      if (!selectedAfter || stableIdentity(selectedAfter) !== identity) {
+        return blocked('SELECTED_CONVERSATION_CHANGED', '读取期间当前会话发生变化，已停止复制以避免混入其他候选人的消息。');
+      }
+      if (!records.length) return blocked('TRANSCRIPT_EMPTY', '当前会话没有可复制的文字或附件记录。');
+
+      const limited = records.slice(-1000);
+      const chatDigest = await digest(identity);
+      const turns = [];
+      for (let index = 0; index < limited.length; index++) {
+        const record = limited[index];
+        turns.push({
+          messageDigest: await digest(record.messageIdentity),
+          direction: record.direction, messageAt: record.messageAt, content: record.text,
+        });
+      }
+      const jobTitle = compact(selected.querySelector(SELECTORS.job)?.textContent || '').slice(0, 120);
+      const lines = ['BOSS 当前会话记录（已脱敏）', jobTitle ? `岗位：${redactTranscript(jobTitle)}` : null,
+        `导出时间：${new Date().toLocaleString('zh-CN')}`, ''];
+      for (const record of limited) lines.push(`${record.time ? `[${record.time}] ` : ''}${record.speaker}：${record.text}`);
+      const raw = lines.filter((line) => line !== null).join('\n');
+      const text = raw.length > 120_000 ? raw.slice(raw.length - 120_000) : raw;
+      return { ok: true, transcript: {
+        text, messageCount: limited.length, chatDigest, jobTitle,
+        turns,
+        possiblyTruncated: !reachedBeginning || !coveredLatest || !coveredBeginning || records.length > limited.length || raw.length > text.length,
+        redacted: true,
+      } };
+    } finally {
+      transcriptCaptureInProgress = false;
+    }
   }
 
   function findTranscriptScroller(active) {
@@ -3674,14 +4329,19 @@
 
   function transcriptMessageText(node) {
     const clone = node.cloneNode(true);
-    clone.querySelectorAll(`${SELECTORS.messageTime}, script, style, input, textarea, button, .message-card-buttons`).forEach((item) => item.remove());
-    const text = compact(clone.textContent || '').slice(0, 4000);
+    clone.querySelectorAll(`${SELECTORS.messageTime}, script, style, input, textarea, button, .message-card-buttons, .message-status, .message-read-status, [class*="delivery"], [class*="read-status"], [class*="send-status"], [aria-label*="送达"], [title*="送达"]`).forEach((item) => item.remove());
+    const text = cleanConversationMessageText(clone.textContent || '').slice(0, 4000);
     if (text) return redactTranscript(text);
     if (node.querySelector('img')) return '[图片]';
     if (node.querySelector('video')) return '[视频]';
     if (node.querySelector('audio')) return '[语音]';
     if (node.querySelector('.message-card-wrap, .hyperLink, [class*="attachment"], [class*="resume"]')) return '[附件或简历]';
     return '';
+  }
+
+  // BOSS 将“送达/已读/发送中”等状态渲染在消息节点内部；这些是展示元数据，不是会话正文。
+  function cleanConversationMessageText(value) {
+    return compact(String(value || '').replace(/(?:^|[\s|｜·•])(?:已?送达|已读|未读|发送中|发送失败|发送成功)(?=$|[\s|｜·•])/g, ' '));
   }
 
   function redactTranscript(value) {
@@ -4258,6 +4918,8 @@
   function scheduleResumeCardScan(delay) {
     clearTimeout(resumeCardScanTimer);
     resumeCardScanTimer = setTimeout(async () => {
+      if (transcriptCaptureInProgress || !singleAccountAutoReplyEnabled
+          || !resumeAttachmentProcessing || !resumePreviewOpenPending) return;
       const bridge = await send({ type: 'BRIDGE_GET_STATUS' });
       if (!bridge?.ok) {
         showResumeCaptureStatus('状态检查失败：' + (bridge?.error || '扩展后台无响应'), 'error');
@@ -4267,6 +4929,8 @@
         showResumeCaptureStatus('自动处理已停止：浏览器桥接当前处于暂停状态。', 'error');
         return;
       }
+      if (transcriptCaptureInProgress || !singleAccountAutoReplyEnabled
+          || !resumeAttachmentProcessing || !resumePreviewOpenPending) return;
       const raw = [...document.querySelectorAll('.message-card-wrap, .hyperLink, [class*="attachment-wrap"], [class*="resume-card"]')]
         .filter((n) => n instanceof HTMLElement);
       const cards = raw.filter((n) => visible(n));
@@ -4302,13 +4966,14 @@
 
   function autoClickResumeCard(card) {
     try {
+      if (transcriptCaptureInProgress || !singleAccountAutoReplyEnabled
+          || !resumeAttachmentProcessing || !resumePreviewOpenPending) {
+        showResumeCaptureStatus('跳过点击: 当前没有经过上下文判定的本轮新简历处理许可');
+        return;
+      }
       if (resumeAttachmentProcessing && findVisibleResumeDialog()) {
         resumePreviewOpenPending = false;
         showResumeCaptureStatus('跳过点击: 简历预览已打开，等待提取和关闭');
-        return;
-      }
-      if (singleAccountAutoReplyEnabled && (!resumeAttachmentProcessing || !resumePreviewOpenPending)) {
-        showResumeCaptureStatus('跳过点击: 当前简历周期已撤销预览开启许可');
         return;
       }
       const actionArea = card.querySelector('.message-card-buttons') || card;
@@ -4406,7 +5071,7 @@
     return Number.isFinite(direct) ? new Date(direct).toISOString() : '';
   }
   function blocked(code, reason) { return { ok: false, code, reason }; }
-  function stripSelected(value) { return { chatDigest: value.chatDigest, messageDigest: value.messageDigest, direction: value.direction, messageAt: value.messageAt, selectedUnread: value.selectedUnread, conversationSignals: value.conversationSignals, observedAt: new Date().toISOString() }; }
+  function stripSelected(value) { return { chatDigest: value.chatDigest, messageDigest: value.messageDigest, direction: value.direction, messageAt: value.messageAt, selectedUnread: value.selectedUnread, conversationSignals: value.conversationSignals, messageText: value.messageText || null, observedAt: new Date().toISOString(), resumeCaptureRequested: Boolean(resumeCaptureRequest && resumeCaptureRequest.chatDigest === value.chatDigest && resumeCaptureRequest.messageDigest === value.messageDigest) }; }
   function delay(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
   function bridgeMessageTimeout(message) {
     const configured = BRIDGE_MESSAGE_TIMEOUTS[message?.type];

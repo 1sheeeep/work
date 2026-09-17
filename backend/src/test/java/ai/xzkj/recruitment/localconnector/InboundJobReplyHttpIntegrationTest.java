@@ -294,7 +294,7 @@ class InboundJobReplyHttpIntegrationTest {
     }
 
     @Test
-    void acknowledgesTrustedResumeReceiptWithoutRequestingItAgain() throws Exception {
+    void continuesTheCurrentConversationAfterResumeWithoutRepeatingReceipt() throws Exception {
         start(exchange -> respond(exchange, 200, completion("""
                 {"primaryIntent":"JOB_INTEREST","secondaryIntents":[],"relevant":true,"confidence":0.97,"action":"REQUEST_RESUME","riskLevel":"LOW",
                  "reply":"可以聊聊，您可以先发一份简历。","evidenceKeys":["NEXT_STEP"]}
@@ -305,8 +305,8 @@ class InboundJobReplyHttpIntegrationTest {
                 new InboundJobReplyService.ConversationRuntime("RESUME_RECEIVED", true, false, false, false));
 
         assertTrue(result.replyAllowed());
-        assertEquals("RESUME_SENT", result.category());
-        assertEquals("收到，我先看一下您的简历，了解后再和您联系。", result.content());
+        assertEquals("JOB_INTEREST", result.category());
+        assertEquals("可以继续沟通，您想了解岗位哪方面的信息呢？", result.content());
     }
 
     @Test

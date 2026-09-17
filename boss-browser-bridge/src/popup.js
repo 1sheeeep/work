@@ -27,20 +27,22 @@ elements.enabledToggle.addEventListener('click', () => void busy(elements.enable
 }, '切换中…'));
 elements.collect.addEventListener('click', () => void busy(elements.collect, async () => { const result = await send({ type: 'BRIDGE_COLLECT_NOW' }); if (!result.ok) throw new Error(result.error); render(result.status); }));
 elements.copyCurrentTranscript.addEventListener('click', () => void busy(elements.copyCurrentTranscript, async () => {
-  show('正在加载当前会话、进行本机脱敏并同步至后端示例库，请稍候…');
+  show('正在加载当前会话、进行本机脱敏并同步示例库与沟通时间线，请稍候…');
   const result = await send({ type: 'BRIDGE_SYNC_CURRENT_TRANSCRIPT' });
   if (!result.ok) throw new Error(result.error);
   const synced = result.transcriptSync;
   await navigator.clipboard.writeText(synced.text);
   const suffix = synced.possiblyTruncated ? '；页面可能还有未加载的更早记录' : '';
   const imported = synced.import;
-  if (synced.importError) {
-    show(`已复制 ${synced.messageCount} 条记录；未导入后端：${synced.importError}${suffix}。`, true);
-  } else if (imported) {
-    show(`已复制 ${synced.messageCount} 条记录；后端导入成功（岗位：${imported.jobTitle}）：新增 ${imported.created} 条示例，重复 ${imported.duplicates} 条，跳过 ${imported.skipped} 条${suffix}。`);
-  } else {
-    show(`已复制 ${synced.messageCount} 条记录；后端导入状态未知，请查看后端日志。`, true);
-  }
+  const timeline = synced.timelineImport;
+  const exampleText = synced.importError ? `示例库导入失败：${synced.importError}`
+    : imported ? `示例库新增 ${imported.created} 条，重复 ${imported.duplicates} 条，跳过 ${imported.skipped} 条`
+      : '示例库导入状态未知';
+  const timelineText = synced.timelineImportError ? `时间线导入失败：${synced.timelineImportError}`
+    : timeline ? `时间线新增 ${timeline.created} 条，重复 ${timeline.duplicates} 条，跳过 ${timeline.skipped} 条`
+      : '时间线导入状态未知';
+  const failed = Boolean(synced.importError || synced.timelineImportError);
+  show(`已复制 ${synced.messageCount} 条记录；${exampleText}；${timelineText}${suffix}。`, failed);
 }, '同步中…'));
 elements.collectJobs.addEventListener('click', () => void busy(elements.collectJobs, async () => {
   show('正在读取当前职位页并进行稳定性校验，请稍候…');

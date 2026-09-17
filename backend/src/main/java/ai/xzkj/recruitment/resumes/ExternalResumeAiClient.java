@@ -122,7 +122,6 @@ public class ExternalResumeAiClient {
                 + "如果没有任何岗位匹配，matchedJobId 必须返回字符串 NONE，但仍然必须完成全部岗位对比分析。"
                 + "如果有一个最匹配岗位，matchedJobId 必须使用岗位列表中的 ID。"
                 + "JSON 顶层必须包含 candidateName、matchedJobId、analysis；analysis 必须包含 recommendation、summary、evidence、gaps、risks、followUpQuestions、jobComparisons。"
-                + "analysis.summary 必须是分析结束后的总结性结论段落（约 120 至 300 字）：先用一句话给出整体匹配判断及最匹配岗位，再概括候选人的主要匹配优势，最后指出需要 HR 重点确认的待确认点或风险；用连贯的自然语言，不要罗列字段或使用“以上”等空泛表述。"
                 + "analysis.jobComparisons 是必填数组，必须对输入的每个岗位各输出一条（不能返回空数组，也不能只输出 matchedJobId 对应岗位）；必须使用原始岗位 ID 和名称，并逐项比较岗位职责与简历证据。"
                 + "每个岗位至少输出 1 条 responsibilities；职责没有明确简历依据时仍要输出，并使用 NOT_FOUND 或 UNCLEAR。"
                 + "每个岗位必须单独输出 skillMatches：只列出岗位要求中与简历明确技能相对应的项目，也可列出未发现或待确认的技能；skill、requirement、resumeEvidence 必须分别写清楚，不能把整段岗位描述当作技能。"

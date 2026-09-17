@@ -1,4 +1,4 @@
-import { DEFAULT_BACKEND_URL, canPollInboundReplyTask, classifyProcessedMessageClaim, compactProcessedMessages, consolePathForContext, isJobManagementUrl, isSupportedActionLeaseMode, jobSnapshotSignature, nextConsecutiveFailureCount, pageContextFromUrl, publicStatus, snapshotSignature, validateActionLeaseExecutionResult, validateApprovedDraftFillContext, validateApprovedDraftFillResult, validateBackendUrl, validateControlDomDiagnostic, validateCurrentActionEntryTestResult, validateCurrentTestDraftSendResult, validateDraftFillResult, validateExchangeConfirmationTestResult, validateJobSnapshot, validateSingleAccountBaseline, validateSnapshot, validateValidationReadiness, validateVisibleResumeTextCapture } from './bridge-core.mjs';
+import { DEFAULT_BACKEND_URL, canPollInboundReplyTask, classifyProcessedMessageClaim, compactProcessedMessages, consolePathForContext, isJobManagementUrl, isSupportedActionLeaseMode, jobSnapshotSignature, nextConsecutiveFailureCount, pageContextFromUrl, publicStatus, shouldReleaseSafetyStop, snapshotSignature, validateActionLeaseExecutionResult, validateApprovedDraftFillContext, validateApprovedDraftFillResult, validateBackendUrl, validateControlDomDiagnostic, validateCurrentActionEntryTestResult, validateCurrentTestDraftSendResult, validateDraftFillResult, validateExchangeConfirmationTestResult, validateJobSnapshot, validatePendingSendReconciliation, validateSingleAccountBaseline, validateSnapshot, validateValidationReadiness, validateVisibleResumeTextCapture } from './bridge-core.mjs';
 
 const SETTINGS_KEY = 'bridgeSettingsV1';
 const RUNTIME_KEY = 'bridgeRuntimeV1';
@@ -6,6 +6,8 @@ const ALARM_NAME = 'bridge-observe';
 const MIN_SYNC_INTERVAL_MS = 10_000;
 const BOSS_TAB_PATTERNS = ['https://zhipin.com/*', 'https://*.zhipin.com/*'];
 const AUTO_REPLY_TRACE_LIMIT = 200;
+const PENDING_SEND_RECONCILIATION_LIMIT = 5;
+const PENDING_SEND_RECONCILIATION_MS = 3 * 60_000;
 const TAB_MESSAGE_TIMEOUT_MS = 30_000;
 let syncInFlight = null;
 let jobSyncInFlight = null;
@@ -16,7 +18,10 @@ let locationPolling = false;
 chrome.runtime.onInstalled.addListener(() => initialise());
 chrome.runtime.onStartup.addListener(() => initialise());
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === ALARM_NAME) void runObservationCycle();
+  if (alarm.name === ALARM_NAME) {
+    void prunePendingSendReconciliations();
+    void runObservationCycle();
+  }
 });
 chrome.commands.onCommand.addListener((command) => {
   if (command === 'check-reply-readiness') void checkReplyReadiness().catch((error) => setRuntime({ readinessState: `回复入口检查失败：${safeError(error)}` }));
@@ -49,6 +54,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 void initialise();
 
 async function initialise() {
+  await prunePendingSendReconciliations();
   const stored = await chrome.storage.local.get(SETTINGS_KEY);
   if (!stored[SETTINGS_KEY]) {
     await chrome.storage.local.set({ [SETTINGS_KEY]: { backendUrl: DEFAULT_BACKEND_URL, enabled: true } });
@@ -121,7 +127,7 @@ async function handleMessage(message, sender) {
     case 'BRIDGE_SET_ENABLED':
       return setEnabled(Boolean(message.enabled));
     case 'BRIDGE_SET_SINGLE_ACCOUNT_AUTO_REPLY':
-      return setSingleAccountAutoReply(Boolean(message.enabled));
+      return setSingleAccountAutoReply(Boolean(message.enabled), true);
     case 'BRIDGE_SYNC_DUTY_AUTOMATION':
       if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的挂机状态同步。');
       return syncDutyAutomation();
@@ -140,6 +146,9 @@ async function handleMessage(message, sender) {
       return { ok: true, transcript: await copyCurrentTranscript() };
     case 'BRIDGE_SYNC_CURRENT_TRANSCRIPT':
       return { ok: true, transcriptSync: await syncCurrentTranscript() };
+    case 'BRIDGE_IMPORT_CAPTURED_TRANSCRIPT':
+      if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本提交的聊天记录。');
+      return { ok: true, transcriptSync: await importCapturedTranscript(message.transcript) };
     case 'BRIDGE_RECOGNIZE_CURRENT_RESUME':
       return { ok: true, resumeRecognition: await recognizeCurrentResume(), status: await getPublicStatus() };
     case 'BRIDGE_TEST_CURRENT_ACTION_ENTRY':
@@ -183,6 +192,9 @@ async function handleMessage(message, sender) {
     case 'BRIDGE_DECIDE_INBOUND_REPLY':
       if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的候选人消息。');
       return decideInboundReply(message.payload);
+    case 'BRIDGE_CLASSIFY_RESUME_ATTACHMENT':
+      if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的简历附件上下文判断。');
+      return classifyResumeAttachment(message.payload);
     case 'BRIDGE_POLL_INBOUND_REPLY':
       if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的 AI 任务查询。');
       return pollInboundReply(message.payload);
@@ -207,6 +219,18 @@ async function handleMessage(message, sender) {
     case 'BRIDGE_RECEIPT_INBOUND_REPLY_SEND':
       if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的发送回执。');
       return receiptInboundReplySend(message.payload);
+    case 'BRIDGE_RECONCILE_INBOUND_REPLY_SEND':
+      if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的发送复核。');
+      return reconcileInboundReplySend(message.payload);
+    case 'BRIDGE_STAGE_SEND_RECONCILIATION':
+      if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的发送前证据。');
+      return stagePendingSendReconciliation(message.payload);
+    case 'BRIDGE_GET_PENDING_SEND_RECONCILIATIONS':
+      if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本查询待复核发送。');
+      return pendingSendReconciliations();
+    case 'BRIDGE_CLEAR_SEND_RECONCILIATION':
+      if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本清理发送复核证据。');
+      return clearPendingSendReconciliation(message.taskId);
     case 'BRIDGE_SINGLE_ACCOUNT_AUTO_REPLY_RESULT':
       if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的持续回复结果。');
       return recordSingleAccountAutoReplyResult(message.payload);
@@ -281,7 +305,8 @@ async function decideInboundReply(payload) {
     method: 'POST', token: settings.deviceToken, body: {
       chatDigest: payload.chatDigest, messageDigest: payload.messageDigest, direction: 'INBOUND',
       messageAt: payload.messageAt, selectedUnread: payload.selectedUnread,
-      conversationSignals: payload.conversationSignals, observedAt: payload.observedAt,
+      conversationSignals: payload.conversationSignals, messageText: payload.messageText,
+      observedAt: payload.observedAt, resumeCaptureRequested: false,
     },
   });
   if (continuous) {
@@ -329,6 +354,26 @@ async function decideInboundReply(payload) {
     }
     throw error;
   }
+}
+
+async function classifyResumeAttachment(payload) {
+  if (!payload || !/^[a-f0-9]{64}$/.test(payload.chatDigest || '')
+      || !/^[a-f0-9]{64}$/.test(payload.messageDigest || '')
+      || payload.direction !== 'INBOUND'
+      || !Number.isFinite(Date.parse(payload.messageAt))
+      || (payload.messageText != null && (typeof payload.messageText !== 'string' || payload.messageText.length > 1000))
+      || (payload.conversationContext != null && (typeof payload.conversationContext !== 'string' || payload.conversationContext.length > 2400))
+      || !payload.conversationSignals
+      || !/^[a-f0-9]{64}$/.test(payload.attachmentFingerprint || '')
+      || !Number.isFinite(Date.parse(payload.observedAt))) {
+    throw new Error('简历附件上下文判断参数无效。');
+  }
+  const settings = await getSettings();
+  if (!settings.deviceToken) throw new Error('请先完成本机账号配对。');
+  const result = await request(settings.backendUrl, '/api/local-connector/runtime/resume-attachment-context-check', {
+    method: 'POST', token: settings.deviceToken, body: payload, timeoutMs: 130_000,
+  });
+  return { ok: true, ...result };
 }
 
 async function pollInboundReply(payload) {
@@ -390,7 +435,8 @@ async function retryFailedInboundReply(payload) {
     method: 'POST', token: settings.deviceToken, body: {
       chatDigest: payload.chatDigest, messageDigest: payload.messageDigest, direction: 'INBOUND',
       messageAt: payload.messageAt, selectedUnread: payload.selectedUnread,
-      conversationSignals: payload.conversationSignals, messageText: payload.messageText, observedAt,
+      conversationSignals: payload.conversationSignals, messageText: payload.messageText,
+      observedAt, resumeCaptureRequested: false,
     }, timeoutMs: 8_000,
   });
   const result = await request(settings.backendUrl, `/api/local-connector/runtime/inbound-reply-tasks/${payload.taskId}/retry`, {
@@ -434,13 +480,14 @@ async function pendingInboundReplies() {
         && /^[a-f0-9]{64}$/.test(task?.messageDigest || '')) {
       byId.set(task.taskId, { taskId: task.taskId, chatDigest: task.chatDigest,
         messageDigest: task.messageDigest, resumeReceipt: task.resumeReceipt === true,
-        retryable: false, recoveredSend: true });
+        retryable: false, recoveredSend: true, updatedAt: task.updatedAt || null, queueLane: task.queueLane || 'SEND' });
     }
   }
   for (const task of Array.isArray(retryable) ? retryable : []) {
     if (/^[0-9a-f-]{36}$/i.test(task?.taskId || '') && /^[a-f0-9]{64}$/.test(task?.chatDigest || '')
         && /^[a-f0-9]{64}$/.test(task?.messageDigest || '')) {
-      byId.set(task.taskId, { taskId: task.taskId, chatDigest: task.chatDigest, messageDigest: task.messageDigest, retryable: true });
+      byId.set(task.taskId, { taskId: task.taskId, chatDigest: task.chatDigest, messageDigest: task.messageDigest,
+        retryable: true, queueLane: task.queueLane || 'REVALIDATION' });
     }
   }
   return { ok: true, tasks: [...byId.values()], retryableError };
@@ -473,6 +520,7 @@ async function discardStaleInboundReply(payload) {
       || payload.messageDigest === payload.currentMessageDigest
       || !Number.isFinite(Date.parse(payload.currentMessageAt))
       || (payload.currentDirection != null && !['INBOUND', 'OUTBOUND'].includes(payload.currentDirection))
+      || (payload.currentMessageText != null && (typeof payload.currentMessageText !== 'string' || payload.currentMessageText.length > 1000))
       || typeof payload.selectedUnread !== 'boolean' || !payload.conversationSignals) throw new Error('旧回复作废参数无效。');
   const settings = await getSettings();
   if (!settings.deviceToken) throw new Error('请先完成本机账号配对。');
@@ -481,7 +529,8 @@ async function discardStaleInboundReply(payload) {
       chatDigest: payload.chatDigest, messageDigest: payload.currentMessageDigest,
       direction: payload.currentDirection || 'INBOUND',
       messageAt: payload.currentMessageAt, selectedUnread: payload.selectedUnread,
-      conversationSignals: payload.conversationSignals, observedAt: new Date().toISOString(),
+      conversationSignals: payload.conversationSignals, messageText: payload.currentMessageText || null,
+      observedAt: new Date().toISOString(), resumeCaptureRequested: false,
     }, timeoutMs: 8_000,
   });
   return request(settings.backendUrl, `/api/local-connector/runtime/inbound-reply-tasks/${payload.taskId}/discard`, {
@@ -507,7 +556,8 @@ async function claimInboundReplySend(payload) {
     method: 'POST', token: settings.deviceToken, body: {
       chatDigest: payload.chatDigest, messageDigest: payload.messageDigest, direction: 'INBOUND',
       messageAt: payload.messageAt, selectedUnread: payload.selectedUnread,
-      conversationSignals: payload.conversationSignals, observedAt: payload.observedAt,
+      conversationSignals: payload.conversationSignals, messageText: payload.messageText || null,
+      observedAt: payload.observedAt, resumeCaptureRequested: false,
     },
   });
   return request(settings.backendUrl, '/api/local-connector/runtime/inbound-reply-send/claim', {
@@ -531,6 +581,73 @@ async function receiptInboundReplySend(payload) {
   });
 }
 
+async function reconcileInboundReplySend(payload) {
+  if (!payload || typeof payload.leaseToken !== 'string' || !payload.leaseToken
+      || !/^[a-f0-9]{64}$/.test(payload.chatDigest || '')
+      || !/^[a-f0-9]{64}$/.test(payload.messageDigest || '')
+      || !/^[a-f0-9]{64}$/.test(payload.outboundMessageDigest || '')
+      || !/^[a-f0-9]{64}$/.test(payload.outboundTextDigest || '')
+      || !Number.isFinite(Date.parse(payload.outboundAt))
+      || !Number.isFinite(Date.parse(payload.observedAt))) throw new Error('AI 回复发送复核参数无效。');
+  const settings = await getSettings();
+  if (!settings.deviceToken) throw new Error('请先完成本机账号配对。');
+  const result = await request(settings.backendUrl, '/api/local-connector/runtime/inbound-reply-send/reconcile', {
+    method: 'POST', token: settings.deviceToken, body: payload, timeoutMs: 8_000,
+  });
+  if (result?.status === 'SUCCEEDED') {
+    await updateSingleAccountProcessedMessage(`${payload.chatDigest}:${payload.messageDigest}`, 'SENT');
+    const runtime = await getRuntime();
+    const staged = (runtime.pendingSendReconciliations || []).find(item => item.leaseToken === payload.leaseToken);
+    if (staged?.taskId) await clearPendingSendReconciliation(staged.taskId);
+  }
+  return { ok: true, ...result };
+}
+
+async function prunePendingSendReconciliations() {
+  await mutateRuntime((runtime) => {
+    const previous = Array.isArray(runtime.pendingSendReconciliations) ? runtime.pendingSendReconciliations : [];
+    const next = previous.filter(item => validatePendingSendReconciliation(item));
+    return next.length === previous.length ? {} : { pendingSendReconciliations: next };
+  });
+}
+
+async function stagePendingSendReconciliation(payload) {
+  const now = Date.now();
+  const item = {
+    taskId: payload?.taskId, leaseToken: payload?.leaseToken,
+    chatDigest: payload?.chatDigest, messageDigest: payload?.messageDigest,
+    replyDigest: payload?.replyDigest,
+    outboundBeforeCount: payload?.outboundBeforeCount,
+    outboundBeforeIdentitiesComplete: payload?.outboundBeforeIdentitiesComplete,
+    outboundBeforeIdentityDigests: payload?.outboundBeforeIdentityDigests,
+    claimedAt: new Date(now).toISOString(), expiresAt: now + PENDING_SEND_RECONCILIATION_MS,
+  };
+  if (!validatePendingSendReconciliation(item, now)) throw new Error('发送前只读复核证据无效，已阻止点击发送。');
+  await mutateRuntime((runtime) => ({
+    pendingSendReconciliations: [
+      ...(Array.isArray(runtime.pendingSendReconciliations) ? runtime.pendingSendReconciliations : [])
+        .filter(existing => existing.taskId !== item.taskId && validatePendingSendReconciliation(existing, now)),
+      item,
+    ].slice(-PENDING_SEND_RECONCILIATION_LIMIT),
+  }));
+  return { ok: true, task: item };
+}
+
+async function pendingSendReconciliations() {
+  await prunePendingSendReconciliations();
+  const runtime = await getRuntime();
+  return { ok: true, tasks: runtime.pendingSendReconciliations || [] };
+}
+
+async function clearPendingSendReconciliation(taskId) {
+  if (!/^[0-9a-f-]{36}$/i.test(taskId || '')) throw new Error('发送复核任务标识无效。');
+  await mutateRuntime((runtime) => ({
+    pendingSendReconciliations: (Array.isArray(runtime.pendingSendReconciliations)
+      ? runtime.pendingSendReconciliations : []).filter(item => item.taskId !== taskId),
+  }));
+  return { ok: true };
+}
+
 async function recordAutoReplyTrace(payload) {
   if (!payload || typeof payload.stage !== 'string' || !/^[A-Z][A-Z0-9_]{1,47}$/.test(payload.stage)
       || (payload.outcome != null && (typeof payload.outcome !== 'string' || payload.outcome.length > 24))
@@ -539,6 +656,7 @@ async function recordAutoReplyTrace(payload) {
       || (payload.chatDigest != null && !/^[a-f0-9]{1,64}$/.test(payload.chatDigest))
       || (payload.messageDigest != null && !/^[a-f0-9]{1,64}$/.test(payload.messageDigest))
       || (payload.taskId != null && (typeof payload.taskId !== 'string' || payload.taskId.length > 80))
+      || (payload.queueLane != null && !['SCAN', 'ANALYSIS', 'SEND', 'REVALIDATION', 'TERMINAL'].includes(payload.queueLane))
       || (payload.queuePosition != null && (!Number.isInteger(payload.queuePosition) || payload.queuePosition < 0 || payload.queuePosition > 500))
       || (payload.attempt != null && (!Number.isInteger(payload.attempt) || payload.attempt < 0 || payload.attempt > 100))
       || (payload.elapsedMs != null && (!Number.isFinite(payload.elapsedMs) || payload.elapsedMs < 0 || payload.elapsedMs > 900_000))) {
@@ -554,6 +672,7 @@ async function recordAutoReplyTrace(payload) {
     chatDigest: payload.chatDigest ? payload.chatDigest.slice(0, 12) : null,
     messageDigest: payload.messageDigest ? payload.messageDigest.slice(0, 12) : null,
     taskId: payload.taskId ? payload.taskId.slice(0, 80) : null,
+    queueLane: payload.queueLane || null,
     queuePosition: Number.isInteger(payload.queuePosition) ? payload.queuePosition : null,
     attempt: Number.isInteger(payload.attempt) ? payload.attempt : null,
     elapsedMs: Number.isFinite(payload.elapsedMs) ? Math.round(payload.elapsedMs) : null,
@@ -562,6 +681,11 @@ async function recordAutoReplyTrace(payload) {
   await mutateRuntime((runtime) => ({
     autoReplyTrace: [...(Array.isArray(runtime.autoReplyTrace) ? runtime.autoReplyTrace : []), event].slice(-AUTO_REPLY_TRACE_LIMIT),
     lastAutoReplyTraceAt: occurredAt,
+    ...(event.stage === 'PAGE_HIDDEN_PAUSED'
+      ? { singleAccountAutoReplyState: 'BOSS 页面隐藏或最小化，页面操作已暂停；请保持沟通页可见。' }
+      : event.stage === 'PAGE_VISIBLE_RESUMED'
+        ? { singleAccountAutoReplyState: 'BOSS 页面已恢复可见，正在复核待处理会话。' }
+        : {}),
   }));
   return { ok: true };
 }
@@ -577,11 +701,23 @@ async function recordSingleAccountAutoReplyResult(payload) {
   const runtime = await getRuntime();
   const previousFailures = Number(runtime.singleAccountConsecutiveFailures || 0);
   const consecutiveFailures = nextConsecutiveFailureCount(previousFailures, payload.outcome);
-  const shouldStop = consecutiveFailures >= 3;
+  // A virtualized BOSS list can briefly make the active conversation unreadable
+  // after a send.  Keep that task UNKNOWN (and therefore non-retryable), but do
+  // not freeze every other conversation in the account for this transient read
+  // failure.  Other UNKNOWN causes still use the account safety stop.
+  const transientDetailReadFailure = payload.outcome === 'UNKNOWN'
+    && /会话详情(?:暂不可读|不可读|无法读取)|当前会话(?:暂不可读|不可读|无法读取)/.test(payload.reason);
+  const shouldStop = consecutiveFailures >= 3 && !transientDetailReadFailure;
   await setRuntime({
     singleAccountAutoReplyEnabled: shouldStop ? false : runtime.singleAccountAutoReplyEnabled === true,
+    ...(shouldStop ? {
+      singleAccountSafetyStop: `连续 ${consecutiveFailures} 次页面发送结果无法确认，请 HR 检查 BOSS 页面后重新开启今日值守。`,
+      singleAccountSafetyStopDutyStartedAt: runtime.singleAccountDutyStartedAt || null,
+    } : {}),
     singleAccountConsecutiveFailures: consecutiveFailures,
     singleAccountAutoReplyState: shouldStop ? `连续 ${consecutiveFailures} 次页面发送结果无法确认，已自动停止，请 HR 检查 BOSS 页面。`
+      : transientDetailReadFailure && consecutiveFailures >= 3
+        ? `连续 ${consecutiveFailures} 次发送回执详情暂不可读；相关任务已冻结且不会重发，继续处理其他会话。`
       : payload.outcome === 'SENT' ? `已发送：${payload.reason}`
       : payload.outcome === 'SILENT' ? `已静默跳过：${payload.reason}` : `结果待人工确认：${payload.reason}`,
     lastSingleAccountAutoReplyAt: payload.occurredAt,
@@ -594,8 +730,13 @@ async function recordSingleAccountAutoReplyState(payload) {
       || typeof payload.disable !== 'boolean' || !Number.isFinite(Date.parse(payload.observedAt))) {
     throw new Error('持续自动回复状态无效。');
   }
+  const runtime = await getRuntime();
   await setRuntime({
-    singleAccountAutoReplyEnabled: payload.disable ? false : (await getRuntime()).singleAccountAutoReplyEnabled === true,
+    singleAccountAutoReplyEnabled: payload.disable ? false : runtime.singleAccountAutoReplyEnabled === true,
+    ...(payload.disable ? {
+      singleAccountSafetyStop: payload.state.trim(),
+      singleAccountSafetyStopDutyStartedAt: runtime.singleAccountDutyStartedAt || null,
+    } : {}),
     singleAccountAutoReplyState: payload.state.trim(),
     lastSingleAccountAutoReplyAt: payload.observedAt,
   });
@@ -822,19 +963,38 @@ async function copyCurrentTranscript() {
 }
 
 async function syncCurrentTranscript() {
-  const settings = await getSettings();
-  if (!settings.deviceToken) throw new Error('请先完成本机账号配对，才能同步到示例库。');
-  if (settings.enabled === false) throw new Error('浏览器桥接已暂停，无法同步聊天记录。');
   const transcript = await copyCurrentTranscript();
-  try {
-    const imported = await request(settings.backendUrl, '/api/local-connector/runtime/hr-reply-examples/import', {
-      method: 'POST', token: settings.deviceToken, body: { transcript: transcript.text }, timeoutMs: 20_000,
-    });
-    return { ...transcript, import: imported, importError: null };
-  } catch (error) {
-    // 复制结果仍然返回，避免后端暂时不可用时丢失本机已脱敏记录。
-    return { ...transcript, import: null, importError: safeError(error) };
+  return importCapturedTranscript(transcript);
+}
+
+async function importCapturedTranscript(transcript) {
+  const settings = await getSettings();
+  if (!settings.deviceToken) throw new Error('请先完成本机账号配对，才能同步聊天记录。');
+  if (settings.enabled === false) throw new Error('浏览器桥接已暂停，无法同步聊天记录。');
+  if (!/^[a-f0-9]{64}$/.test(transcript.chatDigest || '') || !Array.isArray(transcript.turns)) {
+    throw new Error('页面返回的结构化聊天记录格式无效，未写入后端。');
   }
+  const results = await Promise.allSettled([
+    request(settings.backendUrl, '/api/local-connector/runtime/hr-reply-examples/import', {
+      method: 'POST', token: settings.deviceToken,
+      body: { transcript: transcript.text, chatDigest: transcript.chatDigest }, timeoutMs: 20_000,
+    }),
+    request(settings.backendUrl, '/api/local-connector/runtime/conversation-history', {
+      method: 'POST', token: settings.deviceToken,
+      body: { chatDigest: transcript.chatDigest, jobTitle: transcript.jobTitle, messages: transcript.turns,
+        observedAt: new Date().toISOString(), possiblyTruncated: transcript.possiblyTruncated === true },
+      timeoutMs: 20_000,
+    }),
+  ]);
+  const examples = results[0];
+  const timeline = results[1];
+  return {
+    ...transcript,
+    import: examples.status === 'fulfilled' ? examples.value : null,
+    importError: examples.status === 'rejected' ? safeError(examples.reason) : null,
+    timelineImport: timeline.status === 'fulfilled' ? timeline.value : null,
+    timelineImportError: timeline.status === 'rejected' ? safeError(timeline.reason) : null,
+  };
 }
 
 async function recognizeCurrentResume() {
@@ -1233,7 +1393,7 @@ async function setEnabled(enabled) {
   return { ok: true, status: await getPublicStatus() };
 }
 
-async function setSingleAccountAutoReply(enabled) {
+async function setSingleAccountAutoReply(enabled, explicit = false) {
   const settings = await getSettings();
   if (!settings.deviceToken) throw new Error('请先完成本机账号配对。');
   if (settings.enabled === false) throw new Error('请先开启页面观测。');
@@ -1244,6 +1404,7 @@ async function setSingleAccountAutoReply(enabled) {
   if (enabled && chatTabs.length > 1) throw new Error('检测到多个 BOSS 沟通页。单账号模式只允许保留一个沟通页后再开启。');
   await setRuntime({
     singleAccountAutoReplyEnabled: enabled,
+    ...(explicit ? { singleAccountSafetyStop: null, singleAccountSafetyStopDutyStartedAt: null } : {}),
     ...(enabled ? {} : { singleAccountUnreadBaseline: [], singleAccountSelectedMessageBaseline: [] }),
     singleAccountConsecutiveFailures: enabled ? 0 : Number((await getRuntime()).singleAccountConsecutiveFailures || 0),
     singleAccountAutoReplyState: enabled
@@ -1269,6 +1430,15 @@ async function syncDutyAutomation() {
   });
   const desired = settings.enabled !== false && control?.enabled === true;
   const runtime = await getRuntime();
+  if (desired && runtime.singleAccountSafetyStop) {
+    if (!shouldReleaseSafetyStop(runtime.singleAccountSafetyStopDutyStartedAt, control?.startedAt)) {
+      return { ok: true, enabled: false, safetyStopped: true, reason: runtime.singleAccountSafetyStop };
+    }
+    await setRuntime({ singleAccountSafetyStop: null, singleAccountSafetyStopDutyStartedAt: null });
+  }
+  if (control?.startedAt && Number.isFinite(Date.parse(control.startedAt))) {
+    await setRuntime({ singleAccountDutyStartedAt: control.startedAt });
+  }
   if (runtime.singleAccountAutoReplyEnabled !== desired) await setSingleAccountAutoReply(desired);
   return { ok: true, enabled: desired, endsAt: control?.endsAt || null };
 }
@@ -1420,7 +1590,12 @@ async function doSubmitSnapshot(settings, payload) {
   const runtime = await getRuntime();
   const signature = snapshotSignature(payload);
   const now = Date.now();
-  const resumeAwaitingImport = payload.selected?.conversationSignals?.resumeReceived === true
+  // resumeReceived is a historical conversation signal. It must never by
+  // itself open an old attachment during ordinary periodic snapshots. Only
+  // the content script's current, AI-approved attachment event may request
+  // an import.
+  const resumeAwaitingImport = payload.selected?.resumeCaptureRequested === true
+    && payload.selected?.conversationSignals?.resumeReceived === true
     && !String(runtime.visibleResumeState || '').includes('已完成 AI 分析');
   if (!resumeAwaitingImport && runtime.lastSignature === signature && now - Number(runtime.lastSubmittedAt || 0) < MIN_SYNC_INTERVAL_MS) {
     return { ok: true, skipped: true };
@@ -1438,7 +1613,7 @@ async function doSubmitSnapshot(settings, payload) {
         lastSelectedMessageDigest: payload.selected.messageDigest });
       const stageLabel = { UNKNOWN: '阶段待识别', INITIAL_CONTACT: '首次联系', AWAITING_REPLY: '等待求职者回复', CAN_REQUEST_RESUME: '可索要简历', RESUME_REQUESTED: '已索要简历', RESUME_RECEIVED: '简历已到达', RESUME_APPROVED: '简历已通过复核', CAN_EXCHANGE_CONTACT: '可交换联系方式', CONTACT_EXCHANGED: '联系方式已交换', CAN_SCHEDULE_INTERVIEW: '等待人工约面', INTERVIEW_SCHEDULED: '面试已确认' }[observation?.conversationStage] || '阶段待识别';
       detailState = `当前会话详情已稳定复核：${stageLabel}。`;
-      if (observation?.conversationSignals?.resumeReceived === true) {
+      if (resumeAwaitingImport && observation?.conversationSignals?.resumeReceived === true) {
         try {
           await ingestVisibleResumeFromCurrentTab(settings, observation, payload.selected.chatDigest);
         } catch (textError) {

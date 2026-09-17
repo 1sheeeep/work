@@ -7,6 +7,8 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.time.Instant;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -15,6 +17,27 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class InboundJobReplyServiceTest {
+    @Test
+    void retainsRecentContextAndTreatsRepeatedQuestionsAsPending() {
+        String context = "HR：" + "历史内容".repeat(700) + "\n候选人：工资是多少\nHR：工资4000\n候选人：工资的构成呢";
+        String recent = InboundJobReplyService.cleanContext(context);
+        assertTrue(recent.length() <= 2400);
+        assertTrue(recent.endsWith("候选人：工资的构成呢"));
+        assertTrue(InboundJobReplyService.summarizeConversation(recent).pendingCandidateTopics().contains("SALARY"));
+    }
+
+    @Test
+    void doesNotHideQuestionsBehindResumeTemplatesOrBypassInterviewHandoff() {
+        JobPosition job = mock(JobPosition.class);
+        when(job.isKnowledgeApproved()).thenReturn(true);
+        InboundJobReplyService service = new InboundJobReplyService(new OpenAiProperties(), new ObjectMapper());
+        assertEquals(false, service.decide(job, "简历已经发了，工资是多少？").replyAllowed());
+        assertEquals(false, service.decide(job, "可以发简历吗，工资是多少？").replyAllowed());
+        var handoff = service.decide(job, "您好", "",
+                new InboundJobReplyService.ConversationRuntime("INTERVIEW_SCHEDULED", true, false, false, true));
+        assertEquals(false, handoff.replyAllowed());
+        assertEquals("INTERVIEW_COORDINATION", handoff.category());
+    }
     @Test
     void detectsDeterministicHiringAndResumeLeadMessages() {
         assertTrue(InboundJobReplyService.isHiringStatusInquiry("请问还招人吗"));
@@ -58,6 +81,9 @@ class InboundJobReplyServiceTest {
         assertTrue(InboundJobReplyService.isInterviewCancellation("非常抱歉，因临时有事，无法按照定时间参加面试。"));
         assertEquals(false, InboundJobReplyService.isInterviewCancellation("不好意思，刚看到您的消息"));
         assertEquals(false, InboundJobReplyService.isInterviewCancellation("能安排面试吗"));
+        assertTrue(InboundJobReplyService.isInterviewResultInquiry("请问面试结果什么时候出来", ""));
+        assertTrue(InboundJobReplyService.isInterviewResultInquiry("有结果了吗", "HR：昨天已经完成面试"));
+        assertEquals(false, InboundJobReplyService.isInterviewResultInquiry("什么时候方便过去面试", ""));
         assertTrue(InboundJobReplyService.isDetailedResponsibilityQuestion("可以详细介绍一下这个岗位的工作内容和每天的工作流程吗？"));
     }
 
@@ -127,16 +153,73 @@ class InboundJobReplyServiceTest {
         assertTrue(benefits.replyAllowed());
         assertEquals("社保情况面试时会详细说明。", benefits.content());
 
-        InboundJobReplyService.Decision afterResume = service.decide(job, "我再了解一下工作内容", "",
+        InboundJobReplyService.Decision afterResume = service.decide(job, "请问有宿舍吗", "",
                 new InboundJobReplyService.ConversationRuntime("RESUME_RECEIVED", true, false, false, false));
         assertTrue(afterResume.replyAllowed());
-        assertEquals("收到，我先看一下您的简历，了解后再和您联系。", afterResume.content());
+        assertEquals("MEALS_LODGING", afterResume.category());
+        assertEquals("吃住自理", afterResume.content());
+
+        InboundJobReplyService.Decision resumeThenWorkTime = service.decide(job,
+                "我已经发过简历了，请问几点上班？", "候选人：之前已发送简历",
+                new InboundJobReplyService.ConversationRuntime("RESUME_RECEIVED", true, false, false, false));
+        assertTrue(resumeThenWorkTime.replyAllowed());
+        assertEquals("WORK_TIME", resumeThenWorkTime.category());
+        assertEquals("工作方面的具体情况，面试的时候会详细解答。", resumeThenWorkTime.content());
+        assertEquals(false, InboundJobReplyService.isPureResumeSentStatement("我已经发过简历了，请问岗位还招吗？"));
+        assertTrue(InboundJobReplyService.isPureResumeSentStatement("我已经把简历发过去了"));
+
+        InboundJobReplyService.Decision interestAfterResume = service.decide(job, "我对这个岗位很感兴趣", "",
+                new InboundJobReplyService.ConversationRuntime("RESUME_RECEIVED", true, false, false, false));
+        assertTrue(interestAfterResume.replyAllowed());
+        assertEquals("JOB_INTEREST", interestAfterResume.category());
+        assertEquals("可以继续沟通，您想了解岗位哪方面的信息呢？", interestAfterResume.content());
+
+        InboundJobReplyService.Decision resumeResult = service.decide(job, "请问面试通过了吗", "");
+        assertEquals(false, resumeResult.replyAllowed());
+        assertEquals("INTERVIEW_RESULT", resumeResult.category());
 
         InboundJobReplyService.Decision shortResumeConfirmation = service.decide(job, "发了",
                 "HR：方便的话发一份简历过来\n候选人：发了");
         assertTrue(shortResumeConfirmation.replyAllowed());
         assertEquals("RESUME_SENT", shortResumeConfirmation.category());
-        assertEquals("收到，我先看一下您的简历，了解后再和您联系。", shortResumeConfirmation.content());
+        assertEquals("好的，我先看一下您的简历，了解后再和您联系。", shortResumeConfirmation.content());
+    }
+
+    @Test
+    void classifiesResumeContextWithoutReopeningHistoricalAttachments() {
+        JobPosition job = mock(JobPosition.class);
+        InboundJobReplyService service = new InboundJobReplyService(new OpenAiProperties(), new ObjectMapper());
+        String digest = "a".repeat(64);
+        Instant now = Instant.now();
+        var request = new ResumeAttachmentContextCheckRequest(
+                digest, digest, "INBOUND", now, "简历附件", "HR：简历已收到", ConversationSignals.none(), digest, now);
+
+        var historical = service.classifyResumeAttachment(job, request, true);
+        assertEquals("HISTORICAL_RESUME", historical.classification());
+        assertEquals(1.0, historical.confidence());
+
+        var unavailable = service.classifyResumeAttachment(job, request, false);
+        assertEquals("UNCERTAIN", unavailable.classification());
+        assertEquals(0.0, unavailable.confidence());
+    }
+
+    @Test
+    void reusesAHighSimilarityRealHrReplyInsteadOfSkippingTheConversation() {
+        JobPosition job = mock(JobPosition.class);
+        when(job.isKnowledgeApproved()).thenReturn(true);
+        HrReplyExampleService examples = mock(HrReplyExampleService.class);
+        when(examples.findStrongSimilarReply(job, "岗位平常都是怎么推进呀"))
+                .thenReturn(Optional.of(new HrReplyExampleService.LearnedReply(
+                        "GENERAL_JOB_CONSULTATION", "岗位平常都是怎么推进呀",
+                        "工作方面的具体情况，面试的时候会详细解答。", 1.0)));
+        InboundJobReplyService service = new InboundJobReplyService(
+                new OpenAiProperties(), new ObjectMapper(), examples, null);
+
+        InboundJobReplyService.Decision result = service.decide(job, "岗位平常都是怎么推进呀");
+
+        assertTrue(result.replyAllowed());
+        assertEquals("工作方面的具体情况，面试的时候会详细解答。", result.content());
+        assertTrue(result.reason().contains("真实 HR 话术"));
     }
 
     @Test

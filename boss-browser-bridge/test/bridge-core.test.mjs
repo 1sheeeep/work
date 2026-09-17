@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canPollInboundReplyTask, classifyProcessedMessageClaim, compactProcessedMessages, consolePathForContext, isJobManagementUrl, isSupportedActionLeaseMode, jobSnapshotSignature, nextConsecutiveFailureCount, pageContextFromUrl, publicStatus, snapshotSignature, validateActionLeaseExecutionResult, validateApprovedDraftFillContext, validateApprovedDraftFillResult, validateBackendUrl, validateControlDomDiagnostic, validateCurrentActionEntryTestResult, validateCurrentTestDraftSendResult, validateDraftFillResult, validateExchangeConfirmationTestResult, validateJobSnapshot, validateSingleAccountBaseline, validateSnapshot, validateValidationReadiness, validateVisibleResumeTextCapture } from '../src/bridge-core.mjs';
+import { readFile } from 'node:fs/promises';
+import { canPollInboundReplyTask, classifyProcessedMessageClaim, compactProcessedMessages, consolePathForContext, isJobManagementUrl, isSupportedActionLeaseMode, jobSnapshotSignature, nextConsecutiveFailureCount, pageContextFromUrl, publicStatus, shouldReleaseSafetyStop, snapshotSignature, validateActionLeaseExecutionResult, validateApprovedDraftFillContext, validateApprovedDraftFillResult, validateBackendUrl, validateControlDomDiagnostic, validateCurrentActionEntryTestResult, validateCurrentTestDraftSendResult, validateDraftFillResult, validateExchangeConfirmationTestResult, validateJobSnapshot, validatePendingSendReconciliation, validateSingleAccountBaseline, validateSnapshot, validateValidationReadiness, validateVisibleResumeTextCapture } from '../src/bridge-core.mjs';
 
 const digest = 'a'.repeat(64);
 const digest2 = 'b'.repeat(64);
@@ -33,6 +34,136 @@ test('polls backend-recovered ready tasks without weakening ordinary task tracki
   assert.equal(canPollInboundReplyTask({}, { outcome: 'PROCESSING' }), true);
   assert.equal(canPollInboundReplyTask({ retryable: true }, null), true);
   assert.equal(canPollInboundReplyTask({ recoveredSend: true }, null), true);
+});
+
+test('every direct selected-conversation verification includes the optional resume flag', async () => {
+  const source = await readFile(new URL('../src/background.js', import.meta.url), 'utf8');
+  const calls = [...source.matchAll(/request\(settings\.backendUrl, '\/api\/local-connector\/runtime\/selected-conversation', \{([\s\S]*?)\n  \}\);/g)];
+  assert.equal(calls.length, 5);
+  for (const call of calls.slice(0, 4)) assert.match(call[1], /resumeCaptureRequested: false/);
+  assert.match(calls[4][1], /body: payload\.selected/);
+});
+
+test('clears a backend-terminal task before any conversation relocation', async () => {
+  const source = await readFile(new URL('../src/content.js', import.meta.url), 'utf8');
+  const terminal = source.indexOf('if (readyReply?.terminalTask)');
+  const lookup = source.indexOf('let target = realtimeTarget;', terminal);
+  assert.ok(terminal > 0 && lookup > terminal);
+  const settlement = source.slice(terminal, lookup);
+  assert.match(settlement, /archiveCurrent: false/);
+  assert.match(settlement, /removePendingPipelineTask\(terminalTask\.taskId\)/);
+  assert.doesNotMatch(settlement, /findConversationByDigest|collectStableAutoReplySnapshot/);
+  assert.match(source, /if \(!result\?\.ok\) throw new Error\(result\?\.error \|\| '自动回复终态未能写入插件状态。'\)/);
+});
+
+test('prioritizes sendable AI tasks before scanning new unread conversations', async () => {
+  const source = await readFile(new URL('../src/content.js', import.meta.url), 'utf8');
+  const priorityPoll = source.indexOf("await nextReadyInboundReply(null, { includeRetryable: false })");
+  const unreadScan = source.indexOf('const changedCurrent = priorityReadyReply');
+  assert.notEqual(priorityPoll, -1);
+  assert.notEqual(unreadScan, -1);
+  assert.ok(priorityPoll < unreadScan);
+  assert.match(source, /if \(!includeRetryable && task\.retryable === true\) continue;/);
+  assert.match(source, /const readyReply = priorityReadyReply \|\| \(realtimeTarget \? null : await nextReadyInboundReply\(\)\);/);
+});
+
+test('yields long conversation scans and resumes from a saved cursor', async () => {
+  const source = await readFile(new URL('../src/content.js', import.meta.url), 'utf8');
+  assert.match(source, /const LIST_SCAN_MAX_POSITIONS_PER_TURN = 8;/);
+  assert.match(source, /const LIST_SCAN_MAX_TURN_MS = 1_800;/);
+  assert.match(source, /conversationScanCursors\.set\(scanKey, \{/);
+  assert.match(source, /if \(!sweep\.complete\) lastConversationSweepCode = 'PARTIAL';/);
+  assert.match(source, /LIST_SCAN_PARTIAL/);
+  assert.match(source, /if \(!deepLookup\.complete\)/);
+});
+
+test('persists send evidence before the only click and never relaxes confirmation', async () => {
+  const content = await readFile(new URL('../src/content.js', import.meta.url), 'utf8');
+  const background = await readFile(new URL('../src/background.js', import.meta.url), 'utf8');
+  const stage = content.indexOf("type: 'BRIDGE_STAGE_SEND_RECONCILIATION'");
+  const click = content.indexOf('filledControls.sendButton.click()', stage);
+  assert.ok(stage >= 0 && click > stage);
+  assert.match(content, /if \(!staged\?\.ok \|\| !staged\.task\) \{/);
+  assert.match(content, /current\.direction === 'OUTBOUND'/);
+  assert.match(content, /current\.messageDigest !== second\.messageDigest/);
+  assert.match(content, /cleanOutboundReplyText\(lastOutbound\) === replyText/);
+  assert.doesNotMatch(content, /confirmationMode = 'RELAXED'/);
+  assert.match(content, /SEND_RECOVERED_AFTER_RESTART/);
+  assert.match(content, /outboundBeforeIdentitiesComplete === true/);
+  assert.match(background, /PENDING_SEND_RECONCILIATION_MS = 3 \* 60_000/);
+  assert.match(background, /singleAccountSafetyStop/);
+});
+
+test('accepts only complete, unexpired evidence for read-only send recovery', () => {
+  const now = Date.parse('2026-09-17T08:00:00Z');
+  const evidence = {
+    taskId: '12345678-1234-1234-1234-123456789012', leaseToken: 'one-use-token',
+    chatDigest: digest, messageDigest: digest2, replyDigest: digest,
+    outboundBeforeCount: 1, outboundBeforeIdentitiesComplete: true,
+    outboundBeforeIdentityDigests: [digest2],
+    claimedAt: new Date(now).toISOString(), expiresAt: now + 180_000,
+  };
+  assert.equal(validatePendingSendReconciliation(evidence, now), true);
+  assert.equal(validatePendingSendReconciliation({ ...evidence, outboundBeforeIdentityDigests: [] }, now), false);
+  assert.equal(validatePendingSendReconciliation({ ...evidence, expiresAt: now }, now), false);
+  assert.equal(validatePendingSendReconciliation({ ...evidence, replyDigest: 'wrong' }, now), false);
+});
+
+test('safety stop survives polling and expires only for a later HR duty activation', async () => {
+  const oldDuty = '2026-09-17T08:00:00Z';
+  const newDuty = '2026-09-17T08:05:00Z';
+  assert.equal(shouldReleaseSafetyStop(oldDuty, oldDuty), false);
+  assert.equal(shouldReleaseSafetyStop(oldDuty, null), false);
+  assert.equal(shouldReleaseSafetyStop(null, newDuty), false);
+  assert.equal(shouldReleaseSafetyStop(oldDuty, '2026-09-17T07:59:00Z'), false);
+  assert.equal(shouldReleaseSafetyStop(oldDuty, newDuty), true);
+  const source = await readFile(new URL('../src/background.js', import.meta.url), 'utf8');
+  assert.match(source, /shouldReleaseSafetyStop\(runtime\.singleAccountSafetyStopDutyStartedAt, control\?\.startedAt\)/);
+  assert.doesNotMatch(source, /if \(!desired && runtime\.singleAccountSafetyStop\)/);
+});
+
+test('keeps transcript learning and timeline imports independent and scoped to one chat', async () => {
+  const source = await readFile(new URL('../src/background.js', import.meta.url), 'utf8');
+  assert.match(source, /const results = await Promise\.allSettled\(\[/);
+  assert.match(source, /body: \{ transcript: transcript\.text, chatDigest: transcript\.chatDigest \}/);
+  assert.match(source, /body: \{ chatDigest: transcript\.chatDigest, jobTitle: transcript\.jobTitle, messages: transcript\.turns/);
+});
+
+test('uses one BOSS turn identity for selected snapshots and imported history', async () => {
+  const source = await readFile(new URL('../src/content.js', import.meta.url), 'utf8');
+  assert.match(source, /function readConversationTurns\(active\)/);
+  assert.match(source, /const turns = readConversationTurns\(active\);/);
+  assert.match(source, /const messageDigest = await digest\(last\.identity\);/);
+  assert.match(source, /messageDigest: await digest\(record\.messageIdentity\)/);
+  assert.match(source, /occurrence:\$\{occurrence\}/);
+  assert.match(source, /possiblyTruncated: !reachedBeginning \|\| !coveredLatest \|\| !coveredBeginning/);
+});
+
+test('actively wakes long ready sends and never applies historical retry cooldown to them', async () => {
+  const source = await readFile(new URL('../src/content.js', import.meta.url), 'utf8');
+  assert.match(source, /const READY_SEND_WAKE_AFTER_MS = 15_000;/);
+  assert.match(source, /traceAutoReply\('READY_RELOCATION_WAKE'/);
+  assert.match(source, /traceAutoReply\('READY_RELOCATE_SCHEDULED'/);
+  const activeReadyBranch = source.indexOf('if (!retryTask) {', source.indexOf("traceAutoReply(target ? 'READY_DEEP_SCAN_MATCHED'"));
+  const historicalDeferral = source.indexOf('singleAccountRetryLocateDeferrals.set(prioritizedTask.taskId', activeReadyBranch);
+  assert.notEqual(activeReadyBranch, -1);
+  assert.notEqual(historicalDeferral, -1);
+  assert.ok(activeReadyBranch < historicalDeferral);
+});
+
+test('requires an explicit current resume capture request before importing an attachment', async () => {
+  const background = await readFile(new URL('../src/background.js', import.meta.url), 'utf8');
+  const content = await readFile(new URL('../src/content.js', import.meta.url), 'utf8');
+  assert.match(background, /const resumeAwaitingImport = payload\.selected\?\.resumeCaptureRequested === true/);
+  assert.match(background, /if \(resumeAwaitingImport && observation\?\.conversationSignals\?\.resumeReceived === true\)/);
+  assert.match(content, /const contextCheck = await classifyResumeAttachmentContext\(second\);/);
+  assert.match(content, /resumeCaptureRequest = \{ chatDigest: second\.chatDigest, messageDigest: second\.messageDigest \};/);
+  assert.match(content, /if \(transcriptCaptureInProgress \|\| !singleAccountAutoReplyEnabled/);
+});
+
+test('preserves backend ready timestamp when recovering pending sends', async () => {
+  const source = await readFile(new URL('../src/background.js', import.meta.url), 'utf8');
+  assert.match(source, /recoveredSend: true, updatedAt: task\.updatedAt \|\| null/);
 });
 
 test('accepts only bounded anonymous restart baselines', () => {

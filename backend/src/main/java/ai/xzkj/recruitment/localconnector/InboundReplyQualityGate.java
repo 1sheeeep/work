@@ -82,8 +82,7 @@ final class InboundReplyQualityGate {
         if (decision.retryable()
                 || reason.contains("独立意图校验")
                 || reason.contains("独立质量校验")
-                || reason.contains("模型未提供事实证据字段")
-                || reason.contains("精确字段未按已审核原文回答")) return "AI_OUTPUT_INVALID";
+                || reason.contains("模型未提供事实证据字段")) return "AI_OUTPUT_INVALID";
         if (reason.startsWith("正常静默：")) return "EXPECTED_SILENCE";
         if (reason.startsWith("影子评测：")) return "SHADOW";
         if (reason.contains("事实校验")) return "FACT_VALIDATION";

@@ -104,13 +104,15 @@
   --status-alert-danger-border: #ffd3cf;
 
   /* 圆角与过渡 — 统一形状系统
-     ┌─ panels/cards  → radius-panel   (16px)
+     ┌─ panels/cards  → radius-panel   (14px)
+     ├─ capsule-cards → radius-capsule (20px)
      ├─ controls      → radius-control  (9px)
      ├─ icons/avatars → 10-12px
      ├─ tags/badges   → 6px
      └─ pills         → radius-pill    (999px)
   */
   --radius-panel: 14px;
+  --radius-capsule: 24px;
   --radius-control: 9px;
   --radius-pill: 999px;
   --transition-fast: 200ms cubic-bezier(.2,0,0,1);
@@ -124,6 +126,9 @@
   --shadow-rest: var(--shadow-ground);
   --shadow-hover: var(--shadow-raised);
   --shadow-sm: var(--shadow-ground);
+  /* 胶囊卡片分层阴影：静止 / 悬停浮起 */
+  --shadow-capsule: 0 1px 2px rgba(17,28,45,.05), 0 6px 16px rgba(17,28,45,.06);
+  --shadow-capsule-hover: 0 3px 8px rgba(17,28,45,.07), 0 14px 32px rgba(17,28,45,.10);
   --shadow-card: var(--shadow-rest);
   --shadow-card-hover: var(--shadow-hover);
   --shadow-md: var(--shadow-floating);
@@ -190,6 +195,8 @@
   --shadow-rest: 0 1px 2px rgba(0,0,0,.28), 0 8px 24px rgba(0,0,0,.32);
   --shadow-hover: 0 2px 5px rgba(0,0,0,.35), 0 14px 30px rgba(0,0,0,.4);
   --shadow-floating: 0 24px 64px rgba(0,0,0,.5);
+  --shadow-capsule: 0 1px 2px rgba(0,0,0,.20), 0 6px 16px rgba(0,0,0,.24);
+  --shadow-capsule-hover: 0 3px 8px rgba(0,0,0,.26), 0 14px 32px rgba(0,0,0,.32);
   --glass-bg: rgba(30,36,51,.82);
   --glass-border: rgba(255,255,255,.08);
   --glass-blur: blur(14px) saturate(1.08);

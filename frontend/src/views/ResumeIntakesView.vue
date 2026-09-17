@@ -714,7 +714,15 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
     </AsyncState>
 
     <template v-else>
-      <AsyncState v-if="!intakes.length" state="empty" title="尚未收到简历" message="收到 BOSS 简历或完成人工补录后，将在这里进入分析队列。"><template #icon><el-icon><UploadFilled /></el-icon></template><el-button type="primary" @click="openCreate">人工补录</el-button></AsyncState>
+      <template v-if="!intakes.length">
+        <AsyncState state="empty" title="尚未收到简历" message="收到 BOSS 简历或完成人工补录后，将在这里进入分析队列。"><template #icon><el-icon><UploadFilled /></el-icon></template><el-button type="primary" @click="openCreate">人工补录</el-button></AsyncState>
+        <section class="external-pdf-drop card-entity" :class="{ 'external-pdf-drop--active': externalDragOver, 'external-pdf-drop--loading': externalSubmitting }" role="button" tabindex="0" :aria-busy="externalSubmitting" aria-label="拖入或选择外部 PDF 简历并立即进行 AI 岗位匹配" @click="chooseExternalPdf" @keydown.enter="chooseExternalPdf" @keydown.space.prevent="chooseExternalPdf" @dragenter.prevent="externalDragOver = true" @dragover.prevent="externalDragOver = true" @dragleave.self="externalDragOver = false" @drop.prevent="dropExternalPdf">
+          <input ref="externalFileInput" class="external-pdf-input" type="file" accept=".pdf,application/pdf" tabindex="-1" @change="handleExternalFileChange" />
+          <span class="external-pdf-drop__icon"><el-icon><UploadFilled /></el-icon></span>
+          <div><strong>{{ externalSubmitting ? '识别中…' : externalDragOver ? '松开开始分析' : '拖入外部 PDF' }}</strong><small>识别姓名并匹配岗位</small></div>
+          <el-button type="primary" size="small" :loading="externalSubmitting" @click.stop="chooseExternalPdf">{{ externalSubmitting ? '分析中' : '选择' }}</el-button>
+        </section>
+      </template>
 
       <section v-else class="analysis-workspace">
         <aside class="surface-panel section-card card-panel resume-queue-panel">

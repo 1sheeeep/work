@@ -120,7 +120,7 @@ public class CandidateMergeService {
     }
 
     private int loadMessages(UUID candidateId) {
-        return loadContacts(candidateId).stream().mapToInt(contact -> messages.findByContactIdOrderByCreatedAtAsc(contact.getId()).size()).sum();
+        return loadContacts(candidateId).stream().mapToInt(contact -> messages.findByContactIdAndSupersededAtIsNullOrderByCreatedAtAsc(contact.getId()).size()).sum();
     }
 
     @Transactional

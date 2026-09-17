@@ -27,7 +27,7 @@ public class JobReplyTemplateService {
             new TemplateDefinition("SOCIAL_ACKNOWLEDGEMENT", "好的", ""),
             new TemplateDefinition("CANDIDATE_CONSIDERING", "好的，您可以先了解和考虑，有需要时随时联系我。", ""),
             new TemplateDefinition("RESUME_WILL_SEND", "好的，您方便时发过来即可，我收到后会及时查看。", ""),
-            new TemplateDefinition("RESUME_SENT", "收到，我先看一下您的简历，了解后再和您联系。", ""),
+            new TemplateDefinition("RESUME_SENT", "好的，我先看一下您的简历，了解后再和您联系。", ""),
             new TemplateDefinition("CANDIDATE_DECLINE", "感谢投递，祝您求职顺利。", ""),
             new TemplateDefinition("CONVERSATION_CLOSING", "好的，后续有需要欢迎随时联系。", "")
     );

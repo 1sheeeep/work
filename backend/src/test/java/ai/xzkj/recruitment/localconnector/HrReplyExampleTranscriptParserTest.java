@@ -48,4 +48,14 @@ class HrReplyExampleTranscriptParserTest {
     void doesNotTreatStaleFactsAsReusable() {
         assertThat(HrReplyExampleService.hasReusableApprovedFact("薪资范围是 6-8K。", Map.of("SALARY", "8-13K"))).isFalse();
     }
+
+    @Test
+    void ranksEquivalentCandidatePhrasesAsStrongLearningMatches() {
+        assertThat(HrReplyExampleService.similarity("您好，请问岗位平常都是怎么推进呀？", "岗位平常都是怎么推进呀"))
+                .isGreaterThanOrEqualTo(0.78);
+        assertThat(HrReplyExampleService.similarity("请问有宿舍吗", "这个岗位的薪资是多少"))
+                .isLessThan(0.78);
+        assertThat(HrReplyExampleService.classifyIntent("请问月休是大小周吗")).isEqualTo("WORK_TIME");
+        assertThat(HrReplyExampleService.classifyIntent("公司提供宿舍吗")).isEqualTo("BENEFITS");
+    }
 }

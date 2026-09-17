@@ -93,6 +93,7 @@ record ResumeAnalysisResult(
         List<ResumeJobComparison> jobComparisons
 ) {
     private static final List<String> RECOMMENDATIONS = List.of("PRIORITY_VIEW", "NORMAL_VIEW", "INFORMATION_NEEDED");
+    private static final String MISSING_SUMMARY = "大模型未返回明确摘要，请结合岗位要求和简历原文由 HR 复核。";
 
     ResumeAnalysisResult(String candidateName, String recommendation, String summary,
                          List<ResumeAnalysisEvidence> evidence, List<String> gaps,
@@ -146,11 +147,15 @@ record ResumeAnalysisResult(
                     textList(item.path("gaps"), 8, 400), textList(item.path("risks"), 8, 400)));
             if (comparisons.size() == 20) break;
         }
+        List<String> gaps = textList(analysis.path("gaps"), 8, 400);
+        List<String> risks = textList(analysis.path("risks"), 8, 400);
+        String summary = boundedText(text(analysis.path("summary")), 1200, null);
+        if (!meaningful(summary)) summary = deriveSummary(comparisons, evidence, gaps, risks);
         return new ResumeAnalysisResult(
                 boundedText(text(analysis.path("candidateName")), 100, null),
                 text(analysis.path("recommendation")),
-                boundedText(text(analysis.path("summary")), 1200, "大模型未返回明确摘要，请结合岗位要求和简历原文由 HR 复核。"),
-                evidence, textList(analysis.path("gaps"), 8, 400), textList(analysis.path("risks"), 8, 400),
+                summary,
+                evidence, gaps, risks,
                 textList(analysis.path("followUpQuestions"), 5, 400), comparisons);
     }
 
@@ -274,10 +279,32 @@ record ResumeAnalysisResult(
                                 .limit(12).toList(), cleanTextList(item.gaps()), cleanTextList(item.risks())))
                 .limit(20)
                 .toList();
+        List<String> gaps = cleanTextList(value.gaps()).stream().limit(8).toList();
+        List<String> risks = cleanTextList(value.risks()).stream().limit(8).toList();
         String summary = trim(value.summary());
-        if (!meaningful(summary)) summary = "大模型未返回明确摘要，请结合岗位要求和简历原文由 HR 复核。";
+        if (!meaningful(summary) || MISSING_SUMMARY.equals(summary)) summary = deriveSummary(comparisons, evidence, gaps, risks);
         return new ResumeAnalysisResult(trim(value.candidateName()), normalizeRecommendation(value.recommendation()), summary, evidence,
-                cleanTextList(value.gaps()).stream().limit(8).toList(), cleanTextList(value.risks()).stream().limit(8).toList(), followUpQuestions, comparisons);
+                gaps, risks, followUpQuestions, comparisons);
+    }
+
+    /** DeepSeek 兼容 json_object 模式偶尔漏掉顶层摘要，只复用已经返回的文字。 */
+    private static String deriveSummary(List<ResumeJobComparison> comparisons,
+                                        List<ResumeAnalysisEvidence> evidence,
+                                        List<String> gaps,
+                                        List<String> risks) {
+        List<String> comparisonSummaries = comparisons == null ? List.of() : comparisons.stream()
+                .filter(item -> item != null && meaningful(item.summary()) && !"未生成该岗位摘要".equals(item.summary().trim()))
+                .map(item -> (meaningful(item.jobTitle()) ? item.jobTitle().trim() : "当前岗位") + "：" + item.summary().trim())
+                .limit(2).toList();
+        if (!comparisonSummaries.isEmpty()) return boundedText("根据已返回的岗位职责与简历证据，" + String.join("；", comparisonSummaries), 1200, MISSING_SUMMARY);
+        if (evidence != null && !evidence.isEmpty()) {
+            String evidenceText = evidence.stream().filter(item -> item != null && meaningful(item.finding()))
+                    .map(ResumeAnalysisEvidence::finding).limit(2).reduce((left, right) -> left + "；" + right).orElse("");
+            if (meaningful(evidenceText)) return boundedText("根据已返回的匹配证据，" + evidenceText, 1200, MISSING_SUMMARY);
+        }
+        if (gaps != null && !gaps.isEmpty()) return boundedText("当前分析识别到待确认项：" + String.join("；", gaps.stream().limit(3).toList()) + "。", 1200, MISSING_SUMMARY);
+        if (risks != null && !risks.isEmpty()) return boundedText("当前分析识别到需要关注的风险：" + String.join("；", risks.stream().limit(3).toList()) + "。", 1200, MISSING_SUMMARY);
+        return MISSING_SUMMARY;
     }
 
     private static String normalizeRecommendation(String value) {

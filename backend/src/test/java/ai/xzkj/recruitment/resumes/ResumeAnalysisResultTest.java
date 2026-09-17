@@ -97,10 +97,40 @@ class ResumeAnalysisResultTest {
         ResumeAnalysisResult result = ResumeAnalysisResult.parseExternal(response, mapper);
 
         assertThat(result.recommendation()).isEqualTo("INFORMATION_NEEDED");
-        assertThat(result.summary()).contains("未返回明确摘要");
+        assertThat(result.summary()).contains("待确认项");
         assertThat(result.evidence()).singleElement().extracting(ResumeAnalysisEvidence::status).isEqualTo("UNCLEAR");
         assertThat(result.gaps()).hasSize(8);
         assertThat(result.followUpQuestions()).hasSize(3);
+    }
+
+    @Test
+    void derivesOverallSummaryFromJobComparisonWhenProviderOmitsTopLevelSummary() {
+        String response = """
+                {
+                  "recommendation":"INFORMATION_NEEDED",
+                  "evidence":[{"criterion":"岗位：运营助理","finding":"简历有数据整理经验。","status":"FOUND"}],
+                  "gaps":["缺少独立站运营经验"],
+                  "risks":[],
+                  "followUpQuestions":["请说明最近职责？","请说明项目成果？","何时到岗？"],
+                  "jobComparisons":[{"jobId":"job-1","jobTitle":"运营助理","summary":"经历集中在数据整理，未发现独立站运营事实。","responsibilities":[{"responsibility":"负责店铺运营","resumeEvidence":"未在简历中找到明确证据","status":"NOT_FOUND"}],"skillMatches":[],"gaps":[],"risks":[]}]
+                }
+                """;
+
+        ResumeAnalysisResult result = ResumeAnalysisResult.parseExternal(response, mapper);
+
+        assertThat(result.summary()).isEqualTo("根据已返回的岗位职责与简历证据，运营助理：经历集中在数据整理，未发现独立站运营事实。");
+        assertThat(result.summary()).doesNotContain("大模型未返回明确摘要");
+    }
+
+    @Test
+    void upgradesPreviouslyStoredFallbackSummaryWhenComparisonSummaryExists() {
+        String stored = """
+                {"candidateName":"候选人","recommendation":"INFORMATION_NEEDED","summary":"大模型未返回明确摘要，请结合岗位要求和简历原文由 HR 复核。","evidence":[{"criterion":"岗位","finding":"待确认","status":"UNCLEAR"}],"gaps":[],"risks":[],"followUpQuestions":["问题一","问题二","问题三"],"jobComparisons":[{"jobId":"job-1","jobTitle":"客服","summary":"有客户沟通经验。","responsibilities":[{"responsibility":"沟通客户","resumeEvidence":"简历有相关经历","status":"FOUND"}],"skillMatches":[],"gaps":[],"risks":[]}]}
+                """;
+
+        ResumeAnalysisResult result = ResumeAnalysisResult.parseStored(stored, mapper);
+
+        assertThat(result.summary()).isEqualTo("根据已返回的岗位职责与简历证据，客服：有客户沟通经验。");
     }
 
     @Test

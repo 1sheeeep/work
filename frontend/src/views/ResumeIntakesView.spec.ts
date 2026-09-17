@@ -78,7 +78,7 @@ describe('ResumeIntakesView', () => {
     const wrapper = mount(ResumeIntakesView)
     await flushPromises()
 
-    expect(wrapper.text()).toContain('BOSS 已接收')
+    expect(wrapper.text()).toContain('PDF 已提取')
     expect(wrapper.text()).toContain('技术经历与岗位要求整体匹配')
     expect(wrapper.text()).toContain('AI 分析服务可用')
     expect(wrapper.text()).toContain('qwen-plus')
@@ -144,7 +144,7 @@ describe('ResumeIntakesView', () => {
     await flushPromises()
     await flushPromises()
 
-    expect(wrapper.text()).toContain('已关联人才库')
+    expect(wrapper.text()).toContain('人才档案')
     expect(wrapper.text()).toContain('关联岗位 1 个')
     expect(wrapper.text()).toContain('已关联简历')
     expect(wrapper.text()).toContain('候选人已提供附件简历')

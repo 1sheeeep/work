@@ -67,6 +67,7 @@ public class GatewayOperationsController {
                              FROM conversation_messages message
                             WHERE message.external_message_id = CONCAT('boss:', task.message_digest)
                               AND message.direction = 'INBOUND'
+                              AND message.superseded_at IS NULL
                             ORDER BY message.created_at DESC
                             LIMIT 1
                        )), 1000),

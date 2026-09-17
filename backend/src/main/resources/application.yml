@@ -98,8 +98,10 @@ app:
     # 复核仍必须通过最新 chat/message digest、岗位归属和会话详情校验。
     silent-revalidation-delay: ${APP_INBOUND_REPLY_SILENT_REVALIDATION_DELAY:PT10S}
     model-concurrency: ${APP_INBOUND_REPLY_MODEL_CONCURRENCY:8}
+    per-account-concurrency: ${APP_INBOUND_REPLY_PER_ACCOUNT_CONCURRENCY:3}
     # 固定事实/礼貌话术默认直接发送确定性文本，避免为简单消息额外消耗一次 AI 请求。
     fixed-reply-ai-polish-enabled: ${APP_INBOUND_REPLY_FIXED_REPLY_AI_POLISH_ENABLED:false}
+    ready-send-timeout: ${APP_INBOUND_REPLY_READY_SEND_TIMEOUT:PT1H}
     max-pending-per-account: ${APP_INBOUND_REPLY_MAX_PENDING_PER_ACCOUNT:100}
     max-pending-global: ${APP_INBOUND_REPLY_MAX_PENDING_GLOBAL:1000}
     send-limit-per-hour: ${APP_INBOUND_REPLY_SEND_LIMIT_PER_HOUR:20}

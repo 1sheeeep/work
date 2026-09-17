@@ -25,7 +25,7 @@ describe('SystemLogsView', () => {
     const wrapper = mount(SystemLogsView)
     await flushPromises()
 
-    expect(wrapper.text()).toContain('项目运行日志')
+    expect(wrapper.text()).toContain('系统状态')
     expect(wrapper.text()).toContain('在线桥接')
     expect(wrapper.text()).toContain('新增招聘账号')
     expect(wrapper.text()).toContain('自动回复运行中')

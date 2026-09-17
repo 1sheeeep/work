@@ -21,6 +21,7 @@ public class ConversationMessage {
     @ManyToOne(fetch = FetchType.LAZY) @JoinColumn(name = "created_by") private SystemUser createdBy;
     @Column(name = "approved_at") private Instant approvedAt;
     @Column(name = "created_at", nullable = false) private Instant createdAt;
+    @Column(name = "superseded_at") private Instant supersededAt;
     protected ConversationMessage() {}
     public ConversationMessage(CandidateJobContact contact, String externalMessageId, MessageDirection direction,
                                MessageSenderType senderType, MessageDeliveryStatus deliveryStatus, String content,
@@ -39,6 +40,8 @@ public class ConversationMessage {
     public void sent() { deliveryStatus = MessageDeliveryStatus.SENT; approvedAt = Instant.now(); }
     public void failed() { deliveryStatus = MessageDeliveryStatus.FAILED; approvedAt = Instant.now(); }
     public void reject() { deliveryStatus = MessageDeliveryStatus.REJECTED; approvedAt = Instant.now(); }
+    public void supersede(Instant at) { supersededAt = at == null ? Instant.now() : at; }
+    public void restore() { supersededAt = null; }
     public void anonymize() { content = "[内容已匿名]"; }
     public UUID getId() { return id; }
     public CandidateJobContact getContact() { return contact; }
@@ -52,4 +55,5 @@ public class ConversationMessage {
     public SystemUser getCreatedBy() { return createdBy; }
     public Instant getApprovedAt() { return approvedAt; }
     public Instant getCreatedAt() { return createdAt; }
+    public Instant getSupersededAt() { return supersededAt; }
 }

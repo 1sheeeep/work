@@ -34,6 +34,23 @@ class InboundReplyExecutionCoordinatorTest {
     }
 
     @Test
+    void allowsThreeWorkersForOneAccountAndRejectsTheFourth() {
+        InboundReplyExecutionCoordinator coordinator = new InboundReplyExecutionCoordinator(8, 3);
+        UUID account = UUID.randomUUID();
+
+        assertThat(coordinator.perAccountConcurrency()).isEqualTo(3);
+        assertThat(coordinator.tryEnterAccount(account)).isTrue();
+        assertThat(coordinator.tryEnterAccount(account)).isTrue();
+        assertThat(coordinator.tryEnterAccount(account)).isTrue();
+        assertThat(coordinator.tryEnterAccount(account)).isFalse();
+        coordinator.leaveAccount(account);
+        assertThat(coordinator.tryEnterAccount(account)).isTrue();
+        coordinator.leaveAccount(account);
+        coordinator.leaveAccount(account);
+        coordinator.leaveAccount(account);
+    }
+
+    @Test
     void blocksOnlyAtConfiguredGlobalModelCapacity() throws Exception {
         InboundReplyExecutionCoordinator coordinator = new InboundReplyExecutionCoordinator(2);
         coordinator.acquireModelSlot();

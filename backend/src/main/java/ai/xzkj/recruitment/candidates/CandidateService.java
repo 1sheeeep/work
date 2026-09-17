@@ -65,7 +65,9 @@ public class CandidateService {
         List<ScreeningDecision> decisions = decisionRepository.findByContactIdOrderByCreatedAtDesc(id);
         return new CandidateDetailResponse(summary(contact, decisions),
                 decisions.stream().map(ScreeningDecisionResponse::from).toList(),
-                messageRepository.findTop50ByContactIdOrderByCreatedAtAsc(id).stream().map(ConversationMessageResponse::from).toList());
+                ConversationMessageDeduplicator.forDisplay(
+                        messageRepository.findTop50ByContactIdAndSupersededAtIsNullOrderByCreatedAtAsc(id))
+                        .stream().map(ConversationMessageResponse::from).toList());
     }
 
     @Transactional
@@ -117,7 +119,7 @@ public class CandidateService {
     }
     private CandidateContactResponse summary(CandidateJobContact contact, List<ScreeningDecision> decisions) {
         return CandidateContactResponse.from(contact, decisions,
-                messageRepository.findFirstByContactIdOrderByCreatedAtDescIdDesc(contact.getId()).orElse(null),
+                messageRepository.findFirstByContactIdAndSupersededAtIsNullOrderByCreatedAtDescIdDesc(contact.getId()).orElse(null),
                 autoReplyAttempts.findFirstByContactIdOrderByCreatedAtDesc(contact.getId()).orElse(null));
     }
     private CandidateJobContact requireAccessibleContact(UUID id, SystemUser user) {

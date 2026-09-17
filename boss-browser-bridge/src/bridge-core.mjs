@@ -5,6 +5,28 @@ export const MAX_CONVERSATIONS = 200;
 export const MAX_JOBS = 200;
 export const MAX_CONTROL_DIAGNOSTICS = 120;
 
+export function shouldReleaseSafetyStop(stoppedDutyStartedAt, currentDutyStartedAt) {
+  const stopped = Date.parse(stoppedDutyStartedAt || '');
+  const current = Date.parse(currentDutyStartedAt || '');
+  return Number.isFinite(stopped) && Number.isFinite(current) && current > stopped;
+}
+
+export function validatePendingSendReconciliation(item, now = Date.now(), ttlMs = 180_000) {
+  return Boolean(item) && /^[0-9a-f-]{36}$/i.test(item.taskId || '')
+    && DIGEST_PATTERN.test(item.chatDigest || '')
+    && DIGEST_PATTERN.test(item.messageDigest || '')
+    && DIGEST_PATTERN.test(item.replyDigest || '')
+    && typeof item.leaseToken === 'string' && item.leaseToken.length > 0 && item.leaseToken.length <= 200
+    && Number.isInteger(item.outboundBeforeCount) && item.outboundBeforeCount >= 0 && item.outboundBeforeCount <= 10_000
+    && typeof item.outboundBeforeIdentitiesComplete === 'boolean'
+    && Array.isArray(item.outboundBeforeIdentityDigests) && item.outboundBeforeIdentityDigests.length <= 100
+    && item.outboundBeforeIdentityDigests.every(value => DIGEST_PATTERN.test(value))
+    && (!item.outboundBeforeIdentitiesComplete
+      || item.outboundBeforeIdentityDigests.length === item.outboundBeforeCount)
+    && Number.isFinite(Date.parse(item.claimedAt))
+    && Number.isFinite(item.expiresAt) && item.expiresAt > now && item.expiresAt <= now + ttlMs;
+}
+
 export function validateBackendUrl(value) {
   let url;
   try {
@@ -83,6 +105,7 @@ export function validateSelected(selected) {
   if (typeof selected.selectedUnread !== 'boolean') throw new Error('选中会话未读状态无效。');
   if (selected.messageText !== null && selected.messageText !== undefined
       && (typeof selected.messageText !== 'string' || selected.messageText.length > 1000)) throw new Error('消息正文无效。');
+  if (selected.resumeCaptureRequested !== undefined && typeof selected.resumeCaptureRequested !== 'boolean') throw new Error('简历捕获请求标记无效。');
   validateConversationSignals(selected.conversationSignals);
   return selected;
 }

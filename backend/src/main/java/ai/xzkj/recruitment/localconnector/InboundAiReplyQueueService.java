@@ -31,6 +31,7 @@ import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -38,7 +39,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-/** 持久化、按账号 FIFO 串行的入站 AI 回复队列；不同账号可并行。 */
+/** 持久化入站 AI 回复队列；同账号 AI 有界并发，页面发送仍由插件严格串行。 */
 @Service
 class InboundAiReplyQueueService implements InboundReplyWorkGate {
     private static final System.Logger LOG = System.getLogger(InboundAiReplyQueueService.class.getName());
@@ -65,19 +66,21 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
     @Value("${app.inbound-reply.auto-send-enabled:false}") private boolean autoSendEnabled;
     @Value("${app.inbound-reply.shadow-evaluation-enabled:false}") private boolean shadowEvaluationEnabled;
     @Value("${app.inbound-reply.silent-revalidation-delay:PT10S}") private Duration silentRevalidationDelay = Duration.ofSeconds(10);
+    @Value("${app.inbound-reply.ready-send-timeout:PT1H}") private Duration readySendTimeout = Duration.ofHours(1);
 
     InboundAiReplyQueueService(InboundAiReplyTaskRepository tasks, BrowserUnreadObservationRepository observations,
                                BossAccountRepository accounts, JobPositionRepository jobs,
                                InboundJobReplyService replies, PlatformTransactionManager manager,
                                MeterRegistry meters, JdbcTemplate jdbc,
                                ConversationTimelineService timeline, AuditService audit,
-                               @Value("${app.inbound-reply.model-concurrency:8}") int configuredModelConcurrency) {
+                               @Value("${app.inbound-reply.model-concurrency:8}") int configuredModelConcurrency,
+                               @Value("${app.inbound-reply.per-account-concurrency:3}") int configuredPerAccountConcurrency) {
         this.tasks = tasks; this.observations = observations; this.accounts = accounts; this.jobs = jobs; this.replies = replies;
         this.meters = meters;
         this.jdbc = jdbc;
         this.timeline = timeline;
         this.audit = audit;
-        this.execution = new InboundReplyExecutionCoordinator(configuredModelConcurrency);
+        this.execution = new InboundReplyExecutionCoordinator(configuredModelConcurrency, configuredPerAccountConcurrency);
         this.transactions = new TransactionTemplate(manager);
         this.transactions.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         Gauge.builder("recruitment.inbound.reply.queue.depth", tasks,
@@ -99,6 +102,12 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
                 "已签发发送租约且等待回执的回复数");
         registerTaskGauge("recruitment.inbound.reply.send.unknown", null, "UNKNOWN",
                 "发送结果不确定、禁止自动重试的回复数");
+        registerLaneGauge("recruitment.inbound.reply.lane.analysis", InboundAiReplyTask.QUEUE_ANALYSIS,
+                "AI 分析队列任务数");
+        registerLaneGauge("recruitment.inbound.reply.lane.send", InboundAiReplyTask.QUEUE_SEND,
+                "页面发送队列任务数");
+        registerLaneGauge("recruitment.inbound.reply.lane.revalidation", InboundAiReplyTask.QUEUE_REVALIDATION,
+                "安全复核队列任务数");
         Gauge.builder("recruitment.inbound.reply.queue.oldest.seconds", this,
                         service -> service.oldestPendingSeconds())
                 .description("最早等待处理任务的等待秒数；无等待任务时为 0").register(meters);
@@ -168,7 +177,8 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
                                 && task.getJobPositionId().equals(observation.getMatchedJobPositionId()))))
                         .orElse(false))
                 .map(task -> new InboundReplyRetryCandidateResponse(task.getId(), task.getChatDigest(),
-                        task.getMessageDigest(), task.getLastErrorCode(), task.getAttemptCount(), task.getUpdatedAt()))
+                        task.getMessageDigest(), task.getLastErrorCode(), task.getAttemptCount(), task.getUpdatedAt(),
+                        task.getQueueLane()))
                 .toList());
     }
 
@@ -177,7 +187,7 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
                 .findTop100ByAccountIdAndStatusAndSendStatusOrderByUpdatedAtAsc(accountId, "COMPLETED", "READY")
                 .stream()
                 .map(task -> new InboundReplyPendingSendResponse(task.getId(), task.getChatDigest(),
-                        task.getMessageDigest(), task.isResumeReceipt(), task.getUpdatedAt()))
+                        task.getMessageDigest(), task.isResumeReceipt(), task.getUpdatedAt(), task.getQueueLane()))
                 .toList());
     }
 
@@ -226,7 +236,8 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
         }
         return new InboundReplyTaskStatusResponse(task.getId(), task.getStatus(), decision,
                 task.getAttemptCount(), task.getNextAttemptAt(), task.getLastErrorCode(), task.getResultReason(),
-                task.getSendStatus(), task.getSendResultReason());
+                task.getSendStatus(), task.getSendResultReason(), task.getQueueLane(),
+                task.dispositionCode(), task.isReplayableFailure());
     }
 
     List<InboundAiReplyTask> recentSuccessfulSends() {
@@ -235,11 +246,17 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
     List<InboundAiReplyTask> recentSkippedReplies() {
         return tasks.findTop100BySendStatusOrderByCompletedAtDesc("SKIPPED");
     }
+    List<InboundAiReplyTask> recentSkippedReplies(Instant from, Instant to) {
+        return tasks.findRecentSkippedDutyEvents(from, to);
+    }
     List<InboundAiReplyTask> recentDecisions(Instant since) {
         return tasks.findTop500ByCompletedAtAfterOrderByCompletedAtDesc(since);
     }
     List<InboundAiReplyTask> recentEvents(Instant since) {
         return tasks.findTop500ByUpdatedAtAfterOrderByUpdatedAtDesc(since);
+    }
+    List<InboundAiReplyTask> recentEvents(Instant from, Instant to) {
+        return tasks.findRecentDutyEvents(from, to);
     }
 
     @Override
@@ -288,6 +305,16 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
             if (!autoSendEnabled)
                 return new InboundReplySendClaimResponse(false,task.getId(),null,null,null,null,
                         task.getSendStatus(),"后端 AI 自动发送总开关已关闭，任务继续保留等待");
+            // A browser page can only safely write to one conversation at a
+            // time.  The task row lock protects one task, while this advisory
+            // account lock prevents two browser tabs/devices from claiming
+            // different READY tasks for the same BOSS account concurrently.
+            lockAccountSendSlot(accountId);
+            if (tasks.countByAccountIdAndSendStatus(accountId, "CLAIMED") > 0) {
+                meters.counter("recruitment.inbound.reply.send.serialized_wait").increment();
+                return new InboundReplySendClaimResponse(false, task.getId(), null, null, null, null,
+                        task.getSendStatus(), "该招聘账号已有发送任务正在等待页面回执，当前任务留在发送队列");
+            }
             Instant now = Instant.now();
             long sentLastHour = tasks.countByAccountIdAndSendStatusAndSendCompletedAtAfter(accountId,"SUCCEEDED",now.minus(Duration.ofHours(1)));
             long sentLastDay = tasks.countByAccountIdAndSendStatusAndSendCompletedAtAfter(accountId,"SUCCEEDED",now.minus(Duration.ofDays(1)));
@@ -298,9 +325,19 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
             }
             String raw = token();
             task.claimSend(deviceId, hash(raw), request.beforeStateDigest(), now);
+            LOG.log(System.Logger.Level.INFO, "AI_TASK_STAGE lane=" + InboundAiReplyTask.QUEUE_SEND
+                    + " stage=SEND_LEASE_CLAIMED task=" + task.getId() + " account=" + accountId
+                    + " chatDigest=" + safeDigest(task.getChatDigest()));
             return new InboundReplySendClaimResponse(true, task.getId(), raw, task.getReplyContent(),
                     hash(task.getReplyContent()), task.getSendLeaseUntil(), task.getSendStatus(), "45 秒单次发送租约已签发");
         });
+    }
+
+    private void lockAccountSendSlot(UUID accountId) {
+        if (accountId == null) return;
+        long key = accountId.getMostSignificantBits() ^ accountId.getLeastSignificantBits();
+        if (key == 0L) key = 1L;
+        jdbc.query("SELECT pg_advisory_xact_lock(?)", resultSet -> null, key);
     }
 
     InboundReplySendReceiptResponse receiptSend(UUID accountId, UUID deviceId, InboundReplySendReceiptRequest request) {
@@ -320,6 +357,10 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
                     meters.counter("recruitment.conversation.timeline.write.failure", "stage", "ai_receipt").increment();
                 }
                 meters.counter("recruitment.inbound.reply.send.receipt", "outcome", request.outcome()).increment();
+                LOG.log(System.Logger.Level.INFO, "AI_TASK_STAGE lane="
+                        + ("FAILED".equals(request.outcome()) ? InboundAiReplyTask.QUEUE_REVALIDATION : InboundAiReplyTask.QUEUE_TERMINAL)
+                        + " stage=SEND_RECEIPT task=" + task.getId() + " account=" + accountId
+                        + " outcome=" + request.outcome());
                 return new InboundReplySendReceiptResponse(task.getId(), task.getSendStatus(), task.getSendCompletedAt());
             } catch (IllegalStateException conflict) {
                 throw new ApiException(HttpStatus.CONFLICT, "AI_REPLY_SEND_RECEIPT_CONFLICT", conflict.getMessage());
@@ -330,6 +371,48 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
                     "SEND_" + request.outcome(), request.reason());
         }
         return response;
+    }
+
+    InboundReplySendReceiptResponse reconcileSend(UUID accountId, UUID deviceId,
+                                                   InboundReplySendReconcileRequest request) {
+        return transactions.execute(status -> {
+            InboundAiReplyTask task = tasks.findForUpdateBySendLeaseTokenHash(hash(request.leaseToken())).orElseThrow(() ->
+                    new ApiException(HttpStatus.UNAUTHORIZED, "AI_REPLY_SEND_LEASE_INVALID", "AI 回复发送租约无效"));
+            if (!accountId.equals(task.getAccountId()) || !deviceId.equals(task.getSendDeviceId()))
+                throw new ApiException(HttpStatus.FORBIDDEN, "AI_REPLY_RECONCILE_DEVICE_MISMATCH", "发送复核不属于当前设备或账号");
+            if (!request.chatDigest().equals(task.getChatDigest()) || !request.messageDigest().equals(task.getMessageDigest()))
+                throw new ApiException(HttpStatus.CONFLICT, "AI_REPLY_RECONCILE_TARGET_MISMATCH", "发送复核与原会话消息不一致");
+            Instant now = Instant.now();
+            Instant claimedAt = task.getSendClaimedAt();
+            if (claimedAt == null || claimedAt.isBefore(now.minus(Duration.ofMinutes(3)))
+                    || request.outboundAt().isBefore(claimedAt.truncatedTo(java.time.temporal.ChronoUnit.MINUTES))
+                    || request.outboundAt().isAfter(now.plusSeconds(60)))
+                throw new ApiException(HttpStatus.CONFLICT, "AI_REPLY_RECONCILE_TIME_INVALID", "出站消息时间不能证明属于本次发送窗口");
+            String approvedText = task.getReplyContent() == null ? null
+                    : task.getReplyContent().replaceAll("\\s+", " ").trim();
+            if (approvedText == null || !hash(approvedText).equals(request.outboundTextDigest()))
+                throw new ApiException(HttpStatus.CONFLICT, "AI_REPLY_RECONCILE_TEXT_MISMATCH", "出站正文与一次性租约回复不一致");
+            boolean updated;
+            try {
+                updated = task.reconcileUnknownSend(deviceId, request.outboundMessageDigest(),
+                        hash(task.getId() + "|" + request.outboundMessageDigest() + "|SUCCEEDED"), now);
+            } catch (IllegalStateException conflict) {
+                throw new ApiException(HttpStatus.CONFLICT, "AI_REPLY_RECONCILE_NOT_ALLOWED", conflict.getMessage());
+            }
+            if (updated) {
+                meters.counter("recruitment.inbound.reply.send.reconciled").increment();
+                try {
+                    JobPosition job = jobs.findWithDetailsById(task.getJobPositionId()).orElse(null);
+                    timeline.recordAiSendReceipt(task.getAccountId(), task.getJobPositionId(), task.getChatDigest(),
+                            task.getId(), "SUCCEEDED", job);
+                } catch (RuntimeException timelineError) {
+                    meters.counter("recruitment.conversation.timeline.write.failure", "stage", "ai_reconcile").increment();
+                }
+                LOG.log(System.Logger.Level.INFO, "AI_TASK_STAGE lane=TERMINAL stage=SEND_RECONCILED task="
+                        + task.getId() + " account=" + accountId);
+            }
+            return new InboundReplySendReceiptResponse(task.getId(), task.getSendStatus(), task.getSendCompletedAt());
+        });
     }
 
     private InboundAiReplyTask enqueue(UUID accountId, UUID observationId, UUID jobId,
@@ -368,6 +451,12 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
         }
     }
 
+    ResumeAttachmentContextCheckResponse classifyResumeAttachment(JobPosition job,
+                                                                    ResumeAttachmentContextCheckRequest request,
+                                                                    boolean previouslyProcessed) {
+        return replies.classifyResumeAttachment(job, request, previouslyProcessed);
+    }
+
     private void drain(UUID accountId) {
         if (!execution.tryEnterAccount(accountId)) return;
         try {
@@ -376,13 +465,15 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
                 try {
                     task = transactions.execute(status -> {
                         // RETRY_WAIT 属于历史/当前任务的退避状态，不能阻塞同账号刚到达的实时消息。
-                        // PROCESSING 仍需保留，避免同一账号出现两个正在读取会话上下文的任务。
-                        if (tasks.existsByAccountIdAndStatus(accountId, "PROCESSING")) return null;
                         InboundAiReplyTask next = tasks.findFirstByAccountIdAndStatusOrderByCreatedAtAsc(accountId, "QUEUED").orElse(null);
+                        if (next == null) return null;
+                        long active = tasks.countByAccountIdAndStatusIn(accountId, List.of("PROCESSING"));
+                        if (active >= execution.perAccountConcurrency()) return null;
                         if (next != null) {
                             next.start(Instant.now());
                             tasks.flush();
-                            LOG.log(System.Logger.Level.INFO, "AI_TASK_STAGE stage=CLAIMED task=" + next.getId()
+                            LOG.log(System.Logger.Level.INFO, "AI_TASK_STAGE lane=" + InboundAiReplyTask.QUEUE_ANALYSIS
+                                    + " stage=CLAIMED task=" + next.getId()
                                     + " account=" + accountId + " chatDigest=" + safeDigest(next.getChatDigest()));
                         }
                         return next;
@@ -392,21 +483,28 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
                     return;
                 }
                 if (task == null) return;
+                String processingToken = task.getProcessingToken();
+                if (processingToken == null) {
+                    recordStaleResult(task.getId(), "CLAIM_TOKEN_MISSING");
+                    continue;
+                }
                 try {
                     JobPosition job = jobs.findWithDetailsById(task.getJobPositionId()).orElse(null);
-                    if (job == null) { fail(task.getId(), "INBOUND_REPLY_JOB_MISSING", "队列任务对应岗位已不存在"); continue; }
+                    if (job == null) { fail(task.getId(), processingToken, "INBOUND_REPLY_JOB_MISSING", "队列任务对应岗位已不存在"); continue; }
                     InboundJobReplyService.Decision evaluated;
                     Timer.Sample modelTimer = Timer.start(meters);
                     execution.acquireModelSlot();
                     try {
-                        LOG.log(System.Logger.Level.INFO, "AI_TASK_STAGE stage=AI_REQUEST_STARTED task=" + task.getId()
+                        LOG.log(System.Logger.Level.INFO, "AI_TASK_STAGE lane=" + InboundAiReplyTask.QUEUE_ANALYSIS
+                                + " stage=AI_REQUEST_STARTED task=" + task.getId()
                                 + " account=" + accountId + " chatDigest=" + safeDigest(task.getChatDigest()));
                         InboundJobReplyService.ConversationRuntime runtime = observations.findById(task.getObservationId())
                                 .map(value -> InboundJobReplyService.ConversationRuntime.from(
                                         value.getConversationStage(), value.getConversationSignals()))
                                 .orElseGet(InboundJobReplyService.ConversationRuntime::empty);
                         evaluated = replies.decide(job, task.getMessageText(), task.getConversationContext(), runtime);
-                        LOG.log(System.Logger.Level.INFO, "AI_TASK_STAGE stage=AI_REQUEST_FINISHED task=" + task.getId()
+                        LOG.log(System.Logger.Level.INFO, "AI_TASK_STAGE lane=" + InboundAiReplyTask.QUEUE_ANALYSIS
+                                + " stage=AI_REQUEST_FINISHED task=" + task.getId()
                                 + " category=" + safeCategory(evaluated.category()) + " allowed=" + evaluated.replyAllowed()
                                 + " retryable=" + evaluated.retryable());
                     }
@@ -415,20 +513,29 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
                         modelTimer.stop(Timer.builder("recruitment.inbound.reply.model.duration")
                                 .description("AI 理解与受控生成耗时").register(meters));
                     }
-                    recordDecisionMetrics(evaluated);
                     if (!evaluated.replyAllowed() && evaluated.retryable()) {
                         String reason = "AI 输出质量问题，准备有限重试：" + evaluated.reason();
                         meters.counter("recruitment.inbound.reply.decision.retryable",
                                 "reason", InboundReplyQualityGate.reasonCode(evaluated)).increment();
-                        retry(task.getId(), "AI_OUTPUT_INVALID", reason);
+                        retry(task.getId(), processingToken, "AI_OUTPUT_INVALID", reason);
                         continue;
                     }
                     InboundJobReplyService.Decision decision = shadowEvaluationEnabled
                             ? evaluated.asShadowEvaluation()
                             : evaluated;
                     Instant completedAt = Instant.now();
-                    transactions.executeWithoutResult(status -> tasks.findById(task.getId())
-                            .ifPresent(value -> value.complete(decision, completedAt)));
+                    boolean completed;
+                    try {
+                        completed = Boolean.TRUE.equals(transactions.execute(status -> tasks.findById(task.getId())
+                                .map(value -> value.complete(decision, processingToken, completedAt)).orElse(false)));
+                    } catch (ConcurrencyFailureException staleWrite) {
+                        completed = false;
+                    }
+                    if (!completed) {
+                        recordStaleResult(task.getId(), "COMPLETION_FENCE_REJECTED");
+                        continue;
+                    }
+                    recordDecisionMetrics(evaluated);
                     if (!decision.replyAllowed()) {
                         recordAiSkip(task.getId(), decision.category(), decision.reason());
                     }
@@ -443,11 +550,11 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
                     String code = errorCode(error);
                     String reason = "AI 回复任务处理失败：" + safe(error);
                     if (!isRetryable(error, code)) {
-                        fail(task.getId(), code, reason);
+                        fail(task.getId(), processingToken, code, reason);
                         continue;
                     }
-                    if (!retry(task.getId(), code, reason)) return;
-                    return;
+                    retry(task.getId(), processingToken, code, reason);
+                    continue;
                 }
             }
         } finally {
@@ -456,28 +563,69 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
     }
 
     private void triggerDrain(UUID accountId) {
-        workers.submit(() -> drain(accountId));
+        for (int slot = 0; slot < execution.perAccountConcurrency(); slot++) {
+            workers.submit(() -> drain(accountId));
+        }
     }
 
-    private boolean retry(UUID id, String code, String reason) {
+    private boolean retry(UUID id, String processingToken, String code, String reason) {
+        boolean[] currentAttempt = {false};
         boolean[] scheduled = {false};
-        transactions.executeWithoutResult(status -> tasks.findById(id)
-                .ifPresent(value -> scheduled[0] = value.retry(code, reason, Instant.now())));
+        try {
+            transactions.executeWithoutResult(status -> tasks.findById(id).ifPresent(value -> {
+                if (!Objects.equals(processingToken, value.getProcessingToken())) return;
+                currentAttempt[0] = true;
+                scheduled[0] = value.retry(code, reason, processingToken, Instant.now());
+            }));
+        } catch (ConcurrencyFailureException staleWrite) {
+            recordStaleResult(id, "RETRY_FENCE_CONFLICT");
+            return false;
+        }
+        if (!currentAttempt[0]) {
+            recordStaleResult(id, "RETRY_FENCE_REJECTED");
+            return false;
+        }
         if (scheduled[0]) {
             meters.counter("recruitment.inbound.reply.retry", "code", code).increment();
-            LOG.log(System.Logger.Level.WARNING, "AI_TASK_STAGE stage=RETRY_SCHEDULED task=" + id
+            LOG.log(System.Logger.Level.WARNING, "AI_TASK_STAGE lane=" + InboundAiReplyTask.QUEUE_ANALYSIS
+                    + " stage=RETRY_SCHEDULED task=" + id
                     + " code=" + safeCategory(code) + " detail=" + safe(reason));
             recordAiProblem("AI_REPLY_RETRY_SCHEDULED", id, code, reason);
+        } else {
+            meters.counter("recruitment.inbound.reply.failed", "reason", "RETRY_EXHAUSTED").increment();
+            LOG.log(System.Logger.Level.WARNING, "AI_TASK_STAGE lane=" + InboundAiReplyTask.QUEUE_REVALIDATION
+                    + " stage=RETRY_EXHAUSTED task=" + id
+                    + " code=" + safeCategory(code) + " detail=" + safe(reason)
+                    + "；继续处理同账号剩余队列");
+            recordAiProblem("AI_REPLY_RETRY_EXHAUSTED", id, code, reason);
         }
         return scheduled[0];
     }
-    private void fail(UUID id, String code, String reason) {
-        transactions.executeWithoutResult(status -> tasks.findById(id)
-                .ifPresent(value -> value.fail(code, reason, Instant.now())));
+    private void fail(UUID id, String processingToken, String code, String reason) {
+        boolean[] failed = {false};
+        try {
+            transactions.executeWithoutResult(status -> tasks.findById(id)
+                    .ifPresent(value -> failed[0] = value.failProcessing(code, reason, processingToken, Instant.now())));
+        } catch (ConcurrencyFailureException staleWrite) {
+            recordStaleResult(id, "FAILURE_FENCE_CONFLICT");
+            return;
+        }
+        if (!failed[0]) {
+            recordStaleResult(id, "FAILURE_FENCE_REJECTED");
+            return;
+        }
         meters.counter("recruitment.inbound.reply.failed", "reason", safeCategory(code)).increment();
-        LOG.log(System.Logger.Level.WARNING, "AI_TASK_STAGE stage=FAILED task=" + id
+        LOG.log(System.Logger.Level.WARNING, "AI_TASK_STAGE lane=" + InboundAiReplyTask.QUEUE_TERMINAL
+                + " stage=FAILED task=" + id
                 + " code=" + safeCategory(code) + " detail=" + safe(reason));
         recordAiProblem("AI_REPLY_TASK_FAILED", id, code, reason);
+    }
+
+    private void recordStaleResult(UUID id, String stage) {
+        meters.counter("recruitment.inbound.reply.stale_result", "stage", safeCategory(stage)).increment();
+        LOG.log(System.Logger.Level.WARNING, "AI_TASK_STAGE lane=" + InboundAiReplyTask.QUEUE_TERMINAL
+                + " stage=STALE_RESULT_DROPPED task=" + id
+                + " detail=" + safeCategory(stage) + "；旧处理代次结果未写入当前任务");
     }
 
     private void recordAiProblem(String action, UUID taskId, String code, String reason) {
@@ -514,15 +662,24 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
     void recover() {
         Instant now = Instant.now();
         transactions.executeWithoutResult(status -> {
-            tasks.findByStatusAndStartedAtBefore("PROCESSING", now.minusSeconds(180)).forEach(task -> {
+            tasks.findTop100ByStatusAndStartedAtBeforeOrderByStartedAtAsc("PROCESSING", now.minusSeconds(180)).forEach(task -> {
                 if (!task.recoverIfStale(now)) return;
                 String stage = "FAILED".equals(task.getStatus()) ? "STALE_FAILED" : "STALE_REQUEUED";
-                LOG.log(System.Logger.Level.WARNING, "AI_TASK_STAGE stage=" + stage + " task=" + task.getId()
+                LOG.log(System.Logger.Level.WARNING, "AI_TASK_STAGE lane=" + task.getQueueLane() + " stage=" + stage + " task=" + task.getId()
                         + " detail=PROCESSING 超过 180 秒；attempt=" + task.getAttemptCount());
                 meters.counter("recruitment.inbound.reply.stale_recovery", "stage", stage).increment();
             });
-            tasks.findTop100ByStatusAndNextAttemptAtBeforeOrderByNextAttemptAtAsc("RETRY_WAIT", now).forEach(task -> task.releaseRetry(now));
-            tasks.findBySendStatusAndSendLeaseUntilBefore("CLAIMED", now).forEach(task -> task.expireSendLease(now));
+        });
+        transactions.executeWithoutResult(status ->
+                tasks.findTop100ByStatusAndNextAttemptAtBeforeOrderByNextAttemptAtAsc("RETRY_WAIT", now)
+                        .forEach(task -> task.releaseRetry(now)));
+        transactions.executeWithoutResult(status ->
+                tasks.findTop100BySendStatusAndSendLeaseUntilBeforeOrderBySendLeaseUntilAsc("CLAIMED", now)
+                        .forEach(task -> task.expireSendLease(now)));
+        transactions.executeWithoutResult(status -> {
+            Instant readyCutoff = now.minus(readySendTimeout);
+            tasks.findTop100BySendStatusAndCompletedAtBeforeOrderByCompletedAtAsc("READY", readyCutoff)
+                    .forEach(task -> task.expireReadySend(readyCutoff, now));
             tasks.findTop100BySendStatusOrderByCompletedAtDesc("READY").forEach(task -> {
                 BrowserUnreadObservation observation = observations.findById(task.getObservationId()).orElse(null);
                 String invalidationReason = readySendInvalidationReason(task, observation);
@@ -587,6 +744,10 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
         Gauge.builder(name, tasks, repository -> status != null
                         ? repository.countByStatus(status)
                         : repository.countBySendStatus(sendStatus))
+                .description(description).register(meters);
+    }
+    private void registerLaneGauge(String name, String lane, String description) {
+        Gauge.builder(name, tasks, repository -> repository.countByQueueLane(lane))
                 .description(description).register(meters);
     }
     private void recordDecisionMetrics(InboundJobReplyService.Decision decision) {
