@@ -686,7 +686,16 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
     </AsyncState>
 
     <template v-else>
-      <AsyncState v-if="!intakes.length" state="empty" title="尚未收到简历" message="收到 BOSS 简历或完成人工补录后，将在这里进入分析队列。"><template #icon><el-icon><UploadFilled /></el-icon></template><el-button type="primary" @click="openCreate">人工补录</el-button></AsyncState>
+      <AsyncState v-if="!intakes.length" state="empty" title="尚未收到简历" message="收到 BOSS 简历或完成人工补录后，将在这里进入分析队列。">
+        <template #icon><el-icon><UploadFilled /></el-icon></template>
+        <el-button type="primary" @click="openCreate">人工补录</el-button>
+        <section class="external-pdf-drop external-pdf-drop--empty card-entity" :class="{ 'external-pdf-drop--active': externalDragOver, 'external-pdf-drop--loading': externalSubmitting }" role="button" tabindex="0" :aria-busy="externalSubmitting" aria-label="拖入或选择外部 PDF 简历并立即进行 AI 岗位匹配" @click="chooseExternalPdf" @keydown.enter="chooseExternalPdf" @keydown.space.prevent="chooseExternalPdf" @dragenter.prevent="externalDragOver = true" @dragover.prevent="externalDragOver = true" @dragleave.self="externalDragOver = false" @drop.prevent="dropExternalPdf">
+          <input ref="externalFileInput" class="external-pdf-input" type="file" accept=".pdf,application/pdf" tabindex="-1" @change="handleExternalFileChange" />
+          <span class="external-pdf-drop__icon"><el-icon><UploadFilled /></el-icon></span>
+          <div><strong>{{ externalSubmitting ? '识别中…' : externalDragOver ? '松开开始分析' : '拖入外部 PDF' }}</strong><small>识别姓名并匹配岗位</small></div>
+          <el-button type="primary" size="small" :loading="externalSubmitting" @click.stop="chooseExternalPdf">{{ externalSubmitting ? '分析中' : '选择' }}</el-button>
+        </section>
+      </AsyncState>
 
       <section v-else class="analysis-workspace">
         <aside class="surface-panel section-card card-panel resume-queue-panel">
@@ -1079,6 +1088,7 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
 .external-pdf-input { display: none; }
 .external-pdf-drop { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:10px; margin:8px; padding:10px 14px; border:1px dashed var(--border-teal); border-radius:var(--radius-control); background:linear-gradient(135deg, rgba(238,249,246,.72), rgba(255,255,255,.66)); cursor:pointer; transition:border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast), background var(--transition-fast); }
 .external-pdf-drop:hover { border-color:var(--primary); box-shadow:0 0 0 2px rgba(13,148,136,.08); transform:translateY(-1px); }
+.external-pdf-drop--empty { width:min(100%, 420px); margin:0; text-align:left; }
 .external-pdf-drop__icon { display:grid; width:32px; height:32px; place-items:center; border-radius:var(--radius-control); background:linear-gradient(145deg, var(--surface-teal), rgba(255,255,255,.7)); color:var(--primary); font-size:16px; }
 .external-pdf-drop strong, .external-pdf-drop small { display:block; }
 .external-pdf-drop strong { color:var(--text-main); font-size:12px; }
