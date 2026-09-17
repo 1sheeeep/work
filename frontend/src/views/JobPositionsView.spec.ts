@@ -21,7 +21,7 @@ describe('JobPositionsView', () => {
     const wrapper = mount(JobPositionsView, { attachTo: document.body })
     await flushPromises()
 
-    expect(wrapper.text()).toContain('岗位资料')
+    expect(wrapper.text()).toContain('运营概览')
     expect(wrapper.text()).toContain('真实岗位同步后会显示在这里')
     expect(wrapper.text()).not.toContain('BOSS 职位管理页同步')
     expect(wrapper.text()).not.toContain('新增职位')
