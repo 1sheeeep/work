@@ -11,6 +11,10 @@
 
 ## 发布
 
+团队仓库的 `Verify` 工作流会在 PR 和主分支运行后端、前端、浏览器桥接器与本地连接器检查。需要准备交付物时，仅在 `main` 使用 Actions → `Prepare release package` 手动运行；它重新测试并产出带提交号和 SHA-256 摘要的前后端构建、桥接器与本地连接器源码包，**不会连接或更新服务器**。发布包仅保留 7 天；下载后须先核对摘要。此包不是线上已发布或真实业务验收的证明。
+
+仓库中的共享入口方案使用 `compose.yaml`、`xz-erp-public-ingress` 网络和 8088 端口，当前桥接器文档也指向该端口；这不等于已经核实服务器运行态。下方 `compose.production.yaml` 单独占用 80/443 端口，且域名仍是示例值；不得直接对共享服务器执行以下独立部署命令。招聘专用受限发布通道、当前运行配置核对、数据库迁移门禁、备份及回退演练完成前，只能准备发布包，不得把它直接推上正式环境。ERP 的发布密钥和网关仅限 ERP，不能复用。
+
 ```sh
 docker compose -f compose.production.yaml --env-file .env.production up -d --build
 docker compose -f compose.production.yaml --env-file .env.production ps
