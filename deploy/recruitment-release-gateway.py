@@ -252,7 +252,7 @@ def deploy(sha, digest):
             'LABEL org.opencontainers.image.revision="' + sha + '"\n', encoding='ascii')
         (directory / 'web.Dockerfile').write_text(
             'FROM ' + previous_web + '\n'
-            'COPY web/ /srv/\n'
+            'ADD web.tar /srv/\n'
             'LABEL org.opencontainers.image.revision="' + sha + '"\n', encoding='ascii')
         run(['docker', 'build', '--network=none', '--pull=false', '-f', str(directory / 'backend.Dockerfile'),
              '-t', backend_image, str(directory)], timeout=600)
