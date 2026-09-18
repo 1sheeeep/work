@@ -8,4 +8,4 @@ case "$1" in
   deploy) [ "$#" -eq 3 ] || exit 2 ;;
   *) exit 2 ;;
 esac
-exec /usr/bin/sudo -n /usr/local/sbin/recruitment-release-gateway "$@"
+exec /usr/bin/sudo -n /usr/local/sbin/recruitment-release-gateway "$*"
