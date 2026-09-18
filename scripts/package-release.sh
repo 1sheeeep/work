@@ -15,7 +15,8 @@ if [ ! -s "$jar" ] || [ ! -s "$web/index.html" ]; then
 fi
 
 revision=$(git -C "$root" rev-parse --verify HEAD)
-if [ -n "${GITHUB_SHA:-}" ] && [ "$revision" != "$GITHUB_SHA" ]; then
+expected_revision=${RELEASE_SHA:-${GITHUB_SHA:-}}
+if [ -n "$expected_revision" ] && [ "$revision" != "$expected_revision" ]; then
   echo 'checked-out revision does not match this workflow run' >&2
   exit 1
 fi

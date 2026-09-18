@@ -3,5 +3,6 @@
 - [ ] 我在独立分支开发，没有直接把日常修改推到 `main`
 - [ ] `Verify` 工作流通过，且已检查失败日志或关键变更
 - [ ] 我已说明本次变更的影响范围、回滚方式和验收方式
+- [ ] 如果仓库已启用 Codex Cloud Code Review，已在 PR 评论中请求 `@codex review`
 - [ ] 如果修改了 `backend/src/main/resources/db/migration/`，已在说明中列出迁移版本，并单独确认迁移发布方案
 - [ ] 合并方式使用 squash；合并进入 `main` 后才触发生产发布

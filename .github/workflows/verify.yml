@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: verify-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -60,3 +61,24 @@ jobs:
       - name: Check local connector
         run: npm run check && npm test
         working-directory: boss-local-connector
+
+  main_push_policy:
+    name: Main changes must come from a merged pull request
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Reject direct main pushes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          pr_number="$(gh api \
+            --header 'Accept: application/vnd.github+json' \
+            "/repos/$GITHUB_REPOSITORY/commits/$COMMIT_SHA/pulls" \
+            --jq '[.[] | select(.base.ref == "main" and .merged_at != null)] | if length > 0 then .[0].number else empty end')"
+          test -n "$pr_number" || {
+            echo 'Direct pushes to main are not a release path. Create and merge a pull request.' >&2
+            exit 1
+          }
