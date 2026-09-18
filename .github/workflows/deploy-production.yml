@@ -1,0 +1,88 @@
+name: Deploy recruitment production
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recruitment-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Verify, package and deploy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    environment: recruitment-production
+    env:
+      # Keep release validation aligned with the dashboard business timezone.
+      TZ: Asia/Shanghai
+    steps:
+      - name: Require organization main branch
+        run: |
+          test "$GITHUB_REPOSITORY" = 'xz-development/recruitment-console'
+          test "$GITHUB_REF" = 'refs/heads/main'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Test and package backend
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/backend:/workspace" -w /workspace \
+            maven:3.9-eclipse-temurin-21 mvn -B -ntp package
+      - name: Test and build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm test
+          npm run build
+      - name: Check browser components
+        run: |
+          (cd boss-browser-bridge && npm run check && npm test)
+          (cd boss-local-connector && npm ci && npm run check && npm test)
+      - name: Build exact release bundle
+        run: bash scripts/package-release.sh "$RUNNER_TEMP/recruitment-package"
+      - name: Verify release identity
+        id: bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          package="$RUNNER_TEMP/recruitment-package/recruitment-release.tar.gz"
+          test -s "$package"
+          bundle_sha=$(cut -d' ' -f1 "$package.sha256")
+          tar -xOzf "$package" manifest.txt > "$RUNNER_TEMP/recruitment-manifest.txt"
+          grep -Fx "repository=xz-development/recruitment-console" "$RUNNER_TEMP/recruitment-manifest.txt"
+          grep -Fx "commit=$GITHUB_SHA" "$RUNNER_TEMP/recruitment-manifest.txt"
+          printf 'sha256=%s\n' "$bundle_sha" >> "$GITHUB_OUTPUT"
+      - name: Deploy through the recruitment-only gateway
+        shell: bash
+        env:
+          DEPLOY_KEY: ${{ secrets.RECRUITMENT_DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.RECRUITMENT_DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ vars.RECRUITMENT_DEPLOY_HOST }}
+          BUNDLE_SHA: ${{ steps.bundle.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          test "$DEPLOY_HOST" = '13.215.3.189'
+          test -n "$DEPLOY_KEY"
+          test -n "$DEPLOY_KNOWN_HOSTS"
+          umask 077
+          key="$RUNNER_TEMP/recruitment-release-key"
+          known_hosts="$RUNNER_TEMP/recruitment-release-known-hosts"
+          printf '%s\n' "$DEPLOY_KEY" > "$key"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$known_hosts"
+          chmod 600 "$key" "$known_hosts"
+          package="$RUNNER_TEMP/recruitment-package/recruitment-release.tar.gz"
+          ssh -i "$key" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$known_hosts" \
+            "recruitment-release@$DEPLOY_HOST" \
+            "deploy $GITHUB_SHA $BUNDLE_SHA" < "$package"

@@ -14,6 +14,9 @@ jobs:
   package:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    env:
+      # Keep release validation aligned with the dashboard business timezone.
+      TZ: Asia/Shanghai
     steps:
       - name: Require organization main branch
         run: |

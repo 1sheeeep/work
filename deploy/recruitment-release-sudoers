@@ -1,0 +1,1 @@
+recruitment-release ALL=(root) NOPASSWD: /usr/local/sbin/recruitment-release-gateway
