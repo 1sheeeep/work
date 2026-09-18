@@ -92,7 +92,7 @@ function render(status) {
   elements.enabledToggle.textContent = enabled ? '插件已开启' : '插件已关闭';
   elements.enabledToggle.title = enabled ? '点击暂停插件观测与自动回复' : '点击恢复插件观测与自动回复';
   elements.detailState.textContent = `详情复核：${status.detailState}`; elements.lastSync.textContent = status.lastSyncAt ? `最近同步：${new Date(status.lastSyncAt).toLocaleString('zh-CN')}` : '尚未同步真实快照';
-  elements.continuousReplyState.textContent = status.singleAccountAutoReplyState;
+  elements.continuousReplyState.textContent = `${status.singleAccountAutoReplyState || 'WAITING'}：${status.singleAccountAutoReplyReason || '等待状态同步。'}`;
   elements.continuousReplyBadge.textContent = status.singleAccountAutoReplyEnabled ? '运行中' : '已停止';
   elements.continuousReplyBadge.className = `badge ${status.singleAccountAutoReplyEnabled ? 'running' : 'paused'}`;
   elements.lastContinuousReply.textContent = status.lastSingleAccountAutoReplyAt ? `最近处理：${new Date(status.lastSingleAccountAutoReplyAt).toLocaleString('zh-CN')} · 已检查 ${status.singleAccountAutoReplyProcessedCount} 条` : '尚未处理消息';

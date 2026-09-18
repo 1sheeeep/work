@@ -7,6 +7,7 @@ import { ArrowLeft, Calendar, ChatDotRound, Clock, Close, InfoFilled, Location, 
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, apiErrorMessage, ensureCsrf } from '../services/api'
 import { useNotificationCenter } from '../composables/useNotificationCenter'
+import { replyIsActive, replyLifecycle, replyUiStatus } from '../utils/inboundReplyLifecycle'
 import type { AiDutyConversationTimeline, AiDutyEvent, AiDutyReviewRequired, AiReplyQualitySummary, AutoReplyPolicy, BrowserDevice, BrowserUnreadObservation, ConversationMessage } from '../types'
 
 const router = useRouter(); const notify = useNotificationCenter(); const loading = ref(true); const switching = ref(false); const loadError = ref('')
@@ -189,8 +190,8 @@ function qualityLabel(key: string): string {
 }
 
 // 「需要关注」区：待确认发送结果 + 待 HR 复核会话，两者共同构成行动入口
-const successfulDutyReplies = computed(() => dutyReplies.value.filter(event => event.sendStatus === 'SUCCEEDED'))
-const reviewItemCount = computed(() => dutyReplies.value.filter(event => event.sendStatus !== 'SUCCEEDED').length + dutyReviewRequired.value.filter(item => !dutyReplies.value.some(event => event.observationId === item.observationId)).length)
+const successfulDutyReplies = computed(() => dutyReplies.value.filter(event => replyUiStatus(event) === 'SUCCESS'))
+const reviewItemCount = computed(() => dutyReplies.value.filter(event => replyUiStatus(event) !== 'SUCCESS').length + dutyReviewRequired.value.filter(item => !dutyReplies.value.some(event => event.observationId === item.observationId)).length)
 const attentionUnconfirmed = computed(() => qualitySummary.value?.unconfirmedSends ?? 0)
 const attentionReview = computed(() => reviewItemCount.value)
 const attentionTotal = computed(() => attentionUnconfirmed.value + attentionReview.value)
@@ -221,9 +222,10 @@ function dutyTimelineDayLabel(value?: string): string {
     ? date.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' }) : ''
 }
 function sessionState(event?: AiDutyEvent, review?: AiDutyReviewRequired, observation?: BrowserUnreadObservation): DutySessionState {
-  if (event?.sendStatus === 'SUCCEEDED') return 'SUCCESS'
-  if (event && (event.sendStatus === 'FAILED' || event.sendStatus === 'UNKNOWN' || event.sendStatus === 'SKIPPED')) return 'REVIEW'
-  if (event && ['QUEUED', 'PROCESSING', 'RETRY_WAIT'].includes(event.taskStatus)) return 'PROCESSING'
+  const status = replyUiStatus(event)
+  if (status === 'SUCCESS') return 'SUCCESS'
+  if (status === 'FAILED' || status === 'UNCONFIRMED' || status === 'SILENT') return 'REVIEW'
+  if (event && replyLifecycle(event) !== 'DONE') return 'PROCESSING'
   if (review || observation?.unread) return 'REVIEW'
   return 'UNREAD'
 }
@@ -237,15 +239,17 @@ function sessionStateTone(state: DutySessionState): 'success' | 'warning' | 'inf
 type DutyOutcome = 'SUCCESS' | 'SILENT' | 'FAILED' | 'REVIEW' | 'PROCESSING' | 'UNREAD'
 function dutyOutcome(session: Pick<DutySession, 'event' | 'review' | 'observation' | 'detail'>): DutyOutcome {
   const event = session.event
-  if (event?.sendStatus === 'SUCCEEDED') return 'SUCCESS'
-  if (event?.sendStatus === 'FAILED' || event?.sendStatus === 'UNKNOWN') return 'FAILED'
-  if (event?.sendStatus === 'SKIPPED') {
+  const status = replyUiStatus(event)
+  if (status === 'SUCCESS') return 'SUCCESS'
+  if (status === 'FAILED' || status === 'UNCONFIRMED') return 'FAILED'
+  if (status === 'SILENT') {
     if (session.review) return 'REVIEW'
+    if (!event) return 'REVIEW'
     if (event.dispositionCode) return event.dispositionCode === 'EXPECTED_SILENCE' ? 'SILENT' : 'REVIEW'
     const detail = `${session.detail || ''} ${event.detail || ''}`
     return /安全作废|保持静默|正常静默|无需回复|已由 HR 处理|已处理/.test(detail) ? 'SILENT' : 'REVIEW'
   }
-  if (event && ['QUEUED', 'PROCESSING', 'RETRY_WAIT'].includes(event.taskStatus)) return 'PROCESSING'
+  if (event && replyIsActive(event)) return 'PROCESSING'
   if (session.review || session.observation?.unread) return 'REVIEW'
   return 'UNREAD'
 }
@@ -253,7 +257,7 @@ function dutyOutcomeLabel(session: Pick<DutySession, 'event' | 'review' | 'obser
   const labels: Record<DutyOutcome, string> = { SUCCESS: '已回复', SILENT: '静默处理', FAILED: '失败', REVIEW: '待复核', PROCESSING: 'AI 处理中', UNREAD: '待处理' }
   if (dutyOutcome(session) === 'PROCESSING') {
     const seconds = processingElapsedSeconds(session)
-    const phase = session.event?.taskStatus === 'QUEUED' ? '排队中' : session.event?.taskStatus === 'RETRY_WAIT' ? '等待重试' : 'AI 处理中'
+    const phase = replyUiStatus(session.event) === 'RETRY_WAIT' ? '等待重试' : replyUiStatus(session.event) === 'WAITING' ? '排队中' : 'AI 处理中'
     return `${phase} ${formatProcessingDuration(seconds)}${seconds >= 90 ? ' · 已超时' : ''}`
   }
   const dispositionLabels: Record<string, string> = {
@@ -385,8 +389,8 @@ const selectedDutyTimeline = computed<DutyTimelineRow[]>(() => {
   }
   const replyAt = session.event?.sendCompletedAt || session.event?.completedAt || session.event?.updatedAt
   if (session.replyContent && !contains('ai', session.replyContent, replyAt)) {
-    const deliveryStatus = session.event?.sendStatus === 'SUCCEEDED' ? 'SENT'
-      : session.event?.sendStatus === 'FAILED' ? 'FAILED' : 'PENDING_REVIEW'
+    const deliveryStatus = replyUiStatus(session.event) === 'SUCCESS' ? 'SENT'
+      : replyUiStatus(session.event) === 'FAILED' ? 'FAILED' : 'PENDING_REVIEW'
     rows.push({ id: `${session.observationId}-ai-${session.event?.id || 'latest'}`, kind: 'ai', label: 'AI 回复', content: cleanConversationDisplayText(session.replyContent), at: replyAt, deliveryStatus })
   }
   if (session.detail && !session.replyContent) rows.push({ id: `${session.observationId}-status`, kind: 'status', label: sessionStateLabel(session.state), content: session.detail, at: session.latestAt, tone: sessionStateTone(session.state) })

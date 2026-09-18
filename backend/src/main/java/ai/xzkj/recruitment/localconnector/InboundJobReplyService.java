@@ -66,7 +66,9 @@ class InboundJobReplyService {
     private static final Pattern SALARY_QUESTION = Pattern.compile(
             "(?:(?:薪资|工资|底薪|月薪|薪酬|待遇).{0,14}(?:多少|几|是|为|吗|么|呢|范围|构成)|(?:多少|几).{0,8}(?:薪资|工资|底薪))");
     private static final Pattern BENEFITS_QUESTION = Pattern.compile(
-            "(?:(?:五险一金|五险|社保|公积金|福利|福利待遇|待遇).{0,14}(?:有|缴纳|包含|是否|吗|么|呢|提供|如何|怎样)|(?:是否|有没有|有无).{0,10}(?:五险|社保|公积金|福利|待遇))");
+            "(?:(?:五险一金|五险|社保|公积金|福利|福利待遇|待遇).{0,20}(?:有|缴纳|包含|是否|吗|么|呢|提供|如何|怎样|怎么样|咋样|什么|哪些|多少|标准|情况)|"
+                    + "(?:是否|有没有|有无|请问|想了解|想问|咨询|问下).{0,12}(?:五险|社保|公积金|福利|待遇)|"
+                    + "(?:公司|岗位|这边).{0,8}(?:福利|待遇).{0,12}(?:怎么样|咋样|如何|怎样|有哪些|包括什么))");
     private static final Pattern WORK_TIME_QUESTION = Pattern.compile(
             "(?:(?:双休|单休|大小周|月休|休息几天|每周休息|工作时间|上班时间|休息安排|几点上班|几点下班|打卡时间).{0,14}(?:吗|么|呢|是|还是|如何|怎样|多少|几天|怎么|安排|[?？])|(?:是双休|单双休|大小周))");
     private static final Pattern WORK_SCHEDULE_REASON = Pattern.compile(
@@ -85,6 +87,10 @@ class InboundJobReplyService {
                     + "(?:面试|面谈|约面).{0,12}(?:取消|不参加|去不了|不去|不方便去|改天再说|先不面|暂不面)|"
                     + "(?:抱歉|不好意思|临时有事|有事).{0,28}(?:无法|不能|没法|不便).{0,18}(?:参加|赴约|过去|到场).{0,8}(?:面试|面谈|约面)|"
                     + "(?:无法|不能|没法|不便).{0,18}(?:(?:按时|按照.{0,8}时间).{0,6})?(?:参加|赴约|过去|到场).{0,8}(?:面试|面谈|约面))");
+    private static final Pattern INTERVIEW_ACCEPTANCE = Pattern.compile(
+            "(?:(?<!不)(?:接受|同意|愿意|确认|确定)[，,、。！!\\s]{0,8}(?:参加|去|到场|到公司|到店|进行)?(?:面试|面谈|约面)|"
+                    + "(?:可以|能|行|没问题|好的?|好呀|好哒)[，,、。！!\\s]{0,8}(?:参加|去|到场|到公司|到店|进行)?(?:面试|面谈|约面)|"
+                    + "(?:面试|面谈|约面).{0,8}(?:接受|同意|愿意|确认|确定|可以|能|行|没问题|好的?|好呀|好哒))");
     private static final Pattern INTERVIEW_RESULT_INQUIRY = Pattern.compile(
             "(?:(?:面试|面谈).{0,18}(?:结果|通过|录用|反馈|通知|消息)|"
                     + "(?:结果|通过|录用|反馈|通知).{0,18}(?:面试|面谈)|"
@@ -197,6 +203,7 @@ class InboundJobReplyService {
         if (HUMAN_REQUIRED.matcher(message).find()) return blocked("HUMAN_HANDOFF", "消息涉及投诉、争议或明确要求人工处理，已转 HR 跟进");
         if (isInterviewResultInquiry(message, context)) return blocked("INTERVIEW_RESULT", "候选人正在询问面试或录用结果，禁止自动判断并转 HR 跟进");
         if (isInterviewCancellation(message)) return candidateDeclineReply("已识别候选人取消面试，发送礼貌收尾，不再继续自动跟进");
+        if (isInterviewAcceptance(message, context)) return interviewAcceptanceSilence();
         if (isInterviewCoordination(message, context)) return blocked("INTERVIEW_COORDINATION", "疑似正在确认或变更面试时间，已停止自动回复并转 HR 跟进");
         if (!job.isKnowledgeApproved()) return blocked("UNCERTAIN", "岗位回复资料尚未审核");
         if (trustedRuntime.interviewScheduled()) return blocked("INTERVIEW_COORDINATION", "可信会话状态显示已经进入面试安排，已转 HR 跟进");
@@ -500,6 +507,7 @@ class InboundJobReplyService {
         Set<String> topics = new LinkedHashSet<>();
         if (content.matches(".*(地址|地点|哪里上班|在哪上班|工作地).*$")) topics.add("LOCATION");
         if (content.matches(".*(薪资|工资|待遇|底薪|提成|多少钱).*$")) topics.add("SALARY");
+        if (content.matches(".*(福利|社保|五险|公积金|补贴|奖金|年终奖|带薪年假).*$")) topics.add("BENEFITS");
         if (content.matches(".*(经验|做过|没做过|应届|小白).*$")) topics.add("EXPERIENCE");
         if (content.matches(".*(学历|大专|本科|中专|高中).*$")) topics.add("EDUCATION");
         if (content.matches(".*(做什么|干嘛|职责|工作内容|主要负责).*$")) topics.add("RESPONSIBILITIES");
@@ -728,8 +736,13 @@ class InboundJobReplyService {
      * AI 不可用或返回新增事实时直接回退到安全原文。
      */
     private String polishFactReply(String baseReply, String protectedFact) {
+        return polishFactReply(baseReply, protectedFact, false);
+    }
+
+    private String polishFactReply(String baseReply, String protectedFact, boolean force) {
         if (baseReply == null || baseReply.isBlank() || protectedFact == null || protectedFact.isBlank()
-                || !shouldPolishFixedReplies()) return baseReply;
+                || (!force && !shouldPolishFixedReplies())
+                || !properties.isConfigured()) return baseReply;
         ObjectNode payload = basePayload(160);
         payload.put("temperature", 0.2);
         ArrayNode messages = payload.putArray("messages");
@@ -837,9 +850,18 @@ class InboundJobReplyService {
             return new Decision(true, "WORK_TIME", 1.0, "工作方面的具体情况，面试的时候会详细解答。",
                     "已命中工作安排问题固定回复，将具体细节留待面试说明");
         }
-        if (BENEFITS_QUESTION.matcher(message).find()) {
-            return new Decision(true, "BENEFITS", 1.0, "社保情况面试时会详细说明。",
-                    "已命中社保类问题安全兜底模板，不猜测未审核的缴纳时间或标准");
+        if (isBenefitsQuestion(message, memory)) {
+            String benefits = clean(job.getBenefits(), 500);
+            String base = benefits.isBlank()
+                    ? "社保情况面试时会详细说明。"
+                    : "公司福利待遇包括" + benefits + "，具体细节面试时再沟通。";
+            String reply = benefits.isBlank() ? base : polishFactReply(base, benefits, true);
+            return new Decision(true, "BENEFITS", 1.0, reply,
+                    benefits.isBlank()
+                            ? "已识别福利待遇问题；岗位未提供可直接引用的福利明细，使用安全兜底回复"
+                            : reply.equals(base)
+                                ? "已引用当前岗位福利资料，使用固定事实回复"
+                                : "已引用当前岗位福利资料，并完成 AI 轻量润色");
         }
         if (isPureResumeSentStatement(message)) {
             return new Decision(true, "RESUME_SENT", 1.0, RESUME_RECEIVED_REPLY,
@@ -912,6 +934,13 @@ class InboundJobReplyService {
         return matches >= 2;
     }
 
+    private static boolean isBenefitsQuestion(String message, ConversationMemory memory) {
+        if (BENEFITS_QUESTION.matcher(message).find()) return true;
+        if (memory == null || !memory.pendingCandidateTopics().contains("BENEFITS")
+                || isPureAcknowledgement(message) || isPureGreeting(message)) return false;
+        return message.matches(".*(?:那|具体|详细|情况|怎么|如何|哪些|什么|呢|吗|？|\\?).*");
+    }
+
     static boolean isWorkTimeQuestion(String rawMessage) {
         String message = normalize(rawMessage);
         return !message.isBlank() && (WORK_TIME_QUESTION.matcher(message).find() || WORK_SCHEDULE_REASON.matcher(message).find());
@@ -934,6 +963,17 @@ class InboundJobReplyService {
         return rawMessage != null && INTERVIEW_CANCELLATION.matcher(normalize(rawMessage)).find();
     }
 
+    static boolean isInterviewAcceptance(String rawMessage, String context) {
+        String current = normalize(rawMessage);
+        if (current.isBlank() || isInterviewCancellation(current) || isInterviewResultInquiry(current, context)) return false;
+        // Questions and time changes must remain with HR; this branch is only a
+        // confirmed acceptance of an already proposed interview.
+        if (current.matches(".*(?:吗|么|嘛|呢|怎么|什么时候|何时|哪天|几点|时间|安排|改到|推迟|提前).*")) return false;
+        if (INTERVIEW_ACCEPTANCE.matcher(current).find()) return true;
+        return INTERVIEW_WORDS.matcher(normalize(context)).find()
+                && PURE_ACKNOWLEDGEMENT.matcher(current).matches();
+    }
+
     static boolean isDetailedResponsibilityQuestion(String rawMessage) {
         return rawMessage != null && DETAILED_RESPONSIBILITIES_QUESTION.matcher(normalize(rawMessage)).find();
     }
@@ -948,6 +988,11 @@ class InboundJobReplyService {
         if (reply.isBlank()) reply = base;
         return new Decision(true, "CANDIDATE_DECLINE", 1.0, reply,
                 reply.equals(base) ? reason : reason + "，并完成轻量 AI 润色");
+    }
+
+    private Decision interviewAcceptanceSilence() {
+        return new Decision(false, "INTERVIEW_ACCEPTED", 1.0, null,
+                "正常静默：候选人已接受面试安排，后续由 HR 继续处理");
     }
 
     static boolean isRoleConfirmationQuestion(JobPosition job, String rawMessage) {

@@ -651,6 +651,7 @@ async function clearPendingSendReconciliation(taskId) {
 async function recordAutoReplyTrace(payload) {
   if (!payload || typeof payload.stage !== 'string' || !/^[A-Z][A-Z0-9_]{1,47}$/.test(payload.stage)
       || (payload.outcome != null && (typeof payload.outcome !== 'string' || payload.outcome.length > 24))
+      || (payload.lifecycle != null && !['WAITING', 'PROCESSING', 'DONE'].includes(payload.lifecycle))
       || (payload.reason != null && (typeof payload.reason !== 'string' || payload.reason.length > 300))
       || (payload.runId != null && (typeof payload.runId !== 'string' || payload.runId.length > 64))
       || (payload.chatDigest != null && !/^[a-f0-9]{1,64}$/.test(payload.chatDigest))
@@ -668,6 +669,7 @@ async function recordAutoReplyTrace(payload) {
     occurredAt,
     stage: payload.stage,
     outcome: String(payload.outcome || 'INFO').slice(0, 24),
+    lifecycle: ['WAITING', 'PROCESSING', 'DONE'].includes(payload.lifecycle) ? payload.lifecycle : 'PROCESSING',
     runId: payload.runId ? payload.runId.slice(0, 64) : null,
     chatDigest: payload.chatDigest ? payload.chatDigest.slice(0, 12) : null,
     messageDigest: payload.messageDigest ? payload.messageDigest.slice(0, 12) : null,
@@ -697,7 +699,8 @@ async function recordSingleAccountAutoReplyResult(payload) {
       || typeof payload.reason !== 'string' || payload.reason.length > 300
       || !Number.isFinite(Date.parse(payload.occurredAt))) throw new Error('持续自动回复结果无效。');
   const key = `${payload.chatDigest}:${payload.messageDigest}`;
-  await updateSingleAccountProcessedMessage(key, payload.outcome);
+  const resultChanged = await updateSingleAccountProcessedMessage(key, payload.outcome);
+  if (!resultChanged) return { ok: true, shouldStop: false, duplicate: true };
   const runtime = await getRuntime();
   const previousFailures = Number(runtime.singleAccountConsecutiveFailures || 0);
   const consecutiveFailures = nextConsecutiveFailureCount(previousFailures, payload.outcome);
@@ -706,7 +709,7 @@ async function recordSingleAccountAutoReplyResult(payload) {
   // not freeze every other conversation in the account for this transient read
   // failure.  Other UNKNOWN causes still use the account safety stop.
   const transientDetailReadFailure = payload.outcome === 'UNKNOWN'
-    && /会话详情(?:暂不可读|不可读|无法读取)|当前会话(?:暂不可读|不可读|无法读取)/.test(payload.reason);
+    && /SEND_CONFIRMATION_UNKNOWN|会话详情(?:暂不可读|不可读|无法读取)|当前会话(?:暂不可读|不可读|无法读取)/.test(payload.reason);
   const shouldStop = consecutiveFailures >= 3 && !transientDetailReadFailure;
   await setRuntime({
     singleAccountAutoReplyEnabled: shouldStop ? false : runtime.singleAccountAutoReplyEnabled === true,
@@ -716,6 +719,12 @@ async function recordSingleAccountAutoReplyResult(payload) {
     } : {}),
     singleAccountConsecutiveFailures: consecutiveFailures,
     singleAccountAutoReplyState: shouldStop ? `连续 ${consecutiveFailures} 次页面发送结果无法确认，已自动停止，请 HR 检查 BOSS 页面。`
+      : transientDetailReadFailure && consecutiveFailures >= 3
+        ? `连续 ${consecutiveFailures} 次发送回执详情暂不可读；相关任务已冻结且不会重发，继续处理其他会话。`
+      : payload.outcome === 'SENT' ? `已发送：${payload.reason}`
+      : payload.outcome === 'SILENT' ? `已静默跳过：${payload.reason}` : `结果待人工确认：${payload.reason}`,
+    singleAccountAutoReplyLifecycle: 'DONE',
+    singleAccountAutoReplyReason: shouldStop ? `连续 ${consecutiveFailures} 次页面发送结果无法确认，已自动停止，请 HR 检查 BOSS 页面。`
       : transientDetailReadFailure && consecutiveFailures >= 3
         ? `连续 ${consecutiveFailures} 次发送回执详情暂不可读；相关任务已冻结且不会重发，继续处理其他会话。`
       : payload.outcome === 'SENT' ? `已发送：${payload.reason}`
@@ -731,13 +740,23 @@ async function recordSingleAccountAutoReplyState(payload) {
     throw new Error('持续自动回复状态无效。');
   }
   const runtime = await getRuntime();
+  const state = payload.state.trim();
+  const nextEnabled = payload.disable ? false : runtime.singleAccountAutoReplyEnabled === true;
+  const nextLifecycle = classifyAutoReplyLifecycle(state, payload.disable);
+  if (runtime.singleAccountAutoReplyState === nextLifecycle
+      && runtime.singleAccountAutoReplyReason === state
+      && runtime.singleAccountAutoReplyEnabled === nextEnabled) {
+    return { ok: true, unchanged: true };
+  }
   await setRuntime({
-    singleAccountAutoReplyEnabled: payload.disable ? false : runtime.singleAccountAutoReplyEnabled === true,
+    singleAccountAutoReplyEnabled: nextEnabled,
     ...(payload.disable ? {
-      singleAccountSafetyStop: payload.state.trim(),
+      singleAccountSafetyStop: state,
       singleAccountSafetyStopDutyStartedAt: runtime.singleAccountDutyStartedAt || null,
     } : {}),
-    singleAccountAutoReplyState: payload.state.trim(),
+    singleAccountAutoReplyState: nextLifecycle,
+    singleAccountAutoReplyLifecycle: nextLifecycle,
+    singleAccountAutoReplyReason: state,
     lastSingleAccountAutoReplyAt: payload.observedAt,
   });
   return { ok: true };
@@ -769,12 +788,16 @@ async function claimSingleAccountMessage(key) {
 }
 
 async function updateSingleAccountProcessedMessage(key, outcome) {
+  let changed = false;
   await mutateRuntime((runtime) => {
     const previous = (runtime.singleAccountProcessedMessages || []).find((item) => item.key === key) || {};
+    if (previous.outcome === outcome) return {};
     const entries = (runtime.singleAccountProcessedMessages || []).filter((item) => item.key !== key);
     entries.push({ ...previous, key, outcome, at: new Date().toISOString() });
+    changed = true;
     return { singleAccountProcessedMessages: compactProcessedMessages(entries) };
   });
+  return changed;
 }
 
 async function attachSingleAccountTask(key, taskId, chatDigest, messageDigest, options = {}) {
@@ -1743,8 +1766,30 @@ async function getRuntime() {
   return stored[RUNTIME_KEY] || {};
 }
 
+function classifyAutoReplyLifecycle(state, disabled = false) {
+  if (disabled) return 'DONE';
+  const text = String(state || '');
+  if (/等待|稍后|暂停|复核|重试|暂不可读|未找到|未就绪|不可用/.test(text)) return 'WAITING';
+  if (/已发送|已静默|已完成|已处理|结果待人工|已停止|失败/.test(text)) return 'DONE';
+  return 'PROCESSING';
+}
+
+function normalizeAutoReplyRuntimePatch(patch) {
+  if (!patch || typeof patch !== 'object' || !Object.prototype.hasOwnProperty.call(patch, 'singleAccountAutoReplyState')) return patch;
+  const reason = String(patch.singleAccountAutoReplyReason || patch.singleAccountAutoReplyState || '').slice(0, 300);
+  const lifecycle = ['WAITING', 'PROCESSING', 'DONE'].includes(patch.singleAccountAutoReplyLifecycle)
+    ? patch.singleAccountAutoReplyLifecycle
+    : classifyAutoReplyLifecycle(reason, patch.singleAccountAutoReplyEnabled === false);
+  return {
+    ...patch,
+    singleAccountAutoReplyState: lifecycle,
+    singleAccountAutoReplyLifecycle: lifecycle,
+    singleAccountAutoReplyReason: reason,
+  };
+}
+
 async function setRuntime(patch) {
-  return mutateRuntime(() => patch);
+  return mutateRuntime(() => normalizeAutoReplyRuntimePatch(patch));
 }
 
 async function mutateRuntime(createPatch) {
@@ -1754,7 +1799,11 @@ async function mutateRuntime(createPatch) {
   await previous;
   try {
     const current = await getRuntime();
-    const patch = await createPatch(current);
+    // Keep every runtime write on the same lifecycle boundary. A number of
+    // background recovery paths write through mutateRuntime directly; doing
+    // the normalization here prevents one of those paths from reintroducing
+    // the old verbose status text after setRuntime() has already normalized it.
+    const patch = normalizeAutoReplyRuntimePatch(await createPatch(current));
     if (patch && Object.keys(patch).length > 0) {
       await chrome.storage.local.set({ [RUNTIME_KEY]: { ...current, ...patch } });
     }

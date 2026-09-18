@@ -23,9 +23,12 @@
   // A full BOSS virtual list can contain thousands of rows. Give the page
   // loop back to READY sends after a small read-only scan window instead of
   // monopolising it for an 80-position sweep.
-  const LIST_SCAN_MAX_POSITIONS_PER_TURN = 8;
-  const LIST_SCAN_MAX_TURN_MS = 1_800;
-  const LIST_SCAN_CONTINUE_DELAY_MS = 200;
+  // Keep deep virtual-list scans deliberately short and infrequent.  A long
+  // list must not monopolise the page while a new message is waiting in the
+  // currently open conversation.
+  const LIST_SCAN_MAX_POSITIONS_PER_TURN = 4;
+  const LIST_SCAN_MAX_TURN_MS = 1_200;
+  const LIST_SCAN_CONTINUE_DELAY_MS = 1_200;
   const READ_REPLY_REVIEW_INTERVAL_MS = 30_000;
   const READ_REPLY_REVIEW_MAX_AGE_MS = 30 * 24 * 60 * 60_000;
   let collectTimer = null;
@@ -33,8 +36,10 @@
   let autoReplyArm = null;
   let autoReplyTimer = null;
   let autoReplyBusy = false;
+  let autoReplyGeneration = 0;
   let singleAccountAutoReplyEnabled = false;
   let singleAccountAutoReplyTimer = null;
+  let singleAccountAutoReplyDueAt = 0;
   let dutyControlTimer = null;
   let singleAccountPendingChatDigest = null;
   // BOSS virtualizes the conversation list. The selected row can disappear
@@ -49,12 +54,11 @@
   let conversationScanCursors = new Map();
   let singleAccountPendingReplies = new Map();
   let singleAccountUnknownReconciliations = new Map();
-  // Keep pipeline lanes explicit. The scan queue only contains page targets;
-  // analysis tasks are durable backend jobs; send/revalidation queues contain
-  // task ids and never perform page operations concurrently.
-  let singleAccountAnalysisQueue = [];
-  let singleAccountSendQueue = [];
-  let singleAccountRevalidationQueue = [];
+  // One page-side task queue. Each entry keeps its existing lane so the
+  // scheduler can preserve SEND -> ANALYSIS -> REVALIDATION priority without
+  // maintaining three independent arrays.
+  let singleAccountPipelineQueue = [];
+  const PIPELINE_LANE_PRIORITY = { SEND: 0, ANALYSIS: 1, REVALIDATION: 2 };
   let singleAccountRetryLocateDeferrals = new Map();
   let singleAccountRetryRefreshAt = 0;
   let singleAccountConversationQueue = [];
@@ -78,6 +82,8 @@
   const READY_SEND_WAKE_AFTER_MS = 15_000;
   const READY_SEND_WAKE_INTERVAL_MS = 10_000;
   const READY_SEND_RELOCATE_DELAY_MS = 4_000;
+  const READY_SEND_MAX_LOCATE_FAILURES = 10;
+  const READY_SEND_MAX_WAIT_MS = 2 * 60_000;
   const LIST_DOM_RETRY_DELAY_MS = 4_000;
   const LIST_POINTER_IDLE_FOCUS_MS = 10_000;
   const AUTO_REPLY_WAKE_WATCHDOG_MS = 5_000;
@@ -100,6 +106,7 @@
   let resumeCardScanTimer = null;
   let resumeAttachmentProcessing = false;
   let resumePreviewOpenPending = false;
+  let resumeCaptureStatusCollapsed = false;
   let resumePreviewCloseFirstFailureAt = 0;
   let resumePreviewCloseAttempts = 0;
   // A transcript export is strictly read-only. MutationObserver events from
@@ -126,6 +133,12 @@
   let autoReplyTraceRunStartedAt = 0;
   let autoReplyTraceRunSequence = 0;
   let autoReplyWakeWatchdogTimer = null;
+  let autoReplyWatchdogRecoveryCount = 0;
+  let autoReplyWatchdogLastProgressAt = 0;
+  let autoReplyWatchdogRecoveryAt = 0;
+  const AUTO_REPLY_STALL_THRESHOLD_MS = 90_000;
+  const AUTO_REPLY_WATCHDOG_COOLDOWN_MS = 10 * 60_000;
+  const AUTO_REPLY_WATCHDOG_MAX_RECOVERIES = 3;
   const clickedResumeCardControls = new WeakSet();
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -174,8 +187,7 @@
   });
 
   const observer = new MutationObserver((mutations) => {
-    const pageChanged = mutations.some((mutation) =>
-      !(mutation.target instanceof Element && mutation.target.closest('#__recruitment_capture_status')));
+    const pageChanged = mutations.some(automationRelevantMutation);
     if (!pageChanged) return;
     scheduleCollect(1_200);
     scheduleAutoReplyCheck(500);
@@ -183,6 +195,15 @@
     if (!transcriptCaptureInProgress) scheduleResumeCardScan(1_000);
   });
   observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'data-id'] });
+
+  function automationRelevantMutation(mutation) {
+    if (mutation.target instanceof Element && mutation.target.closest('#__recruitment_capture_status')) return false;
+    const selectors = `${SELECTORS.conversation}, ${SELECTORS.activeConversation}, .message-card-wrap, .hyperLink, [class*="resume"], .boss-popup__wrapper, .user-list`;
+    if (mutation.target instanceof Element && mutation.target.closest(selectors)) return true;
+    if (mutation.type !== 'childList') return false;
+    return [...mutation.addedNodes, ...mutation.removedNodes]
+      .some((node) => node instanceof Element && (node.matches(selectors) || node.querySelector(selectors)));
+  }
   document.addEventListener('click', (event) => {
     const nodes = [...event.composedPath()].filter((c) => c instanceof HTMLElement);
     const node = nodes.find((c) => /^(?:查看简历|点击预览附件简历|预览附件简历)$/.test(compact(controlLabel(c))));
@@ -208,8 +229,7 @@
     scheduleCollect(300);
     scheduleDutyControlSync(0);
     if (singleAccountAutoReplyEnabled) {
-      clearTimeout(singleAccountAutoReplyTimer);
-      singleAccountAutoReplyTimer = null;
+      clearSingleAccountAutoReplyTimer();
       traceAutoReply('PAGE_VISIBLE_RESUMED', { outcome: 'INFO', reason: '页面已恢复可见，立即重新校验会话并继续待处理队列。' });
       scheduleSingleAccountAutoReply(100);
     }
@@ -444,6 +464,7 @@
 
   async function setSingleAccountAutoReply(enabled, restore = false) {
     if (enabled && autoReplyArm) return { ok: false, error: '请先取消当前单会话一次触发测试。' };
+    autoReplyGeneration += 1;
     const wasEnabled = singleAccountAutoReplyEnabled;
     let initialUnreadCount = 0;
     singleAccountAutoReplyEnabled = enabled;
@@ -465,9 +486,7 @@
       conversationScanCursors = new Map();
       singleAccountPendingReplies = new Map();
       singleAccountUnknownReconciliations = new Map();
-      singleAccountAnalysisQueue = [];
-      singleAccountSendQueue = [];
-      singleAccountRevalidationQueue = [];
+      resetPipelineQueues();
       singleAccountRetryLocateDeferrals = new Map();
       singleAccountRetryRefreshAt = 0;
       singleAccountConversationQueue = [];
@@ -477,6 +496,7 @@
       singleAccountBacklogSeen = new Map();
       singleAccountQueueWindowInitialized = false;
     } else if (!wasEnabled) {
+      if (!restore) autoReplyWatchdogRecoveryCount = 0;
       resumePreviewOpenPending = false;
       resumeCaptureRequest = null;
       resumePreviewOpenAttempts = 0;
@@ -520,9 +540,7 @@
         readyDiscoveredAt: task.recoveredSend && Number.isFinite(Date.parse(task.updatedAt || ''))
           ? Date.parse(task.updatedAt) : undefined,
       }]));
-      singleAccountAnalysisQueue = [];
-      singleAccountSendQueue = [];
-      singleAccountRevalidationQueue = [];
+      resetPipelineQueues();
       for (const task of singleAccountPendingReplies.values()) {
         if (task.recoveredSend === true || task.queueLane === 'SEND') enqueuePipelineTask(task.taskId, 'SEND');
         else if (task.retryable === true || task.queueLane === 'REVALIDATION') enqueuePipelineTask(task.taskId, 'REVALIDATION');
@@ -542,8 +560,7 @@
       singleAccountQueueWindowInitialized = false;
       await persistSingleAccountBaseline();
     }
-    clearTimeout(singleAccountAutoReplyTimer);
-    singleAccountAutoReplyTimer = null;
+    clearSingleAccountAutoReplyTimer();
     if (enabled) {
       ensureAutoReplyWakeWatchdog();
       scheduleSingleAccountAutoReply(800);
@@ -567,37 +584,51 @@
   }
 
   function pipelineQueueFor(lane) {
-    if (lane === 'SEND') return singleAccountSendQueue;
-    if (lane === 'REVALIDATION') return singleAccountRevalidationQueue;
-    return singleAccountAnalysisQueue;
+    return singleAccountPipelineQueue
+      .filter((entry) => entry.lane === lane)
+      .map((entry) => entry.taskId);
+  }
+
+  function resetPipelineQueues() {
+    singleAccountPipelineQueue.length = 0;
+  }
+
+  function orderedPipelineTaskIds() {
+    return singleAccountPipelineQueue
+      .slice()
+      .sort((left, right) => (PIPELINE_LANE_PRIORITY[left.lane] ?? 1) - (PIPELINE_LANE_PRIORITY[right.lane] ?? 1))
+      .map((entry) => entry.taskId);
   }
 
   function removePipelineTask(taskId) {
     if (!taskId) return;
-    for (const queue of [singleAccountAnalysisQueue, singleAccountSendQueue, singleAccountRevalidationQueue]) {
-      const index = queue.indexOf(taskId);
-      if (index >= 0) queue.splice(index, 1);
+    // Remove every occurrence so a lane transition cannot leave a duplicate
+    // task behind in the unified queue.
+    for (let index = singleAccountPipelineQueue.length - 1; index >= 0; index -= 1) {
+      if (singleAccountPipelineQueue[index].taskId === taskId) singleAccountPipelineQueue.splice(index, 1);
     }
   }
 
   function enqueuePipelineTask(taskId, lane = 'ANALYSIS') {
     if (!taskId) return;
     removePipelineTask(taskId);
-    const queue = pipelineQueueFor(lane);
-    queue.push(taskId);
+    singleAccountPipelineQueue.push({ taskId, lane: PIPELINE_LANE_PRIORITY[lane] == null ? 'ANALYSIS' : lane });
   }
 
-  function removePendingPipelineTask(taskId) {
+  function removePendingPipelineTask(taskId, chatDigest = null) {
     removePipelineTask(taskId);
     singleAccountPendingReplies.delete(taskId);
+    if (chatDigest && singleAccountPendingChatDigest === chatDigest) {
+      singleAccountPendingChatDigest = null;
+    }
   }
 
   function pipelineQueueDepths() {
     return {
       scan: singleAccountConversationQueue.length,
-      analysis: singleAccountAnalysisQueue.length,
-      send: singleAccountSendQueue.length,
-      revalidation: singleAccountRevalidationQueue.length,
+      analysis: pipelineQueueFor('ANALYSIS').length,
+      send: pipelineQueueFor('SEND').length,
+      revalidation: pipelineQueueFor('REVALIDATION').length,
     };
   }
 
@@ -1146,9 +1177,16 @@
   async function nextReadyInboundReply(preferredTaskId = null, { includeRetryable = true } = {}) {
     const now = Date.now();
     const preferredTask = preferredTaskId ? singleAccountPendingReplies.get(preferredTaskId) : null;
+    // Backend tasks can reach a terminal state between polls. Remove their
+    // lane ids before building the next polling batch so stale ids do not keep
+    // the scheduler waking up and re-scanning the same work forever.
+    const liveTaskIds = new Set(singleAccountPendingReplies.keys());
+    for (let index = singleAccountPipelineQueue.length - 1; index >= 0; index -= 1) {
+      if (!liveTaskIds.has(singleAccountPipelineQueue[index].taskId)) singleAccountPipelineQueue.splice(index, 1);
+    }
     const orderedTaskIds = preferredTask
       ? [preferredTaskId]
-      : [...singleAccountSendQueue, ...singleAccountAnalysisQueue, ...singleAccountRevalidationQueue,
+      : [...orderedPipelineTaskIds(),
         ...singleAccountPendingReplies.keys()];
     const seenTaskIds = new Set();
     const entries = orderedTaskIds
@@ -1289,7 +1327,7 @@
       const activeReady = (task?.recoveredSend === true || task?.queueLane === 'SEND') && task?.retryable !== true;
       const deferredUntil = Number(singleAccountRetryLocateDeferrals.get(task?.taskId) || 0);
       if (deferredUntil && deferredUntil <= Date.now()) singleAccountRetryLocateDeferrals.delete(task.taskId);
-      if (!task?.taskId || (!activeReady && deferredUntil > Date.now())
+      if (!task?.taskId || deferredUntil > Date.now()
           || singleAccountPendingReplies.has(task.taskId)) continue;
       if (activeReady) singleAccountRetryLocateDeferrals.delete(task.taskId);
       const restored = { ...task, nextPollAt: 0,
@@ -1305,8 +1343,17 @@
     });
   }
 
+  function traceLifecycle(outcome) {
+    if (['WAITING', 'BLOCKED'].includes(outcome)) return 'WAITING';
+    if (['SENT', 'SKIPPED', 'UNKNOWN', 'STOPPED'].includes(outcome)) return 'DONE';
+    return 'PROCESSING';
+  }
+
   function traceAutoReply(stage, fields = {}) {
     const now = Date.now();
+    if (!['LOOP_BUSY', 'AUTO_REPLY_WATCHDOG_WAKE', 'AUTO_REPLY_WATCHDOG_COOLDOWN'].includes(stage)) {
+      autoReplyWatchdogLastProgressAt = now;
+    }
     const reason = compact(fields.reason || '').slice(0, 220);
     const key = [stage, fields.chatDigest || '', fields.messageDigest || '', reason].join('|');
     if (key === lastAutoReplyTraceKey && now - lastAutoReplyTraceAt < 2_000) return;
@@ -1315,6 +1362,7 @@
     const payload = {
       stage,
       outcome: String(fields.outcome || 'INFO').slice(0, 24),
+      lifecycle: traceLifecycle(String(fields.outcome || 'INFO').slice(0, 24)),
       runId: autoReplyTraceRunId || null,
       chatDigest: fields.chatDigest || null,
       messageDigest: fields.messageDigest || null,
@@ -1327,6 +1375,7 @@
       occurredAt: new Date(now).toISOString(),
     };
     const details = [
+      payload.lifecycle,
       payload.outcome !== 'INFO' ? payload.outcome : '',
       payload.queuePosition != null ? `队列#${payload.queuePosition}` : '',
       payload.attempt != null ? `第${payload.attempt}次` : '',
@@ -1342,18 +1391,73 @@
   }
 
   function scheduleSingleAccountAutoReply(delay) {
-    if (!singleAccountAutoReplyEnabled || singleAccountAutoReplyTimer) return;
+    if (!singleAccountAutoReplyEnabled) return;
+    const dueAt = Date.now() + Math.max(0, Number(delay) || 0);
+    if (singleAccountAutoReplyTimer && singleAccountAutoReplyDueAt <= dueAt) return;
+    if (singleAccountAutoReplyTimer) clearTimeout(singleAccountAutoReplyTimer);
+    singleAccountAutoReplyDueAt = dueAt;
     singleAccountAutoReplyTimer = setTimeout(() => {
       singleAccountAutoReplyTimer = null;
+      singleAccountAutoReplyDueAt = 0;
       void processNextUnreadConversation();
-    }, delay);
+    }, Math.max(0, dueAt - Date.now()));
+  }
+
+  function clearSingleAccountAutoReplyTimer() {
+    if (singleAccountAutoReplyTimer) clearTimeout(singleAccountAutoReplyTimer);
+    singleAccountAutoReplyTimer = null;
+    singleAccountAutoReplyDueAt = 0;
   }
 
   function ensureAutoReplyWakeWatchdog() {
     if (autoReplyWakeWatchdogTimer) return;
     autoReplyWakeWatchdogTimer = setInterval(() => {
-      if (!singleAccountAutoReplyEnabled || autoReplyBusy || collecting || transcriptCaptureInProgress
+      if (!singleAccountAutoReplyEnabled || collecting || transcriptCaptureInProgress
           || singleAccountAutoReplyTimer) return;
+      const now = Date.now();
+      const busyStalled = autoReplyBusy && autoReplyTraceRunStartedAt > 0
+        && now - autoReplyTraceRunStartedAt >= AUTO_REPLY_STALL_THRESHOLD_MS;
+      const stalled = autoReplyWatchdogLastProgressAt > 0
+        && now - autoReplyWatchdogLastProgressAt >= AUTO_REPLY_STALL_THRESHOLD_MS;
+      if ((stalled || busyStalled) && document.visibilityState === 'visible'
+          && !resumeAttachmentProcessing && !findVisibleResumeDialog()) {
+        if (autoReplyWatchdogRecoveryCount >= AUTO_REPLY_WATCHDOG_MAX_RECOVERIES) {
+          traceAutoReply('AUTO_REPLY_WATCHDOG_BLOCKED', {
+            outcome: 'STOPPED',
+            reason: `已连续自动恢复 ${autoReplyWatchdogRecoveryCount} 次仍没有调度进展，达到安全上限，已停止自动重启并转人工处理。`,
+          });
+          singleAccountAutoReplyEnabled = false;
+          clearSingleAccountAutoReplyTimer();
+          return;
+        }
+        if (now - autoReplyWatchdogRecoveryAt < AUTO_REPLY_WATCHDOG_COOLDOWN_MS) {
+          traceAutoReply('AUTO_REPLY_WATCHDOG_COOLDOWN', {
+            outcome: 'WAITING',
+            reason: `上次自动恢复后仍未恢复，冷却剩余 ${Math.ceil((AUTO_REPLY_WATCHDOG_COOLDOWN_MS - (now - autoReplyWatchdogRecoveryAt)) / 1_000)} 秒；保持当前值守状态，不重复初始化。`,
+          });
+          scheduleSingleAccountAutoReply(5_000);
+          return;
+        }
+        autoReplyWatchdogRecoveryCount += 1;
+        autoReplyWatchdogRecoveryAt = now;
+        traceAutoReply('AUTO_REPLY_WATCHDOG_RECOVERY', {
+          outcome: 'WAITING',
+          reason: busyStalled
+            ? '当前自动回复阶段超过 90 秒没有返回，执行一次等价于关闭再开启今日值守的自愈重启。'
+            : '调度超过 90 秒没有进展，执行一次等价于关闭再开启今日值守的自愈重启。',
+        });
+        autoReplyWatchdogLastProgressAt = now;
+        // The old run is considered abandoned at this point. Its finally
+        // block is generation-guarded, so releasing the local lock lets the
+        // freshly restored run take over instead of waiting on a hung Promise.
+        autoReplyBusy = false;
+        autoReplyTraceRunStartedAt = 0;
+        void setSingleAccountAutoReply(false).then(() => setSingleAccountAutoReply(true, true)).catch(() => {
+          singleAccountAutoReplyEnabled = false;
+        });
+        return;
+      }
+      if (autoReplyBusy) return;
       traceAutoReply('AUTO_REPLY_WATCHDOG_WAKE', {
         outcome: 'WAITING',
         reason: '自动回复循环当前没有运行中的任务或调度计时器，已执行一次自检唤醒。',
@@ -1372,8 +1476,7 @@
     singleAccountActiveChatDigest = null;
     clearInterval(autoReplyWakeWatchdogTimer);
     autoReplyWakeWatchdogTimer = null;
-    clearTimeout(singleAccountAutoReplyTimer);
-    singleAccountAutoReplyTimer = null;
+    clearSingleAccountAutoReplyTimer();
     await send({ type: 'BRIDGE_SINGLE_ACCOUNT_AUTO_REPLY_STATE', payload: {
       state, disable: true, observedAt: new Date().toISOString(),
     } });
@@ -1389,8 +1492,7 @@
       singleAccountAutoReplyEnabled = false;
       clearInterval(autoReplyWakeWatchdogTimer);
       autoReplyWakeWatchdogTimer = null;
-      clearTimeout(singleAccountAutoReplyTimer);
-      singleAccountAutoReplyTimer = null;
+      clearSingleAccountAutoReplyTimer();
     }
     if (!options.skipUnreadBaseline) {
       const matchingItem = [...document.querySelectorAll(SELECTORS.conversation)].filter(visible)
@@ -1591,33 +1693,6 @@
     } });
   }
 
-  async function reconcileUnconfirmedSend(lease, selected, replyText, outboundBeforeCount,
-                                          outboundBeforeIdentities) {
-    await delay(2_000);
-    const first = await collectSelectedConversation();
-    await delay(350);
-    const second = await collectSelectedConversation();
-    if (!first.ok || !second.ok || first.chatDigest !== selected.chatDigest
-        || second.chatDigest !== selected.chatDigest || first.messageDigest !== second.messageDigest
-        || second.direction !== 'OUTBOUND' || second.messageDigest === selected.messageDigest) return null;
-    const active = [...document.querySelectorAll(SELECTORS.activeConversation)].find(visible);
-    const outbound = active
-      ? [...active.querySelectorAll(SELECTORS.message)].filter(visible).filter((item) => directionOf(item) === 'OUTBOUND')
-      : [];
-    const last = outbound.at(-1);
-    if (!last || cleanOutboundReplyText(last) !== replyText) return null;
-    const identity = stableIdentity(last);
-    if (outbound.length <= outboundBeforeCount && (!identity || outboundBeforeIdentities.has(identity))) return null;
-    const controls = findReplyControls();
-    if (!controls.editor || readEditorText(controls.editor).trim()) return null;
-    const result = await send({ type: 'BRIDGE_RECONCILE_INBOUND_REPLY_SEND', payload: {
-      leaseToken: lease.leaseToken, chatDigest: selected.chatDigest, messageDigest: selected.messageDigest,
-      outboundMessageDigest: second.messageDigest, outboundTextDigest: await digest(replyText),
-      outboundAt: second.messageAt, observedAt: new Date().toISOString(),
-    } });
-    return result?.status === 'SUCCEEDED' ? result : null;
-  }
-
   async function clearPendingSendReconciliation(taskId) {
     singleAccountUnknownReconciliations.delete(taskId);
     await send({ type: 'BRIDGE_CLEAR_SEND_RECONCILIATION', taskId }).catch(() => {});
@@ -1780,6 +1855,7 @@
 
   async function processNextUnreadConversation() {
     if (!singleAccountAutoReplyEnabled) return;
+    autoReplyWatchdogLastProgressAt = Date.now();
     if (transcriptCaptureInProgress) {
       traceAutoReply('TRANSCRIPT_CAPTURE_HOLD', {
         outcome: 'WAITING', reason: '当前正在只读采集完整聊天记录，暂不切换会话或触发简历处理。',
@@ -1791,6 +1867,7 @@
       return scheduleSingleAccountAutoReply(1_000);
     }
     autoReplyBusy = true;
+    const runGeneration = autoReplyGeneration;
     autoReplyTraceRunStartedAt = Date.now();
     autoReplyTraceRunId = `${autoReplyTraceRunStartedAt.toString(36)}-${++autoReplyTraceRunSequence}`;
     try {
@@ -1851,10 +1928,6 @@
       // real-time unread so it cannot monopolize the page.
       const priorityReadyReply = heldReadyReply
         || await nextReadyInboundReply(null, { includeRetryable: false });
-      if (!priorityReadyReply && singleAccountUnknownReconciliations.size > 0
-          && await reconcileRecoveredUnknownSend()) {
-        return scheduleSingleAccountAutoReply(LIST_SCAN_CONTINUE_DELAY_MS);
-      }
       // BOSS immediately clears the unread badge when a message arrives in the
       // conversation that is already open. Detect that changed detail first;
       // otherwise a list-only scan sees zero unread rows and silently misses it.
@@ -1877,6 +1950,15 @@
           ? '当前已打开会话出现新的候选人消息，不依赖未读角标，优先进入分析。'
           : '发现新到或内容已变化的未读会话，优先于历史库存复核立即读取。',
       });
+      // UNKNOWN is terminal and must never be resent.  Its delayed, read-only
+      // reconciliation is deliberately placed behind current READY/unread
+      // work so a virtualized list cannot monopolise the reply loop.
+      const hasActiveReplyWork = pipelineQueueFor('SEND').length > 0
+        || pipelineQueueFor('ANALYSIS').length > 0;
+      if (!priorityReadyReply && !realtimeTarget && !hasActiveReplyWork
+          && singleAccountUnknownReconciliations.size > 0) {
+        await reconcileRecoveredUnknownSend();
+      }
       const readyReply = priorityReadyReply || (realtimeTarget ? null : await nextReadyInboundReply());
       if (readyReply?.terminalTask) {
         const terminalTask = readyReply.terminalTask;
@@ -1921,7 +2003,7 @@
         traceAutoReply('QUEUE_WINDOW_WAITING_AI', {
           queueLane: 'ANALYSIS',
           outcome: 'WAITING',
-          reason: `当前扫描队列已清空，分析 ${singleAccountAnalysisQueue.length}、发送 ${singleAccountSendQueue.length}、复核 ${singleAccountRevalidationQueue.length}；仍有 ${singleAccountPendingReplies.size} 个 AI 任务未完成，不开启下一轮列表扫描，${Math.ceil(waitMs / 1_000)} 秒后继续轮询。`,
+          reason: `当前扫描队列已清空，分析 ${pipelineQueueFor('ANALYSIS').length}、发送 ${pipelineQueueFor('SEND').length}、复核 ${pipelineQueueFor('REVALIDATION').length}；仍有 ${singleAccountPendingReplies.size} 个 AI 任务未完成，不开启下一轮列表扫描，${Math.ceil(waitMs / 1_000)} 秒后继续轮询。`,
         });
         return scheduleSingleAccountAutoReply(waitMs);
       }
@@ -2002,6 +2084,22 @@
         prioritizedTask.locateFailures = Number(prioritizedTask.locateFailures || 0) + 1;
         prioritizedTask.firstLocateFailureAt = prioritizedTask.firstLocateFailureAt || now;
         const waitedMs = now - prioritizedTask.firstLocateFailureAt;
+        if (!retryTask && (prioritizedTask.locateFailures >= READY_SEND_MAX_LOCATE_FAILURES
+            || waitedMs >= READY_SEND_MAX_WAIT_MS)) {
+          removePendingPipelineTask(prioritizedTask.taskId, prioritizedTask.chatDigest);
+          singleAccountRetryLocateDeferrals.set(prioritizedTask.taskId, now + RETRY_TARGET_DEFER_MS);
+          traceAutoReply('READY_TARGET_DEFERRED', {
+            queueLane: 'SEND', chatDigest: prioritizedTask.chatDigest,
+            messageDigest: prioritizedTask.messageDigest, taskId: prioritizedTask.taskId,
+            attempt: prioritizedTask.locateFailures, outcome: 'SKIPPED',
+            reason: `待发送会话连续 ${prioritizedTask.locateFailures} 次无法定位，已等待 ${Math.ceil(waitedMs / 1_000)} 秒；任务转人工处理并释放主循环。`,
+          });
+          await send({ type: 'BRIDGE_SINGLE_ACCOUNT_AUTO_REPLY_STATE', payload: {
+            state: '待发送会话暂时无法定位，已转人工处理；其他会话继续运行。',
+            disable: false, observedAt: new Date().toISOString(),
+          } }).catch(() => {});
+          return scheduleSingleAccountAutoReply(300);
+        }
         if (!retryTask) {
           prioritizedTask.nextPollAt = now + READY_SEND_RELOCATE_DELAY_MS;
           traceAutoReply('READY_RELOCATE_SCHEDULED', {
@@ -2012,7 +2110,7 @@
           return scheduleSingleAccountAutoReply(READY_SEND_RELOCATE_DELAY_MS);
         }
         if (prioritizedTask.locateFailures >= RETRY_TARGET_MAX_LOCATE_FAILURES || waitedMs >= RETRY_TARGET_MAX_WAIT_MS) {
-          removePendingPipelineTask(prioritizedTask.taskId);
+          removePendingPipelineTask(prioritizedTask.taskId, prioritizedTask.chatDigest);
           singleAccountRetryLocateDeferrals.set(prioritizedTask.taskId, now + RETRY_TARGET_DEFER_MS);
           traceAutoReply('AI_RETRY_TARGET_DEFERRED', {
             queueLane: 'REVALIDATION',
@@ -2051,7 +2149,7 @@
           traceAutoReply('QUEUE_WINDOW_SCAN_COMPLETED', {
             queueLane: 'SCAN',
             outcome: ['SCROLLER_NOT_FOUND', 'PAGE_NOT_READY', 'PREVIEW_OPEN', 'PARTIAL'].includes(refill?.scanCode) ? 'WAITING' : 'INFO',
-            reason: `${refill?.scanCode === 'PARTIAL' ? '本轮分段扫描暂见' : '本轮发现'} ${refill?.observedUnread ?? 0} 条未读，已读安全复核入队 ${refill?.readReviewAdded ?? 0} 条，总新增 ${refill?.added ?? 0} 条，当前扫描队列 ${refill?.queueLength ?? 0} 条；分析 ${singleAccountAnalysisQueue.length}，发送 ${singleAccountSendQueue.length}，复核 ${singleAccountRevalidationQueue.length}。`,
+            reason: `${refill?.scanCode === 'PARTIAL' ? '本轮分段扫描暂见' : '本轮发现'} ${refill?.observedUnread ?? 0} 条未读，已读安全复核入队 ${refill?.readReviewAdded ?? 0} 条，总新增 ${refill?.added ?? 0} 条，当前扫描队列 ${refill?.queueLength ?? 0} 条；分析 ${pipelineQueueFor('ANALYSIS').length}，发送 ${pipelineQueueFor('SEND').length}，复核 ${pipelineQueueFor('REVALIDATION').length}。`,
           });
         } else {
           refill = { observedUnread: null, added: 0, queueLength: singleAccountConversationQueue.length, skipped: 'QUEUE_ACTIVE' };
@@ -2346,22 +2444,12 @@
       const resumeReceiptTask = queuedTask?.resumeReceipt === true;
       if (!resumeReceiptTask && (second.direction !== 'INBOUND' || !second.messageText || containsStructuredAttachment)) {
         if (second.direction === 'INBOUND' && containsStructuredAttachment) {
-          traceAutoReply('ATTACHMENT_DETECTED', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, outcome: 'WAITING', reason: '检测到候选人附件，先进行上下文判定；判定通过后才允许打开简历。' });
-          const contextCheck = await classifyResumeAttachmentContext(second);
-          if (!contextCheck.ok) {
-            singleAccountPendingChatDigest = null;
-            return scheduleSingleAccountAutoReply(5_000);
-          }
-          if (!contextCheck.allow) {
-            await reportSingleAccountResult(second, 'SILENT', contextCheck.reason, {
-              skipUnreadBaseline: false, skipSelectedMessageBaseline: false,
-            });
-            singleAccountPendingChatDigest = null;
-            return scheduleSingleAccountAutoReply(1_500);
-          }
-          // This marker is consumed by the background snapshot importer. A
-          // historical resumeReceived signal without this explicit marker can
-          // never open an attachment during ordinary page refreshes.
+          traceAutoReply('ATTACHMENT_DETECTED', {
+            chatDigest: second.chatDigest, messageDigest: second.messageDigest, outcome: 'SUCCESS',
+            reason: '当前最后一条稳定确认是候选人附件，直接进入简历导入；重复简历和收件回复由摘要去重与后置上下文校验处理。',
+          });
+          // Only the current stable attachment message can arm capture. A
+          // historical resumeReceived signal never opens an old attachment.
           resumeCaptureRequest = { chatDigest: second.chatDigest, messageDigest: second.messageDigest };
           resumeAttachmentEpoch += 1;
           resumeAttachmentProcessing = true;
@@ -2764,10 +2852,20 @@
           break;
         }
       }
-      const receipt = sendLease ? await receiptInboundReplySend(sendLease, confirmed ? 'SUCCEEDED' : 'UNKNOWN',
-        `${second.chatDigest}|${second.messageDigest}|${confirmed ? 'OUTBOUND_CONFIRMED' : 'SEND_RESULT_UNCONFIRMED'}|${await digest(replyText)}`,
-        confirmed ? '页面已确认输入框清空且出现新增的相同出站回复。'
-          : `已点击一次发送，但页面结果无法确认；禁止重试。${confirmationDiagnostic}`) : null;
+      const receiptOutcome = confirmed ? 'SUCCEEDED' : 'UNKNOWN';
+      const receiptAfterShape = `${second.chatDigest}|${second.messageDigest}|${confirmed ? 'OUTBOUND_CONFIRMED' : 'SEND_RESULT_UNCONFIRMED'}|${await digest(replyText)}`;
+      const receiptReason = confirmed ? '页面已确认输入框清空且出现新增的相同出站回复。'
+        : `已点击一次发送，但页面结果无法确认；禁止重试。${confirmationDiagnostic}`;
+      let receipt = sendLease ? await receiptInboundReplySend(sendLease, receiptOutcome, receiptAfterShape, receiptReason) : null;
+      // A lost bridge response must not leave the backend lease CLAIMED for
+      // the full 45-second expiry window. Retry the idempotent receipt once;
+      // this never retries the BOSS send click itself.
+      if (sendLease && !receipt?.status) {
+        await delay(300);
+        const retryReceipt = await receiptInboundReplySend(sendLease, receiptOutcome, receiptAfterShape,
+          `${receiptReason} SEND_CONFIRMATION_RECEIPT_RETRY：回执响应超时，已重试一次回执提交。`);
+        if (retryReceipt?.status) receipt = retryReceipt;
+      }
       if (sendLease && receipt?.status !== 'SUCCEEDED') {
         confirmed = false;
         traceAutoReply('SEND_RECONCILIATION_STARTED', {
@@ -2775,22 +2873,11 @@
           queueLane: 'SEND', outcome: 'WAITING',
           reason: '页面回执尚未明确成功，延迟复核同一会话是否出现与租约正文完全一致的新出站消息。',
         });
-        const reconciled = await reconcileUnconfirmedSend(sendLease, second, replyText,
-          outboundBeforeCount, outboundBeforeIdentities);
-        if (reconciled?.status === 'SUCCEEDED') {
-          confirmed = true;
-          confirmationMode = 'DELAYED_EXACT';
-          traceAutoReply('SEND_RECONCILED', {
-            chatDigest: second.chatDigest, messageDigest: second.messageDigest, taskId: queuedTask?.taskId || null,
-            queueLane: 'SEND', outcome: 'SUCCESS', reason: '同一会话的新增出站消息与租约正文完全一致，后端已确认发送。',
-          });
-        } else {
-          traceAutoReply('SEND_RECONCILIATION_UNRESOLVED', {
-            chatDigest: second.chatDigest, messageDigest: second.messageDigest, taskId: queuedTask?.taskId || null,
-            queueLane: 'SEND', outcome: 'UNKNOWN',
-            reason: '延迟复核仍缺少同一会话、相同正文、发送后新增消息的完整证据；保持结果不明，等待 HR 核对。',
-          });
-        }
+        traceAutoReply('SEND_RECONCILIATION_DEFERRED', {
+          chatDigest: second.chatDigest, messageDigest: second.messageDigest, taskId: queuedTask?.taskId || null,
+          queueLane: 'REVALIDATION', outcome: 'WAITING',
+          reason: '已提交 UNKNOWN 终态；延迟只读复核移到低优先级队列，不再占用当前发送循环。',
+        });
       }
       if (sendLease && confirmed && queuedTask) await clearPendingSendReconciliation(queuedTask.taskId);
       traceAutoReply(confirmed ? 'SEND_CONFIRMED' : 'SEND_UNKNOWN', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, taskId: queuedTask?.taskId || null, queueLane: 'SEND', outcome: confirmed ? 'SUCCESS' : 'UNKNOWN', reason: confirmed
@@ -2798,9 +2885,9 @@
         : `已点击发送，但页面未能确认结果；为避免重复发送不会重试。${confirmationDiagnostic}` });
       await reportSingleAccountResult(second, confirmed ? 'SENT' : 'UNKNOWN', confirmed
         ? `已识别为${decision.category}并发送一条岗位事实回复。`
-        : '已点击一次发送，但页面结果无法确认；该消息不会自动重试。');
+        : `SEND_CONFIRMATION_UNKNOWN：已点击一次发送，但页面结果无法确认；该消息不会自动重试。${confirmationDiagnostic}`);
       singleAccountPendingChatDigest = null;
-      if (queuedTask) removePendingPipelineTask(queuedTask.taskId);
+      if (queuedTask) removePendingPipelineTask(queuedTask.taskId, queuedTask.chatDigest);
       scheduleSingleAccountAutoReply(2_000);
     } catch (error) {
       singleAccountPendingChatDigest = null;
@@ -2818,7 +2905,8 @@
       autoReplyBusy = false;
       autoReplyTraceRunId = '';
       autoReplyTraceRunStartedAt = 0;
-      if (singleAccountAutoReplyEnabled && !singleAccountAutoReplyTimer) scheduleSingleAccountAutoReply(2_000);
+      if (runGeneration === autoReplyGeneration
+          && singleAccountAutoReplyEnabled && !singleAccountAutoReplyTimer) scheduleSingleAccountAutoReply(2_000);
     }
   }
 
@@ -4880,26 +4968,96 @@
     }
     resumeCaptureStatusBar = document.createElement('div');
     resumeCaptureStatusBar.id = '__recruitment_capture_status';
-    resumeCaptureStatusBar.style.cssText = 'position:fixed;top:60px;right:12px;z-index:2147483647;width:min(280px,calc(100vw - 24px));max-height:60vh;background:rgba(15,23,42,.78);color:#fff;font:12px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;border:1px solid rgba(255,255,255,.10);border-radius:8px;box-shadow:0 4px 16px rgba(15,23,42,.15);overflow:hidden;user-select:text;';
+    const savedPos = (() => {
+      try { return JSON.parse(localStorage.getItem('__recruitment_capture_pos')); } catch { return null; }
+    })();
+    const initTop = savedPos?.top ?? 60;
+    const initLeft = savedPos?.left ?? null;
+    resumeCaptureStatusBar.style.cssText = `position:fixed;top:${initTop}px;${initLeft !== null ? `left:${initLeft}px` : 'right:12px'};z-index:2147483647;width:min(280px,calc(100vw - 24px));max-height:60vh;background:rgba(15,23,42,.78);color:#fff;font:12px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;border:1px solid rgba(255,255,255,.10);border-radius:8px;box-shadow:0 4px 16px rgba(15,23,42,.15);overflow:hidden;user-select:text;`;
     const header = document.createElement('div');
-    header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 10px;border-bottom:1px solid rgba(255,255,255,.08);';
+    header.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid rgba(255,255,255,.08);cursor:grab;user-select:none;';
+    // 折叠/展开按钮
+    const collapseBtn = document.createElement('button');
+    collapseBtn.textContent = resumeCaptureStatusCollapsed ? '▶' : '▼';
+    collapseBtn.title = resumeCaptureStatusCollapsed ? '展开' : '折叠';
+    collapseBtn.style.cssText = 'padding:2px 6px;font:10px/1 monospace;background:transparent;color:#94a3b8;border:1px solid rgba(255,255,255,.15);border-radius:4px;cursor:pointer;flex-shrink:0;';
+    collapseBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      resumeCaptureStatusCollapsed = !resumeCaptureStatusCollapsed;
+      collapseBtn.textContent = resumeCaptureStatusCollapsed ? '▶' : '▼';
+      collapseBtn.title = resumeCaptureStatusCollapsed ? '展开' : '折叠';
+      resumeCaptureStatusLog.style.display = resumeCaptureStatusCollapsed ? 'none' : '';
+      resumeCaptureStatusBar.style.maxHeight = resumeCaptureStatusCollapsed ? (header.offsetHeight + 2) + 'px' : '60vh';
+    });
     const title = document.createElement('strong');
     title.textContent = '自动化运行日志';
+    title.style.flex = '1';
     const copyBtn = document.createElement('button');
     copyBtn.textContent = '复制全部';
-    copyBtn.style.cssText = 'padding:3px 8px;font:11px sans-serif;background:#2563eb;color:#fff;border:0;border-radius:5px;cursor:pointer;';
+    copyBtn.style.cssText = 'padding:3px 8px;font:11px sans-serif;background:#2563eb;color:#fff;border:0;border-radius:5px;cursor:pointer;flex-shrink:0;';
     copyBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       navigator.clipboard.writeText(resumeCaptureStatusLog?.textContent || '');
       copyBtn.textContent = '已复制';
       setTimeout(() => { copyBtn.textContent = '复制全部'; }, 1500);
     });
-    header.append(title, copyBtn);
+    header.append(collapseBtn, title, copyBtn);
     resumeCaptureStatusLog = document.createElement('div');
     resumeCaptureStatusLog.style.cssText = 'max-height:calc(60vh - 42px);overflow-y:auto;padding:8px 10px;white-space:pre-wrap;word-break:break-word;';
+    if (resumeCaptureStatusCollapsed) resumeCaptureStatusLog.style.display = 'none';
     resumeCaptureStatusBar.append(header, resumeCaptureStatusLog);
     resumeCaptureCopyBtn = copyBtn;
     mount.appendChild(resumeCaptureStatusBar);
+    // 如果之前折叠，调整 max-height
+    if (resumeCaptureStatusCollapsed) {
+      requestAnimationFrame(() => {
+        resumeCaptureStatusBar.style.maxHeight = (header.offsetHeight + 2) + 'px';
+      });
+    }
+    // ---- 拖拽逻辑 ----
+    let isDragging = false;
+    let dragStartX = 0, dragStartY = 0;
+    let dragOrigLeft = 0, dragOrigTop = 0;
+    const onMouseDown = (e) => {
+      if (e.target.closest('button')) return;
+      isDragging = true;
+      const rect = resumeCaptureStatusBar.getBoundingClientRect();
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
+      dragOrigLeft = rect.left;
+      dragOrigTop = rect.top;
+      resumeCaptureStatusBar.style.cursor = 'grabbing';
+      resumeCaptureStatusBar.style.transition = 'none';
+      resumeCaptureStatusBar.style.left = rect.left + 'px';
+      resumeCaptureStatusBar.style.right = 'auto';
+    };
+    const onMouseMove = (e) => {
+      if (!isDragging) return;
+      const dx = e.clientX - dragStartX;
+      const dy = e.clientY - dragStartY;
+      const newLeft = Math.max(0, Math.min(window.innerWidth - 50, dragOrigLeft + dx));
+      const newTop = Math.max(0, Math.min(window.innerHeight - 30, dragOrigTop + dy));
+      resumeCaptureStatusBar.style.left = newLeft + 'px';
+      resumeCaptureStatusBar.style.top = newTop + 'px';
+    };
+    const onMouseUp = () => {
+      if (!isDragging) return;
+      isDragging = false;
+      resumeCaptureStatusBar.style.cursor = 'grab';
+      resumeCaptureStatusBar.style.transition = '';
+      const rect = resumeCaptureStatusBar.getBoundingClientRect();
+      try { localStorage.setItem('__recruitment_capture_pos', JSON.stringify({ top: rect.top, left: rect.left })); } catch {}
+    };
+    header.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    // 清理旧监听（在重新创建时）
+    resumeCaptureStatusBar._cleanupDrag?.();
+    resumeCaptureStatusBar._cleanupDrag = () => {
+      header.removeEventListener('mousedown', onMouseDown);
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
   }
 
   function showResumeCaptureStatus(text, tone = 'info') {

@@ -657,8 +657,8 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
                 .contains(code);
     }
 
-    @Scheduled(fixedDelayString = "${app.inbound-reply.queue-recovery-interval:5s}",
-            initialDelayString = "${app.inbound-reply.queue-recovery-interval:5s}")
+    @Scheduled(fixedDelayString = "${app.inbound-reply.queue-recovery-interval:15s}",
+            initialDelayString = "${app.inbound-reply.queue-recovery-interval:15s}")
     void recover() {
         Instant now = Instant.now();
         transactions.executeWithoutResult(status -> {

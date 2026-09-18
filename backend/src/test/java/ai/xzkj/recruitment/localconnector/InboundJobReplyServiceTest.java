@@ -1,6 +1,7 @@
 package ai.xzkj.recruitment.localconnector;
 
 import ai.xzkj.recruitment.jobs.JobPosition;
+import ai.xzkj.recruitment.jobs.JobReplyTemplateService;
 import ai.xzkj.recruitment.resumes.OpenAiProperties;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.ObjectMapper;
@@ -153,6 +154,19 @@ class InboundJobReplyServiceTest {
         assertTrue(benefits.replyAllowed());
         assertEquals("社保情况面试时会详细说明。", benefits.content());
 
+        when(job.getBenefits()).thenReturn("五险一金、节日福利");
+        InboundJobReplyService benefitsWithFacts = new InboundJobReplyService(new OpenAiProperties(), new ObjectMapper());
+        InboundJobReplyService.Decision benefitsFromJob = benefitsWithFacts.decide(job, "福利待遇怎么样");
+        assertTrue(benefitsFromJob.replyAllowed());
+        assertEquals("BENEFITS", benefitsFromJob.category());
+        assertTrue(benefitsFromJob.content().contains("五险一金、节日福利"));
+
+        InboundJobReplyService.Decision benefitsFollowUp = benefitsWithFacts.decide(job, "那具体呢",
+                "候选人：福利待遇有哪些");
+        assertTrue(benefitsFollowUp.replyAllowed());
+        assertEquals("BENEFITS", benefitsFollowUp.category());
+        assertTrue(benefitsFollowUp.content().contains("五险一金、节日福利"));
+
         InboundJobReplyService.Decision afterResume = service.decide(job, "请问有宿舍吗", "",
                 new InboundJobReplyService.ConversationRuntime("RESUME_RECEIVED", true, false, false, false));
         assertTrue(afterResume.replyAllowed());
@@ -183,6 +197,24 @@ class InboundJobReplyServiceTest {
         assertTrue(shortResumeConfirmation.replyAllowed());
         assertEquals("RESUME_SENT", shortResumeConfirmation.category());
         assertEquals("好的，我先看一下您的简历，了解后再和您联系。", shortResumeConfirmation.content());
+    }
+
+    @Test
+    void usesTrialPeriodTemplateOnlyWhenTheJobProvidesApprovedFactData() {
+        JobPosition job = mock(JobPosition.class);
+        when(job.isKnowledgeApproved()).thenReturn(true);
+        JobReplyTemplateService templates = mock(JobReplyTemplateService.class);
+        when(templates.renderFixedFact(job, "工作这边有试岗期吗")).thenReturn(Optional.of(
+                new JobReplyTemplateService.RenderedReply(
+                        "TRIAL_PERIOD", "岗位试岗安排为3天，具体细节面试时再详细沟通。", "岗位资料")));
+        InboundJobReplyService service = new InboundJobReplyService(
+                new OpenAiProperties(), new ObjectMapper(), null, templates);
+
+        InboundJobReplyService.Decision result = service.decide(job, "工作这边有试岗期吗");
+
+        assertEquals(true, result.replyAllowed());
+        assertEquals("TRIAL_PERIOD", result.category());
+        assertEquals("岗位试岗安排为3天，具体细节面试时再详细沟通。", result.content());
     }
 
     @Test
@@ -243,6 +275,25 @@ class InboundJobReplyServiceTest {
         assertEquals(true, InboundJobReplyService.isInterviewCoordination("面试改到明天上午方便吗？", ""));
         assertEquals(false, InboundJobReplyService.isInterviewCoordination("请问这个岗位几点上下班？", "候选人：我想了解工作时间"));
         assertEquals(false, InboundJobReplyService.isInterviewCoordination("感觉自己很合适，希望可以有面试机会", ""));
+    }
+
+    @Test
+    void silentlyClosesConfirmedInterviewAcceptanceButKeepsSchedulingQuestionsForHr() {
+        assertTrue(InboundJobReplyService.isInterviewAcceptance("可以参加面试", ""));
+        assertTrue(InboundJobReplyService.isInterviewAcceptance("确认参加面试", ""));
+        assertTrue(InboundJobReplyService.isInterviewAcceptance("可以", "HR：明天来面试可以吗？"));
+        assertEquals(false, InboundJobReplyService.isInterviewAcceptance("可以安排面试吗", ""));
+        assertEquals(false, InboundJobReplyService.isInterviewAcceptance("面试什么时候安排", ""));
+
+        JobPosition job = mock(JobPosition.class);
+        when(job.isKnowledgeApproved()).thenReturn(true);
+        InboundJobReplyService service = new InboundJobReplyService(new OpenAiProperties(), new ObjectMapper());
+        InboundJobReplyService.Decision result = service.decide(job, "可以",
+                "HR：明天来面试可以吗？");
+
+        assertEquals(false, result.replyAllowed());
+        assertEquals("INTERVIEW_ACCEPTED", result.category());
+        assertTrue(result.reason().startsWith("正常静默："));
     }
 
     @Test

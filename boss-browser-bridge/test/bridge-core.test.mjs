@@ -69,8 +69,9 @@ test('prioritizes sendable AI tasks before scanning new unread conversations', a
 
 test('yields long conversation scans and resumes from a saved cursor', async () => {
   const source = await readFile(new URL('../src/content.js', import.meta.url), 'utf8');
-  assert.match(source, /const LIST_SCAN_MAX_POSITIONS_PER_TURN = 8;/);
-  assert.match(source, /const LIST_SCAN_MAX_TURN_MS = 1_800;/);
+  assert.match(source, /const LIST_SCAN_MAX_POSITIONS_PER_TURN = 4;/);
+  assert.match(source, /const LIST_SCAN_MAX_TURN_MS = 1_200;/);
+  assert.match(source, /const LIST_SCAN_CONTINUE_DELAY_MS = 1_200;/);
   assert.match(source, /conversationScanCursors\.set\(scanKey, \{/);
   assert.match(source, /if \(!sweep\.complete\) lastConversationSweepCode = 'PARTIAL';/);
   assert.match(source, /LIST_SCAN_PARTIAL/);
@@ -151,12 +152,13 @@ test('actively wakes long ready sends and never applies historical retry cooldow
   assert.ok(activeReadyBranch < historicalDeferral);
 });
 
-test('requires an explicit current resume capture request before importing an attachment', async () => {
+test('arms capture only for the current attachment and lets import decide the reply', async () => {
   const background = await readFile(new URL('../src/background.js', import.meta.url), 'utf8');
   const content = await readFile(new URL('../src/content.js', import.meta.url), 'utf8');
   assert.match(background, /const resumeAwaitingImport = payload\.selected\?\.resumeCaptureRequested === true/);
   assert.match(background, /if \(resumeAwaitingImport && observation\?\.conversationSignals\?\.resumeReceived === true\)/);
-  assert.match(content, /const contextCheck = await classifyResumeAttachmentContext\(second\);/);
+  assert.match(content, /当前最后一条稳定确认是候选人附件，直接进入简历导入/);
+  assert.doesNotMatch(content, /const contextCheck = await classifyResumeAttachmentContext\(second\);/);
   assert.match(content, /resumeCaptureRequest = \{ chatDigest: second\.chatDigest, messageDigest: second\.messageDigest \};/);
   assert.match(content, /if \(transcriptCaptureInProgress \|\| !singleAccountAutoReplyEnabled/);
 });

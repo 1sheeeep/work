@@ -12,6 +12,7 @@ public final class JobReplyIntentMatcher {
     private static final Pattern WORK_TIME = Pattern.compile("(上班时间|工作时间|上下班时间|几点上班|几点下班|打卡时间|休息时间|月休|休息几天|每周休息|单双休|大小周)");
     private static final Pattern WORK_SCHEDULE_REASON = Pattern.compile("(?:(?:为什么|为何|什么原因).{0,12}(?:上班|下班|开始|下午|上午|早上|晚上|中午)|(?:下午|上午|早上|晚上|中午).{0,8}(?:开始)?上班)");
     private static final Pattern BENEFITS = Pattern.compile("(福利待遇|福利|五险一金|五险|社保|公积金|补贴|奖金|年终奖|带薪年假)");
+    private static final Pattern TRIAL_PERIOD = Pattern.compile("(试岗(?:期|安排)?|试岗几天|试岗多久)");
     private static final Pattern MEALS_LODGING = Pattern.compile("(吃住|食宿|住宿|宿舍|租房|住房|包吃|包住)");
     private static final Pattern EXPERIENCE = Pattern.compile("(经验要求|需要经验|工作经验|几年经验|无经验|没有经验|没经验|应届生|应届毕业)");
     private static final Pattern EDUCATION = Pattern.compile("(学历要求|学历|什么学历|大专|本科|中专|高中|硕士|博士)");
@@ -21,7 +22,7 @@ public final class JobReplyIntentMatcher {
     private static final Pattern CONSIDERING = Pattern.compile("(考虑一下|再看看|想一想|先了解一下|回去考虑)");
     private static final Pattern RESUME_WILL_SEND = Pattern.compile("(?:(?:稍后|晚点|一会儿|马上|这就).{0,4}(?:发|发送|投递|上传).{0,6}简历|可以.{0,8}发.{0,4}简历)");
     private static final Pattern RESUME_SENT = Pattern.compile("(?:(?:已|已经|刚刚?|刚才).{0,6}(?:发|发送|投递|上传).{0,6}简历|简历.{0,8}(?:发了|发送了|已发|投递了|上传了))");
-    private static final Pattern DECLINE = Pattern.compile("((?:抱歉|不好意思).{0,30}(?:不考虑|不方便|无法|不能|不去|不参加|面试|入职|距离|加班)|不考虑|不再考虑|不在考虑范围|不太合适|不合适|暂时不考虑|没兴趣|不感兴趣|无法接受|不方便入职|不想入职|不考虑入职|距离太远|办公地点太远|加班太晚)");
+    private static final Pattern DECLINE = Pattern.compile("((?:抱歉|不好意思).{0,30}(?:不考虑|不方便|无法|不能|不去|不参加|面试|入职|距离|位置|地点|地址|加班)|(?:距离|位置|地点|地址|路程).{0,12}(?:太远|很远|较远|偏远|不方便|不合适)|(?:太远|很远|较远).{0,8}(?:不方便|不考虑|不去|不合适)|不考虑|不再考虑|不在考虑范围|不太合适|不合适|暂时不考虑|没兴趣|不感兴趣|无法接受|不方便入职|不想入职|不考虑入职|距离太远|办公地点太远|加班太晚)");
     private static final Pattern CLOSING = Pattern.compile("(再见|拜拜|晚安|先这样|回头联系)");
 
     private JobReplyIntentMatcher() {}
@@ -35,6 +36,7 @@ public final class JobReplyIntentMatcher {
         if (RESPONSIBILITIES.matcher(value).find()) matches.add("RESPONSIBILITIES");
         if (WORK_TIME.matcher(value).find() || WORK_SCHEDULE_REASON.matcher(value).find()) matches.add("WORK_TIME");
         if (BENEFITS.matcher(value).find()) matches.add("BENEFITS");
+        if (TRIAL_PERIOD.matcher(value).find()) matches.add("TRIAL_PERIOD");
         if (MEALS_LODGING.matcher(value).find()) matches.add("MEALS_LODGING");
         if (EXPERIENCE.matcher(value).find()) matches.add("EXPERIENCE");
         if (EDUCATION.matcher(value).find()) matches.add("EDUCATION");

@@ -7,6 +7,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { CircleCheck, Clock, DocumentCopy, Search, Warning } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { api, apiErrorMessage } from '../services/api'
+import { replyPhaseLabel, replyUiStatus } from '../utils/inboundReplyLifecycle'
 import type { AuditLog, InboundReplyRuntimeEvent, OperationsSummary } from '../types'
 
 const loading = ref(true)
@@ -70,28 +71,27 @@ const automationState = computed(() => {
   return { tone: 'success' as const, label: '自动回复运行中', note: '插件采集、持久队列与页面发送链路均已开启。' }
 })
 const recentReplyEvents = computed(() => summary.value?.recentInboundReplyEvents || [])
-const replyProblemEvents = computed(() => recentReplyEvents.value.filter(event =>
-  event.taskStatus === 'FAILED' || event.taskStatus === 'RETRY_WAIT'
-  || event.sendStatus === 'FAILED' || event.sendStatus === 'UNKNOWN'
-  || event.sendStatus === 'SKIPPED' || !!event.errorCode))
+const replyProblemEvents = computed(() => recentReplyEvents.value.filter(event => {
+  const status = replyUiStatus(event)
+  return status === 'FAILED' || status === 'UNCONFIRMED' || status === 'RETRY_WAIT' || status === 'SILENT' || !!event.errorCode
+}))
 function queueAge(seconds?: number) { if (seconds == null) return '当前无积压'; if (seconds < 60) return `最久等待 ${seconds} 秒`; return `最久等待 ${Math.floor(seconds / 60)} 分钟` }
 
 function replyEventState(event: InboundReplyRuntimeEvent) {
-  if (event.sendStatus === 'SUCCEEDED') return { label: '已自动回复', tone: 'success' as const }
-  if (event.sendStatus === 'UNKNOWN') return { label: '发送待确认', tone: 'danger' as const }
-  if (event.taskStatus === 'FAILED' || event.sendStatus === 'FAILED') return { label: '处理失败', tone: 'danger' as const }
-  if (event.taskStatus === 'RETRY_WAIT') return { label: '等待重试', tone: 'warning' as const }
-  if (event.sendStatus === 'READY') return { label: '等待页面发送', tone: 'warning' as const }
-  if (event.sendStatus === 'CLAIMED') return { label: '正在发送', tone: 'info' as const }
-  if (event.taskStatus === 'PROCESSING') return { label: 'AI 处理中', tone: 'info' as const }
-  if (event.sendStatus === 'SKIPPED') return { label: '已安全跳过', tone: 'neutral' as const }
-  return { label: '等待处理', tone: 'neutral' as const }
+  const status = replyUiStatus(event)
+  const label = replyPhaseLabel(event)
+  const tone = status === 'SUCCESS' ? 'success' as const
+    : status === 'FAILED' || status === 'UNCONFIRMED' ? 'danger' as const
+      : status === 'RETRY_WAIT' || status === 'READY_TO_SEND' ? 'warning' as const
+        : status === 'SENDING' || status === 'PROCESSING' ? 'info' as const : 'neutral' as const
+  return { label, tone }
 }
 function replyEventDetail(event: InboundReplyRuntimeEvent) {
   if (event.detail) return event.detail
-  if (event.sendStatus === 'SUCCEEDED') return '回复已通过页面回执确认。'
-  if (event.taskStatus === 'PROCESSING') return '正在理解求职者问题并生成受控回复。'
-  if (event.sendStatus === 'READY') return 'AI 已完成，等待插件领取并发送。'
+  const status = replyUiStatus(event)
+  if (status === 'SUCCESS') return '回复已通过页面回执确认。'
+  if (status === 'PROCESSING') return '正在理解求职者问题并生成受控回复。'
+  if (status === 'READY_TO_SEND') return 'AI 已完成，等待插件领取并发送。'
   return '任务状态已记录。'
 }
 
@@ -236,7 +236,7 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
           <article v-for="event in recentReplyEvents" :key="event.id" class="reply-event" :class="{ 'reply-event--danger': replyEventState(event).tone === 'danger' }">
             <div class="reply-event__main"><span class="result-dot" :class="`result-dot--${replyEventState(event).tone === 'success' ? 'success' : replyEventState(event).tone === 'danger' ? 'failure' : 'pending'}`" aria-hidden="true"></span><div><strong>{{ event.jobTitle }}</strong><p>{{ event.accountName }} · 会话 {{ event.anonymousChatKey }}</p></div></div>
             <StatusBadge compact :label="replyEventState(event).label" :tone="replyEventState(event).tone" />
-            <blockquote v-if="event.sendStatus === 'SUCCEEDED' && event.replyContent" class="reply-event__content">“{{ event.replyContent }}”</blockquote>
+            <blockquote v-if="replyUiStatus(event) === 'SUCCESS' && event.replyContent" class="reply-event__content">“{{ event.replyContent }}”</blockquote>
             <blockquote v-if="replyProblemEvents.some(item => item.id === event.id) && event.messageText" class="reply-event__incoming"><strong>候选人原话</strong><span>“{{ event.messageText }}”</span></blockquote>
             <p v-else-if="replyProblemEvents.some(item => item.id === event.id)" class="reply-event__incoming-missing">候选人原话未留存（历史记录）</p>
             <p class="reply-event__detail" :title="replyEventDetail(event)">{{ replyEventDetail(event) }}</p>

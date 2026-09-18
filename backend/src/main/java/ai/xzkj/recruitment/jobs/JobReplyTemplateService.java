@@ -21,6 +21,7 @@ public class JobReplyTemplateService {
             new TemplateDefinition("EDUCATION", "您好，岗位学历要求是{{EDUCATION_VALUE}}，欢迎结合您的情况进一步沟通。", "EDUCATION_VALUE"),
             new TemplateDefinition("WORK_TIME", "您好，上班时间为{{WORK_TIME_VALUE}}。如果您对岗位感兴趣，可以继续沟通。", "WORK_TIME_VALUE"),
             new TemplateDefinition("BENEFITS", "您好，公司福利待遇包括{{BENEFITS_VALUE}}。如果您想了解更多，我可以继续介绍。", "BENEFITS_VALUE"),
+            new TemplateDefinition("TRIAL_PERIOD", "岗位试岗安排为{{TRIAL_PERIOD_VALUE}}，具体细节面试时再详细沟通。", "TRIAL_PERIOD_VALUE"),
             new TemplateDefinition("MEALS_LODGING", "吃住自理", ""),
             new TemplateDefinition("SOCIAL_GREETING", "您好", ""),
             new TemplateDefinition("SOCIAL_THANKS", "不客气，您后续有问题可以随时沟通。", ""),
@@ -99,7 +100,22 @@ public class JobReplyTemplateService {
         put(facts, "EDUCATION_VALUE", job.getEducationRequirement());
         put(facts, "WORK_TIME_VALUE", job.getWorkTime());
         put(facts, "BENEFITS_VALUE", job.getBenefits());
+        put(facts, "TRIAL_PERIOD_VALUE", trialPeriod(job));
         return facts;
+    }
+
+    /**
+     * 优先复用当前岗位已审核资料中的试岗安排；岗位资料没有明确写出时，
+     * 使用统一的业务兜底“三天”，避免候选人询问试岗期时被错误静默或转人工。
+     */
+    private String trialPeriod(JobPosition job) {
+        String source = String.join(" ", clean(job.getDescription()), clean(job.getReplySummary()),
+                clean(job.getScreeningRequirements()));
+        if (source.isBlank() || !source.contains("试岗")) return "3天";
+        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(
+                "([^。；;\\n]{0,80}试岗(?:期|安排)[^。；;\\n]{0,120})").matcher(source);
+        if (!matcher.find()) return "3天";
+        return clean(matcher.group(1));
     }
 
     private static String first(String preferred, String fallback) {

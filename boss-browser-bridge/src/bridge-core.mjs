@@ -353,6 +353,15 @@ export function nextConsecutiveFailureCount(previous, outcome) {
 }
 
 export function publicStatus(settings, runtime) {
+  const rawReplyState = runtime?.singleAccountAutoReplyState || '';
+  const inferredReplyLifecycle = /等待|稍后|暂停|复核|重试|暂不可读|未找到|未就绪|不可用/.test(rawReplyState)
+    ? 'WAITING'
+    : /已发送|已静默|已完成|已处理|结果待人工|已停止|失败/.test(rawReplyState)
+      ? 'DONE' : 'PROCESSING';
+  const replyLifecycle = ['WAITING', 'PROCESSING', 'DONE'].includes(runtime?.singleAccountAutoReplyLifecycle)
+    ? runtime.singleAccountAutoReplyLifecycle
+    : ['WAITING', 'PROCESSING', 'DONE'].includes(rawReplyState) ? rawReplyState : inferredReplyLifecycle;
+  const replyReason = runtime?.singleAccountAutoReplyReason || rawReplyState || '当前未开启；仅支持当前配对账号。';
   return {
     paired: Boolean(settings?.deviceToken),
     enabled: settings?.enabled !== false,
@@ -389,7 +398,9 @@ export function publicStatus(settings, runtime) {
     autoReplyDiagnosticState: runtime?.autoReplyDiagnosticState || '尚未执行当前触发条件诊断。',
     lastAutoReplyDiagnosticAt: runtime?.lastAutoReplyDiagnosticAt || null,
     singleAccountAutoReplyEnabled: runtime?.singleAccountAutoReplyEnabled === true,
-    singleAccountAutoReplyState: runtime?.singleAccountAutoReplyState || '当前未开启；仅支持当前配对账号。',
+    singleAccountAutoReplyState: replyLifecycle,
+    singleAccountAutoReplyLifecycle: replyLifecycle,
+    singleAccountAutoReplyReason: replyReason,
     singleAccountAutoReplyProcessedCount: Array.isArray(runtime?.singleAccountProcessedMessages) ? runtime.singleAccountProcessedMessages.length : 0,
     singleAccountConsecutiveFailures: Number(runtime?.singleAccountConsecutiveFailures || 0),
     lastSingleAccountAutoReplyAt: runtime?.lastSingleAccountAutoReplyAt || null,
