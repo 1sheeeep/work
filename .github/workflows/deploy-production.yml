@@ -1,9 +1,8 @@
 name: Deploy recruitment production
 
 on:
-  pull_request:
+  push:
     branches: [main]
-    types: [closed]
   workflow_dispatch:
 
 permissions:
@@ -14,32 +13,53 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  require-merged-pull-request:
+    name: Require merged pull request
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check main commit provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'xz-development/recruitment-console'
+          test "$GITHUB_REF" = 'refs/heads/main'
+          if [ "$GITHUB_EVENT_NAME" = 'workflow_dispatch' ]; then
+            echo 'Manual production retry on main is allowed.'
+            exit 0
+          fi
+          pr_number="$(gh api \
+            --header 'Accept: application/vnd.github+json' \
+            "/repos/$GITHUB_REPOSITORY/commits/$COMMIT_SHA/pulls" \
+            --jq '[.[] | select(.base.ref == "main" and .merged_at != null)] | if length > 0 then .[0].number else empty end')"
+          test -n "$pr_number" || {
+            echo 'This main commit has no merged pull request; production deployment is blocked.' >&2
+            exit 1
+          }
+          echo "Release commit came from merged PR #$pr_number."
+
   deploy:
     name: Verify, package and deploy
+    needs: require-merged-pull-request
+    if: ${{ needs.require-merged-pull-request.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     environment: recruitment-production
     env:
       # Keep release validation aligned with the dashboard business timezone.
       TZ: Asia/Shanghai
-      RELEASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || github.sha }}
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true) }}
+      RELEASE_SHA: ${{ github.sha }}
     steps:
-      - name: Require merged recruitment pull request
-        env:
-          PR_MERGED: ${{ github.event.pull_request.merged }}
-          PR_BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name }}
-          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+      - name: Require organization main branch
         run: |
           set -euo pipefail
           test "$GITHUB_REPOSITORY" = 'xz-development/recruitment-console'
-          if [ "$GITHUB_EVENT_NAME" = 'pull_request' ]; then
-            test "$PR_MERGED" = 'true'
-            test "$PR_BASE_REPOSITORY" = "$GITHUB_REPOSITORY"
-            test "$PR_BASE_REF" = 'main'
-          else
-            test "$GITHUB_REF" = 'refs/heads/main'
-          fi
+          test "$GITHUB_REF" = 'refs/heads/main'
           test -n "$RELEASE_SHA"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
