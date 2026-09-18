@@ -108,7 +108,7 @@ def read_manifest(path):
     values = {}
     for line in path.read_text(encoding='utf-8').splitlines():
         key, separator, value = line.partition('=')
-        require(separator and re.fullmatch(r'[a-z][a-z0-9_]*', key) is not None and value,
+        require(separator and re.fullmatch(r'[a-z][a-z0-9_.-]*', key) is not None and value,
                 'Invalid release manifest')
         require(key not in values, 'Duplicate release manifest key')
         values[key] = value
