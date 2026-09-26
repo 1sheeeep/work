@@ -58,7 +58,7 @@ describe('AppLayout navigation contract', () => {
     wrapper.unmount()
   })
 
-  it('keeps system logs out of the four-entry recruiter navigation', async () => {
+  it('allows recruitment administrators to manage HR users without system logs', async () => {
     const wrapper = await mountLayout('RECRUITMENT_ADMIN')
 
     expect(navigationLabels(wrapper)).toEqual([
@@ -66,7 +66,13 @@ describe('AppLayout navigation contract', () => {
       '人才库',
       '岗位资料',
       '招聘账号',
+      'HR 用户管理',
     ])
+    wrapper.unmount()
+  })
+  it('keeps user management out of recruiter navigation', async () => {
+    const wrapper = await mountLayout('RECRUITER')
+    expect(navigationLabels(wrapper)).toEqual(['今日值守', '人才库', '岗位资料', '招聘账号'])
     wrapper.unmount()
   })
 })

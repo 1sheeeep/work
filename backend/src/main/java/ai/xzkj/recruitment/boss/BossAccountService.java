@@ -24,6 +24,8 @@ public class BossAccountService {
     private final CompanyRepository companyRepository;
     private final CurrentUserService currentUserService;
     private final AuditService auditService;
+    @jakarta.persistence.PersistenceContext
+    private jakarta.persistence.EntityManager entityManager;
 
     public BossAccountService(BossAccountRepository accountRepository, CompanyRepository companyRepository,
                               CurrentUserService currentUserService, AuditService auditService) {
@@ -43,6 +45,8 @@ public class BossAccountService {
         }
         String normalized = keyword == null ? "" : keyword.trim().toLowerCase(Locale.ROOT);
         return accountRepository.findAllByOrderByCreatedAtDesc().stream()
+                .filter(account -> !account.isDeleted())
+                .filter(account -> BossAccountAccess.canAccess(account, user))
                 .filter(account -> allowedIds == null || allowedIds.contains(account.getCompany().getId()))
                 .filter(account -> companyId == null || account.getCompany().getId().equals(companyId))
                 .filter(account -> status == null || account.getStatus() == status)
@@ -54,14 +58,50 @@ public class BossAccountService {
                 .toList();
     }
 
+    public record BindableAccount(UUID id, String displayName, String bindingStatus) {}
+
+    @Transactional(readOnly = true)
+    public List<BindableAccount> bindableAccounts() {
+        SystemUser user = currentUserService.requireCurrentUser();
+        Set<UUID> allowed = allowedCompanyIds(user);
+        return accountRepository.findAllByOrderByCreatedAtDesc().stream()
+                .filter(account -> !account.isDeleted())
+                .filter(account -> allowed == null || allowed.contains(account.getCompany().getId()))
+                .map(account -> new BindableAccount(account.getId(), account.getDisplayName(),
+                        account.getStatus() != BossAccountStatus.ACTIVE ? "UNAVAILABLE" :
+                        account.getRecruiterIds().contains(user.getId()) ? "MINE" :
+                        account.getRecruiterIds().isEmpty() ? "AVAILABLE" : "BOUND"))
+                .toList();
+    }
+
+    @Transactional
+    public BossAccountResponse claim(UUID id) {
+        SystemUser user = currentUserService.requireCurrentUser();
+        if (user.getRole() != UserRole.RECRUITER) throw new ApiException(HttpStatus.FORBIDDEN,
+                "RECRUITER_REQUIRED", "管理员请通过编辑账号分配招聘专员");
+        BossAccount account = accountRepository.findForUpdateById(id).orElseThrow(() ->
+                new ApiException(HttpStatus.NOT_FOUND, "BOSS_ACCOUNT_NOT_FOUND", "招聘账号不存在"));
+        requireCompanyAccess(account.getCompany().getId(), user);
+        if (account.isDeleted() || account.getStatus() != BossAccountStatus.ACTIVE) throw new ApiException(
+                HttpStatus.CONFLICT, "ACCOUNT_UNAVAILABLE", "该招聘账号不可绑定");
+        if (account.getRecruiterIds().contains(user.getId())) return BossAccountResponse.from(account);
+        if (!account.getRecruiterIds().isEmpty()) throw new ApiException(HttpStatus.CONFLICT,
+                "ACCOUNT_ALREADY_BOUND", "账号已被其他专员绑定，请联系管理员转交");
+        assignRecruiters(account, Set.of(user.getId()));
+        auditService.success("CLAIM_BOSS_ACCOUNT", "BOSS_ACCOUNT", id, account.getDisplayName(), "招聘专员自行绑定招聘账号");
+        return BossAccountResponse.from(account);
+    }
+
     @Transactional
     public BossAccountResponse create(BossAccountUpsertRequest request) {
         SystemUser user = requireManager();
         Company company = requireActiveAccessibleCompany(request.companyId(), user);
-        String externalIdentifier = cleanRequired(request.externalIdentifier());
+        String externalIdentifier = request.externalIdentifier() == null || request.externalIdentifier().isBlank()
+                ? "boss-" + UUID.randomUUID() : cleanRequired(request.externalIdentifier());
         ensureUnique(company.getId(), externalIdentifier, null);
         BossAccount account = accountRepository.save(new BossAccount(
                 company, cleanRequired(request.displayName()), externalIdentifier));
+        assignRecruiters(account, request.recruiterIds());
         auditService.success("CREATE_BOSS_ACCOUNT", "BOSS_ACCOUNT", account.getId(), account.getDisplayName(),
                 "新增本地 CDP 连接器 BOSS 账号，归属企业 " + company.getCode());
         return BossAccountResponse.from(account);
@@ -72,9 +112,11 @@ public class BossAccountService {
         SystemUser user = requireManager();
         BossAccount account = requireAccessibleAccount(id, user);
         Company company = requireActiveAccessibleCompany(request.companyId(), user);
-        String externalIdentifier = cleanRequired(request.externalIdentifier());
+        String externalIdentifier = request.externalIdentifier() == null || request.externalIdentifier().isBlank()
+                ? account.getExternalIdentifier() : cleanRequired(request.externalIdentifier());
         ensureUnique(company.getId(), externalIdentifier, id);
         account.update(company, cleanRequired(request.displayName()), externalIdentifier);
+        assignRecruiters(account, request.recruiterIds() == null ? account.getRecruiterIds() : request.recruiterIds());
         auditService.success("UPDATE_BOSS_ACCOUNT", "BOSS_ACCOUNT", account.getId(), account.getDisplayName(),
                 "更新 BOSS 账号连接方式和归属");
         return BossAccountResponse.from(account);
@@ -103,10 +145,38 @@ public class BossAccountService {
         return user;
     }
 
+    private void assignRecruiters(BossAccount account, Set<UUID> ids) {
+        if (ids == null) return;
+        for (UUID id : ids) {
+            SystemUser recruiter = entityManager.find(SystemUser.class, id);
+            if (recruiter == null || !recruiter.isEnabled() || recruiter.getRole() != UserRole.RECRUITER
+                    || recruiter.getCompanyScopes().stream().noneMatch(c -> c.getId().equals(account.getCompany().getId()))) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_RECRUITER_SCOPE", "只能分配给已启用且有该企业权限的招聘专员");
+            }
+        }
+        if (!account.getRecruiterIds().equals(ids)) {
+            // Revoke old device credentials on reassignment; no previous owner may continue collecting.
+            entityManager.createQuery("update BrowserDevice d set d.status = 'REVOKED', d.runtimeState = 'OFFLINE', d.revokedAt = :now where d.bossAccount.id = :accountId")
+                    .setParameter("accountId", account.getId()).setParameter("now", java.time.Instant.now()).executeUpdate();
+            account.assignRecruiters(ids);
+        }
+    }
+
+    @Transactional
+    public void delete(UUID id) {
+        BossAccount account = requireAccessibleAccount(id, requireManager());
+        account.deleteAccount();
+        entityManager.createQuery("update BrowserDevice d set d.status = 'REVOKED', d.runtimeState = 'OFFLINE', d.revokedAt = :now where d.bossAccount.id = :accountId")
+                .setParameter("accountId", id).setParameter("now", java.time.Instant.now()).executeUpdate();
+        auditService.success("DELETE_BOSS_ACCOUNT", "BOSS_ACCOUNT", id, account.getDisplayName(),
+                "删除招聘账号并撤销关联插件，保留历史简历与会话");
+    }
+
     private BossAccount requireAccessibleAccount(UUID id, SystemUser user) {
         BossAccount account = accountRepository.findWithDetailsById(id)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "BOSS_ACCOUNT_NOT_FOUND", "BOSS 账号不存在"));
         requireCompanyAccess(account.getCompany().getId(), user);
+        if (account.isDeleted()) throw new ApiException(HttpStatus.NOT_FOUND, "BOSS_ACCOUNT_NOT_FOUND", "招聘账号已删除");
         return account;
     }
 

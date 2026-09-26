@@ -19,7 +19,8 @@ public record BossAccountResponse(
         Instant lastCheckedAt,
         long version,
         Instant createdAt,
-        Instant updatedAt
+        Instant updatedAt,
+        java.util.Set<UUID> recruiterIds
 ) {
     public static BossAccountResponse from(BossAccount account) {
         var company = account.getCompany();
@@ -28,7 +29,7 @@ public record BossAccountResponse(
                 account.getDisplayName(), account.getExternalIdentifier(), account.getGatewayType(),
                 account.getStatus(), account.getConnectionStatus(), account.getCapabilities().stream()
                 .sorted(Comparator.comparing(Enum::name)).toList(), account.getLastCheckedAt(), account.getVersion(),
-                account.getCreatedAt(), account.getUpdatedAt());
+                account.getCreatedAt(), account.getUpdatedAt(), account.getRecruiterIds());
     }
 
     public record CompanySummary(UUID id, String name, String code, CompanyStatus status) {

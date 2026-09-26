@@ -47,6 +47,7 @@ class CandidateServiceTest {
         contact = new CandidateJobContact(profile, job, account);
         recruiter = new SystemUser("recruiter", "hash", "招聘专员", UserRole.RECRUITER);
         recruiter.assignCompanyScopes(Set.of(company));
+        account.assignRecruiters(Set.of(recruiter.getId()));
     }
 
     @Test void listsOnlyAccessibleRealContacts() {

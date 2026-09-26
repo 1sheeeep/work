@@ -181,7 +181,7 @@ class JobPositionServiceTest {
 
     @Test
     void reviewsAnObservedDraftAtomicallyAndActivatesIt() {
-        SystemUser admin = user(UserRole.RECRUITMENT_ADMIN, allowedCompany);
+        SystemUser admin = user(UserRole.RECRUITER, allowedCompany);
         JobPosition job = job(allowedCompany, eligibleAccount, "Java 开发工程师");
         job.markUnreadObservation("a".repeat(64), true);
         allowedCompany.updateKnowledge("企业软件服务", "100-499人", "专注于企业数字化产品", true);
@@ -263,6 +263,20 @@ class JobPositionServiceTest {
     private SystemUser user(UserRole role, Company company) {
         SystemUser user = new SystemUser(role.name().toLowerCase(), "hash", role.name(), role);
         user.assignCompanyScopes(Set.of(company));
+        if (role == UserRole.RECRUITER && eligibleAccount != null) eligibleAccount.assignRecruiters(Set.of(user.getId()));
         return user;
+    }
+
+    @Test
+    void recruiterCannotReviewAnotherAccountsJob() {
+        SystemUser recruiter = user(UserRole.RECRUITER, allowedCompany);
+        BossAccount other = account(allowedCompany, "其他专员账号");
+        JobPosition draft = job(allowedCompany, other, "其他账号岗位");
+        draft.markUnreadObservation("b".repeat(64), true);
+        when(currentUserService.requireCurrentUser()).thenReturn(recruiter);
+        when(jobRepository.findWithDetailsById(draft.getId())).thenReturn(Optional.of(draft));
+        assertThatThrownBy(() -> service.reviewAndActivate(draft.getId(), reviewRequest()))
+                .isInstanceOf(ApiException.class).hasMessageContaining("无权");
+        assertThat(draft.getStatus()).isEqualTo(JobPositionStatus.DRAFT);
     }
 }

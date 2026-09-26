@@ -44,6 +44,7 @@ public class CandidateService {
         requireCompanyAccessIfSelected(companyId, user);
         String normalized = cleanOptional(keyword) == null ? "" : keyword.trim().toLowerCase(Locale.ROOT);
         return contactRepository.findAllByOrderByUpdatedAtDesc().stream()
+                .filter(contact -> ai.xzkj.recruitment.boss.BossAccountAccess.canAccess(contact.getBossAccount(), user))
                 .filter(contact -> canAccess(contact.getCandidate().getCompany().getId(), user))
                 .filter(contact -> companyId == null || companyId.equals(contact.getCandidate().getCompany().getId()))
                 .filter(contact -> jobPositionId == null || jobPositionId.equals(contact.getJobPosition().getId()))
@@ -125,7 +126,9 @@ public class CandidateService {
     private CandidateJobContact requireAccessibleContact(UUID id, SystemUser user) {
         CandidateJobContact contact = contactRepository.findWithDetailsById(id)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "CANDIDATE_CONTACT_NOT_FOUND", "候选人职位关系不存在"));
-        requireCompanyAccess(contact.getCandidate().getCompany().getId(), user); return contact;
+        requireCompanyAccess(contact.getCandidate().getCompany().getId(), user);
+        ai.xzkj.recruitment.boss.BossAccountAccess.requireAccess(contact.getBossAccount(), user);
+        return contact;
     }
     private SystemUser requireManager() {
         SystemUser user = currentUserService.requireCurrentUser();

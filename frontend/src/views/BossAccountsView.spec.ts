@@ -31,7 +31,7 @@ describe('BossAccountsView', () => {
     await dialog.findAll('button').find(button => button.text() === '保存')?.trigger('click')
     await flushPromises()
 
-    expect(dialog.findAll('.el-form-item.is-error')).toHaveLength(2)
+    expect(dialog.findAll('.el-form-item.is-error')).toHaveLength(1)
     expect(dialog.text()).not.toContain('归属企业')
     wrapper.unmount()
   })
@@ -46,6 +46,7 @@ describe('BossAccountsView', () => {
       .mockResolvedValueOnce({ data: [{ id: 'device-1', accountId: 'account-1', status: 'ACTIVE', runtimeState: 'RUNNING', pageContext: 'CHAT', lastHeartbeatAt: '2026-08-31T08:00:00Z', lastSuccessfulSyncAt: '2026-08-31T07:59:55Z', lastSuccessfulSyncType: 'CHAT', lastSuccessfulChatSyncAt: '2026-08-31T07:59:55Z', lastPauseAt: '2026-08-31T07:55:00Z', lastPauseReason: 'BOSS 页面脚本尚未就绪', lastRecoveredAt: '2026-08-31T07:59:55Z', recoveryStatus: 'RECOLLECTED' }] })
       .mockResolvedValueOnce({ data: [{ id: 'observation-1', accountId: 'account-1', unread: true, unreadCount: 2, resolutionStatus: 'UNRESOLVED' }] })
       .mockResolvedValueOnce({ data: [{ id: 'job-1', bossAccount: { id: 'account-1' }, captureSource: 'VISIBLE_PAGE', status: 'ACTIVE' }] })
+      .mockResolvedValueOnce({ data: [] })
     const wrapper = mount(BossAccountsView, { attachTo: document.body })
     await flushPromises()
 

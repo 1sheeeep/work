@@ -1,12 +1,13 @@
 {
   "manifest_version": 3,
   "name": "招聘值守台·BOSS 安全桥接",
-  "version": "0.38.4",
+  "version": "0.38.10",
   "description": "持续同步已打开的职位管理页并识别当前账号未读消息；仅对岗位相关、低风险纯文本发送受限短回复。",
   "permissions": ["alarms", "storage", "tabs", "scripting", "clipboardWrite"],
   "host_permissions": [
     "https://zhipin.com/*",
     "https://*.zhipin.com/*",
+    "https://hr.xzkj.ai/*",
     "http://localhost:8088/*",
     "http://127.0.0.1:8088/*",
     "http://13.215.3.189:8088/*"

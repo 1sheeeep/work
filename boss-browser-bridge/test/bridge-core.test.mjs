@@ -188,6 +188,8 @@ test('only accepts approved recruitment console URLs', () => {
   assert.equal(validateBackendUrl('http://localhost:8088/'), 'http://localhost:8088');
   assert.equal(validateBackendUrl('http://127.0.0.1:8088'), 'http://127.0.0.1:8088');
   assert.equal(validateBackendUrl('http://13.215.3.189:8088'), 'http://13.215.3.189:8088');
+  assert.equal(validateBackendUrl('https://hr.xzkj.ai'), 'https://hr.xzkj.ai');
+  assert.throws(() => validateBackendUrl('https://hr.xzkj.ai:8443'), /只允许/);
   assert.throws(() => validateBackendUrl('https://example.com'), /只允许/);
 });
 

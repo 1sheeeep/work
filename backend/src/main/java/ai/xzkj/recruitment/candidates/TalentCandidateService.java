@@ -350,7 +350,7 @@ public class TalentCandidateService {
     }
 
     private TalentCandidateDetailResponse.ContactSummary contactSummary(CandidateJobContact contact) {
-        List<ConversationMessage> history = messages == null ? List.of()
+        List<ConversationMessage> history = messages == null || !ai.xzkj.recruitment.boss.BossAccountAccess.canAccess(contact.getBossAccount(), users.requireCurrentUser()) ? List.of()
                 : messages.findTop100ByContactIdAndSupersededAtIsNullOrderByCreatedAtDesc(contact.getId());
         ConversationMessage latest = history.isEmpty() ? null : history.getFirst();
         String preview = latest == null ? null : latest.getContent();
@@ -400,6 +400,7 @@ public class TalentCandidateService {
                     run.getStatus(), run.getId(), run.getCreatedAt(), run.getErrorMessage()));
         }
         if (messages != null) for (CandidateJobContact contact : candidateContacts) {
+            if (!ai.xzkj.recruitment.boss.BossAccountAccess.canAccess(contact.getBossAccount(), users.requireCurrentUser())) continue;
             for (ConversationMessage message : ConversationMessageDeduplicator.forDisplay(
                     messages.findTop100ByContactIdAndSupersededAtIsNullOrderByCreatedAtDesc(contact.getId()))) {
                 events.add(new TalentCandidateDetailResponse.TimelineEvent("CONVERSATION", "沟通记录",

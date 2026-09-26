@@ -19,6 +19,10 @@
       <span id="stateBadge" class="badge">检查中</span>
     </div>
   </header>
+  <section class="context-bar" aria-label="后台连接设置">
+    <div><small>当前后台</small><strong id="connectedBackend">读取中…</strong></div>
+    <button id="switchConnection" class="secondary" type="button" hidden>切换账号／后台</button>
+  </section>
 
   <section id="summary" hidden>
     <section class="context-bar" aria-label="当前连接">
@@ -82,10 +86,10 @@
   </section>
 
   <form id="pairForm" hidden>
-    <div class="eyebrow">首次使用</div>
+    <div class="eyebrow">连接设置</div>
     <h1>连接招聘值守台</h1>
     <p>在招聘账号页面生成一次性接入码后完成配对。</p>
-    <label>后台地址<input id="backendUrl" maxlength="120" value="http://localhost:8088" placeholder="http://localhost:8088" required></label>
+    <label>后台地址<input id="backendUrl" maxlength="120" placeholder="请输入后台地址" required></label>
     <label>设备名称<input id="deviceName" maxlength="80" value="HR 电脑" required></label>
     <label>一次性接入码<textarea id="pairingToken" maxlength="200" rows="3" required></textarea></label>
     <div class="button-grid"><button id="saveBackendUrl" class="secondary" type="button">保存地址</button><button class="primary" type="submit">完成配对</button></div>

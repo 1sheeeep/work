@@ -1,5 +1,5 @@
-export const DEFAULT_BACKEND_URL = 'http://localhost:8088';
-export const ALLOWED_BACKEND_HOSTS = new Set(['localhost', '127.0.0.1', '13.215.3.189']);
+export const DEFAULT_BACKEND_URL = 'https://hr.xzkj.ai';
+export const ALLOWED_BACKEND_HOSTS = new Set(['localhost', '127.0.0.1', '13.215.3.189', 'hr.xzkj.ai']);
 export const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 export const MAX_CONVERSATIONS = 200;
 export const MAX_JOBS = 200;
@@ -34,8 +34,12 @@ export function validateBackendUrl(value) {
   } catch {
     throw new Error('本地服务地址无效。');
   }
-  if (url.protocol !== 'http:' || !ALLOWED_BACKEND_HOSTS.has(url.hostname) || url.port !== '8088') {
-    throw new Error('只允许连接 localhost:8088、127.0.0.1:8088、13.215.3.189:8088 或已配置的招聘值守台服务器。');
+  const isProduction = url.hostname === 'hr.xzkj.ai';
+  const isLegacyLocal = ['localhost', '127.0.0.1', '13.215.3.189'].includes(url.hostname);
+  if (!ALLOWED_BACKEND_HOSTS.has(url.hostname)
+      || (isProduction && (url.protocol !== 'https:' || url.port !== ''))
+      || (isLegacyLocal && (url.protocol !== 'http:' || url.port !== '8088'))) {
+    throw new Error('只允许连接 https://hr.xzkj.ai，或本地测试服务 localhost:8088、127.0.0.1:8088、13.215.3.189:8088。');
   }
   if (url.username || url.password || !['', '/'].includes(url.pathname) || url.search || url.hash) {
     throw new Error('本地服务地址不得包含账号、路径或参数。');

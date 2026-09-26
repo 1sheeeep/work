@@ -59,6 +59,7 @@ public class JobPositionService {
         }
         String normalized = keyword == null ? "" : keyword.trim().toLowerCase(Locale.ROOT);
         return jobRepository.findAllByOrderByCreatedAtDesc().stream()
+                .filter(job -> ai.xzkj.recruitment.boss.BossAccountAccess.canAccess(job.getBossAccount(), user))
                 .filter(job -> "VISIBLE_PAGE".equals(job.getCaptureSource()))
                 .filter(job -> status != null || job.getStatus() != JobPositionStatus.CLOSED)
                 .filter(job -> allowedIds == null || allowedIds.contains(job.getCompany().getId()))
@@ -167,7 +168,7 @@ public class JobPositionService {
 
     @Transactional
     public JobPositionResponse reviewAndActivate(UUID id, JobPositionReviewRequest request) {
-        SystemUser user = requireManager();
+        SystemUser user = currentUserService.requireCurrentUser();
         JobPosition job = requireAccessibleJob(id, user);
         if (job.getStatus() != JobPositionStatus.DRAFT || "MANUAL".equals(job.getCaptureSource())) {
             throw new ApiException(HttpStatus.CONFLICT, "IMPORTED_JOB_REVIEW_REQUIRED",
@@ -251,6 +252,7 @@ public class JobPositionService {
         JobPosition job = jobRepository.findWithDetailsById(id)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "JOB_POSITION_NOT_FOUND", "职位不存在"));
         requireCompanyAccess(job.getCompany().getId(), user);
+        ai.xzkj.recruitment.boss.BossAccountAccess.requireAccess(job.getBossAccount(), user);
         return job;
     }
 

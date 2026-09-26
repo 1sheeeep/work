@@ -10,7 +10,7 @@ export type BossAccountStatus = 'ACTIVE' | 'INACTIVE'
 export type BossConnectionStatus = 'UNVERIFIED' | 'CONNECTED' | 'DEGRADED' | 'UNAVAILABLE'
 export type BossCapability = 'JOB_SYNC' | 'CANDIDATE_READ' | 'MESSAGE_SEND'
 export type BossGatewayType='LOCAL_CDP_CONNECTOR'
-export interface BossAccount { id: string; company: CompanyScope; displayName: string; externalIdentifier: string; gatewayType: BossGatewayType; status: BossAccountStatus; connectionStatus: BossConnectionStatus; capabilities: BossCapability[]; lastCheckedAt?: string; version: number; createdAt: string; updatedAt: string }
+export interface BossAccount { id: string; recruiterIds?: string[]; company: CompanyScope; displayName: string; externalIdentifier: string; gatewayType: BossGatewayType; status: BossAccountStatus; connectionStatus: BossConnectionStatus; capabilities: BossCapability[]; lastCheckedAt?: string; version: number; createdAt: string; updatedAt: string }
 export type JobPositionStatus = 'DRAFT' | 'ACTIVE' | 'CLOSED'
 export interface JobPositionBossAccount { id: string; displayName: string; externalIdentifier: string; status: BossAccountStatus; connectionStatus: BossConnectionStatus }
 export interface JobReviewReadiness { importedDraft: boolean; profileComplete: boolean; captureReady: boolean; companyKnowledgeReady: boolean; jobKnowledgeReady: boolean; activationReady: boolean; blockers: string[] }

@@ -61,8 +61,6 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
     private Duration queueRetention = Duration.ofDays(7);
     @Value("${app.inbound-reply.max-pending-per-account:100}") private long maxPendingPerAccount = 100;
     @Value("${app.inbound-reply.max-pending-global:1000}") private long maxPendingGlobal = 1000;
-    @Value("${app.inbound-reply.send-limit-per-hour:20}") private long sendLimitPerHour = 20;
-    @Value("${app.inbound-reply.send-limit-per-day:100}") private long sendLimitPerDay = 100;
     @Value("${app.inbound-reply.auto-send-enabled:false}") private boolean autoSendEnabled;
     @Value("${app.inbound-reply.shadow-evaluation-enabled:false}") private boolean shadowEvaluationEnabled;
     @Value("${app.inbound-reply.silent-revalidation-delay:PT10S}") private Duration silentRevalidationDelay = Duration.ofSeconds(10);
@@ -316,12 +314,11 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
                         task.getSendStatus(), "该招聘账号已有发送任务正在等待页面回执，当前任务留在发送队列");
             }
             Instant now = Instant.now();
-            long sentLastHour = tasks.countByAccountIdAndSendStatusAndSendCompletedAtAfter(accountId,"SUCCEEDED",now.minus(Duration.ofHours(1)));
-            long sentLastDay = tasks.countByAccountIdAndSendStatusAndSendCompletedAtAfter(accountId,"SUCCEEDED",now.minus(Duration.ofDays(1)));
-            if (sentLastHour >= sendLimitPerHour || sentLastDay >= sendLimitPerDay) {
-                meters.counter("recruitment.inbound.reply.send.rate_limited").increment();
-                return new InboundReplySendClaimResponse(false,task.getId(),null,null,null,null,
-                        task.getSendStatus(),"已达到账号发送安全上限，回复已保留，待额度窗口恢复后再领取");
+            // Recheck legacy READY tasks as well; old generated replies may predate the result handoff rule.
+            if (InboundJobReplyService.isInterviewResultInquiry(task.getMessageText(), task.getConversationContext())) {
+                task.skipSend("涉及面试或录用结果，已转 HR 跟进，不自动发送", now);
+                return new InboundReplySendClaimResponse(false, task.getId(), null, null, null, null,
+                        task.getSendStatus(), "涉及面试或录用结果，已转 HR 跟进，不自动发送");
             }
             String raw = token();
             task.claimSend(deviceId, hash(raw), request.beforeStateDigest(), now);

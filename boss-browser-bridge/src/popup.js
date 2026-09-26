@@ -1,6 +1,19 @@
 const elements = Object.fromEntries(['stateBadge','enabledToggle','summary','pairForm','accountName','totalCount','currentUnreadCount','trackedUnreadCount','continuousReplyState','continuousReplyBadge','lastContinuousReply','detailState','lastSync','copyCurrentTranscript','jobState','lastJobSync','collectJobs','controlDiagnosticState','lastControlDiagnostic','inspectControls','controlDiagnosticReport','copyControlDiagnostic','pluginVersion','forget','message','saveBackendUrl','backendUrl','deviceName','pairingToken','pageContext','openConsole','collect'].map((id) => [id, document.getElementById(id)]));
 
 elements.pluginVersion.textContent = chrome.runtime.getManifest().version;
+elements.connectedBackend = document.getElementById('connectedBackend');
+elements.switchConnection = document.getElementById('switchConnection');
+elements.switchConnection.addEventListener('click', () => void busy(elements.switchConnection, async () => {
+  if (!window.confirm('切换将停止本机旧账号自动回复并解除本机配对。请准备目标后台和账号的新接入码，是否继续？')) return;
+  const result = await send({ type: 'BRIDGE_FORGET_DEVICE' });
+  if (!result.ok) throw new Error(result.error);
+  backendUrlDirty = false;
+  elements.pairingToken.value = '';
+  render(result.status);
+  show('旧配对已解除。请确认后台地址，并使用目标账号的新接入码配对；同时确认 BOSS 登录账号一致。');
+}));
+let backendUrlDirty = false;
+elements.backendUrl.addEventListener('input', () => { backendUrlDirty = true; });
 
 elements.pairForm.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -15,6 +28,7 @@ elements.pairForm.addEventListener('submit', async (event) => {
 elements.saveBackendUrl.addEventListener('click', () => void busy(elements.saveBackendUrl, async () => {
   const result = await send({ type: 'BRIDGE_SAVE_BACKEND_URL', payload: { backendUrl: elements.backendUrl.value } });
   if (!result.ok) throw new Error(result.error);
+  backendUrlDirty = false;
   render(result.status);
   show('后台地址已保存；如切换环境，请使用对应后台的一次性接入码重新配对。');
 }));
@@ -79,8 +93,10 @@ async function act(message, reportError = true) {
 async function send(message) { return chrome.runtime.sendMessage(message); }
 async function busy(button, operation, busyText = '') { const original = button.textContent; button.disabled = true; if (busyText) button.textContent = busyText; try { await operation(); } catch (error) { show(error.message, true); } finally { button.disabled = button.dataset.locked === 'true'; button.textContent = original; } }
 function render(status) {
+  elements.connectedBackend.textContent = status.backendUrl || '尚未设置';
+  elements.switchConnection.hidden = !status.paired;
   elements.summary.hidden = !status.paired; elements.pairForm.hidden = status.paired;
-  if (!status.paired && status.backendUrl && document.activeElement !== elements.backendUrl) {
+  if (status.backendUrl && !backendUrlDirty && document.activeElement !== elements.backendUrl) {
     elements.backendUrl.value = status.backendUrl;
   }
   elements.accountName.textContent = status.accountName || '-'; elements.totalCount.textContent = status.total; elements.currentUnreadCount.textContent = status.currentUnread; elements.trackedUnreadCount.textContent = status.trackedUnread;

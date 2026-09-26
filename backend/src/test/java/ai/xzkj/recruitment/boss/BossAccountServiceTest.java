@@ -76,10 +76,13 @@ class BossAccountServiceTest {
 
     @Test
     void listOnlyReturnsAccountsInsideCompanyScope() {
-        when(currentUserService.requireCurrentUser()).thenReturn(user(UserRole.RECRUITER, allowedCompany));
+        SystemUser recruiter = user(UserRole.RECRUITER, allowedCompany);
+        when(currentUserService.requireCurrentUser()).thenReturn(recruiter);
+        BossAccount visible = new BossAccount(allowedCompany, "可见账号", "visible");
+        visible.assignRecruiters(Set.of(recruiter.getId()));
         when(accountRepository.findAllByOrderByCreatedAtDesc()).thenReturn(List.of(
                 new BossAccount(hiddenCompany, "隐藏账号", "hidden"),
-                new BossAccount(allowedCompany, "可见账号", "visible")));
+                visible, new BossAccount(allowedCompany, "未分配账号", "unassigned")));
 
         List<BossAccountResponse> response = service.list(null, null, null, null);
 
@@ -90,5 +93,62 @@ class BossAccountServiceTest {
         SystemUser user = new SystemUser(role.name().toLowerCase(), "hash", role.name(), role);
         user.assignCompanyScopes(Set.of(company));
         return user;
+    }
+
+    @Test
+    void recruiterSeesNamesButOnlyClaimsAnUnboundAccountInTheirCompany() {
+        SystemUser recruiter = user(UserRole.RECRUITER, allowedCompany);
+        when(currentUserService.requireCurrentUser()).thenReturn(recruiter);
+        BossAccount free = new BossAccount(allowedCompany, "可绑定", "free");
+        BossAccount occupied = new BossAccount(allowedCompany, "已绑定", "occupied");
+        occupied.assignRecruiters(Set.of(java.util.UUID.randomUUID()));
+        BossAccount foreign = new BossAccount(hiddenCompany, "跨企业", "foreign");
+        when(accountRepository.findAllByOrderByCreatedAtDesc()).thenReturn(List.of(free, occupied, foreign));
+        assertThat(service.bindableAccounts()).extracting(BossAccountService.BindableAccount::bindingStatus)
+                .containsExactly("AVAILABLE", "BOUND");
+        assertThat(service.list(null, null, null, null)).isEmpty();
+        when(accountRepository.findForUpdateById(occupied.getId())).thenReturn(Optional.of(occupied));
+        assertThatThrownBy(() -> service.claim(occupied.getId())).hasMessageContaining("其他专员");
+        when(accountRepository.findForUpdateById(foreign.getId())).thenReturn(Optional.of(foreign));
+        assertThatThrownBy(() -> service.claim(foreign.getId())).isInstanceOf(ApiException.class);
+        when(accountRepository.findForUpdateById(free.getId())).thenReturn(Optional.of(free));
+        jakarta.persistence.EntityManager em = org.mockito.Mockito.mock(jakarta.persistence.EntityManager.class);
+        jakarta.persistence.Query query = org.mockito.Mockito.mock(jakarta.persistence.Query.class, org.mockito.Mockito.RETURNS_SELF);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "entityManager", em);
+        when(em.find(SystemUser.class, recruiter.getId())).thenReturn(recruiter);
+        when(em.createQuery(any(String.class))).thenReturn(query);
+        assertThat(service.claim(free.getId()).id()).isEqualTo(free.getId());
+        assertThat(service.claim(free.getId()).id()).isEqualTo(free.getId());
+        assertThat(service.list(null, null, null, null)).extracting(BossAccountResponse::id).containsExactly(free.getId());
+        verify(query).executeUpdate();
+    }
+
+    @Test
+    void deleteHidesAccountRevokesDevicesAndCannotBeReactivated() {
+        when(currentUserService.requireCurrentUser()).thenReturn(user(UserRole.RECRUITMENT_ADMIN, allowedCompany));
+        BossAccount account = new BossAccount(allowedCompany, "账号", "existing");
+        when(accountRepository.findWithDetailsById(account.getId())).thenReturn(Optional.of(account));
+        jakarta.persistence.EntityManager em = org.mockito.Mockito.mock(jakarta.persistence.EntityManager.class);
+        jakarta.persistence.Query query = org.mockito.Mockito.mock(jakarta.persistence.Query.class, org.mockito.Mockito.RETURNS_SELF);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "entityManager", em);
+        when(em.createQuery(any(String.class))).thenReturn(query);
+        service.delete(account.getId());
+        assertThat(account.isDeleted()).isTrue();
+        assertThat(account.getStatus()).isEqualTo(BossAccountStatus.INACTIVE);
+        verify(query).executeUpdate();
+        when(accountRepository.findAllByOrderByCreatedAtDesc()).thenReturn(List.of(account));
+        assertThat(service.list(null, null, null, null)).isEmpty();
+        assertThatThrownBy(() -> service.changeStatus(account.getId(), BossAccountStatus.ACTIVE)).isInstanceOf(ApiException.class);
+    }
+
+    @Test
+    void deleteRejectsRecruiterAndForeignCompany() {
+        BossAccount account = new BossAccount(hiddenCompany, "其他企业账号", "foreign");
+        when(currentUserService.requireCurrentUser()).thenReturn(user(UserRole.RECRUITER, allowedCompany));
+        assertThatThrownBy(() -> service.delete(account.getId())).isInstanceOf(ApiException.class);
+        when(currentUserService.requireCurrentUser()).thenReturn(user(UserRole.RECRUITMENT_ADMIN, allowedCompany));
+        when(accountRepository.findWithDetailsById(account.getId())).thenReturn(Optional.of(account));
+        assertThatThrownBy(() -> service.delete(account.getId())).isInstanceOf(ApiException.class);
+        assertThat(account.isDeleted()).isFalse();
     }
 }

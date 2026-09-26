@@ -37,7 +37,7 @@ class ConversationLocationController {
     ConversationLocationResponse create(@PathVariable UUID id){
         var user=users.requireCurrentUser();var observation=observations.findWithAccountById(id).orElseThrow(()->error(HttpStatus.NOT_FOUND,"会话不存在或已过期"));
         UUID companyId=observation.getAccount().getCompany().getId();
-        if(user.getRole()!=UserRole.SYSTEM_ADMIN&&user.getCompanyScopes().stream().map(Company::getId).noneMatch(companyId::equals))throw error(HttpStatus.FORBIDDEN,"无权访问该会话");
+        ai.xzkj.recruitment.boss.BossAccountAccess.requireAccess(observation.getAccount(), user);
         BrowserDevice device=observation.getDevice();if(device==null||!"ACTIVE".equals(device.getStatus()))throw error(HttpStatus.CONFLICT,"对应浏览器扩展当前不可用");
         Instant now=Instant.now();ConversationLocationRequest request=requests.save(new ConversationLocationRequest(observation,device,now));
         return new ConversationLocationResponse(request.getId(),request.getStatus(),"定位请求已发送到对应扩展",request.getExpiresAt());

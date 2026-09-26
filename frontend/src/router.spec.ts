@@ -1,4 +1,5 @@
 import router from './router'
+import { authStore } from './stores/auth'
 
 vi.mock('./stores/auth', () => ({
   authStore: {
@@ -11,6 +12,17 @@ vi.mock('./stores/auth', () => ({
 }))
 
 describe('router contract', () => {
+  it('allows recruitment administrators but redirects recruiters away from HR management', async () => {
+    vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
+    vi.mocked(authStore.loadCurrentUser).mockResolvedValue({ role: 'RECRUITMENT_ADMIN' } as never)
+    await router.push('/hr-users')
+    expect(router.currentRoute.value.path).toBe('/hr-users')
+    await router.push('/dashboard')
+    vi.mocked(authStore.loadCurrentUser).mockResolvedValue({ role: 'RECRUITER' } as never)
+    await router.push('/hr-users')
+    expect(router.currentRoute.value.path).toBe('/dashboard')
+    vi.mocked(authStore.loadCurrentUser).mockResolvedValue({ role: 'SYSTEM_ADMIN' } as never)
+  })
   it('keeps the current component routes', () => {
     const componentPaths = router.getRoutes()
       .filter(route => !['/', '/login', '/hr-login'].includes(route.path) && Boolean(route.components?.default))

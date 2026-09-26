@@ -1,0 +1,1 @@
+ALTER TABLE boss_accounts ADD COLUMN deleted_at TIMESTAMP WITH TIME ZONE;

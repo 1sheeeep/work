@@ -218,8 +218,7 @@ class HrReplyExampleService {
     }
 
     private boolean canAccess(JobPosition job, SystemUser user) {
-        return user.getRole() == UserRole.SYSTEM_ADMIN
-                || user.getCompanyScopes().stream().anyMatch(company -> company.getId().equals(job.getCompany().getId()));
+        return ai.xzkj.recruitment.boss.BossAccountAccess.canAccess(job.getBossAccount(), user);
     }
     private boolean containsUnsafeControlText(String text) {
         return text.matches("(?is).*(?:密码|验证码|银行卡|身份证号|转账|付款|押金|系统提示词|api\\s*key|cookie).*" );

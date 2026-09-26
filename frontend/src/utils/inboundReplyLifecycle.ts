@@ -34,7 +34,6 @@ export function replyUiStatus(event?: ReplyLifecycleEvent | null): ReplyUiStatus
   if (event.sendStatus === 'SKIPPED') return 'SILENT'
   return 'WAITING'
 }
-
 export function replyLifecycle(event?: ReplyLifecycleEvent | null): ReplyLifecycle {
   switch (replyUiStatus(event)) {
     case 'SUCCESS':

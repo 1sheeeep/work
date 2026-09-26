@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { authStore } from '../stores/auth'
 import { api, apiErrorMessage, ensureCsrf } from '../services/api'
 import type { Company, HrUser, UserRole } from '../types'
 
@@ -12,16 +13,17 @@ const loading = ref(false)
 const saving = ref(false)
 const dialogOpen = ref(false)
 const loadError = ref('')
+const deletingId = ref<string | null>(null)
+const isSystemAdmin = computed(() => authStore.state.user?.role === 'SYSTEM_ADMIN')
+const availableRoles = computed(() => isSystemAdmin.value ? roleLabels : { RECRUITER: '招聘专员' })
 
 const form = reactive<{
   username: string
-  displayName: string
   role: HrRole
   password: string
   companyIds: string[]
 }>({
   username: '',
-  displayName: '',
   role: 'RECRUITER',
   password: '',
   companyIds: [],
@@ -38,7 +40,7 @@ function roleLabel(role: UserRole) {
 }
 
 function resetForm() {
-  Object.assign(form, { username: '', displayName: '', role: 'RECRUITER', password: '', companyIds: [] })
+  Object.assign(form, { username: '', role: 'RECRUITER', password: '', companyIds: [] })
 }
 
 function openCreateDialog() {
@@ -64,8 +66,7 @@ async function load() {
 }
 
 function validateForm() {
-  if (!/^[A-Za-z0-9._-]+$/.test(form.username.trim())) return '用户名只能包含字母、数字、点、下划线和横线'
-  if (!form.displayName.trim()) return '请输入姓名'
+  if (!/^[\p{Script=Han}A-Za-z0-9._-]+$/u.test(form.username.trim())) return '用户名只能包含中文、英文字母、数字、点、下划线和横线'
   if (form.password.length < 12) return '初始密码至少需要 12 个字符'
   if (!form.companyIds.length) return '请至少授权一家企业'
   return ''
@@ -82,7 +83,7 @@ async function createUser() {
     await ensureCsrf()
     await api.post('/hr-users', {
       username: form.username.trim(),
-      displayName: form.displayName.trim(),
+      displayName: form.username.trim(),
       role: form.role,
       password: form.password,
       companyIds: form.companyIds,
@@ -95,6 +96,22 @@ async function createUser() {
   } finally {
     saving.value = false
   }
+}
+
+async function deleteUser(user: HrUser) {
+  try {
+    await ElMessageBox.confirm(`删除“${user.displayName}（${user.username}）”后，该账号无法登录，关联插件将失效。历史招聘记录保留，用户名不可复用。`, '删除 HR 账号', {
+      confirmButtonText: '确认删除', cancelButtonText: '取消', type: 'warning',
+    })
+  } catch { return }
+  deletingId.value = user.id
+  try {
+    await ensureCsrf()
+    await api.delete(`/hr-users/${user.id}`)
+    ElMessage.success('HR 账号已删除')
+    await load()
+  } catch (error) { ElMessage.error(apiErrorMessage(error, '删除失败')) }
+  finally { deletingId.value = null }
 }
 
 onMounted(load)
@@ -114,7 +131,7 @@ document.addEventListener('visibilitychange', onVisChange)
 
     <section class="notice-panel" aria-label="权限说明">
       <span class="notice-dot" aria-hidden="true"></span>
-      <div><strong>仅系统管理员可创建账号</strong><p>HR 登录后只能访问被授权企业的数据，账号创建后可在此处继续维护。</p></div>
+      <div><strong>{{ isSystemAdmin ? '管理招聘管理员与招聘专员' : '管理授权企业内的招聘专员' }}</strong><p>删除账号后无法登录，历史招聘记录保留。招聘管理员仅能管理企业授权完全在自己范围内的专员。</p></div>
     </section>
 
     <section class="users-panel" aria-labelledby="users-title">
@@ -123,14 +140,15 @@ document.addEventListener('visibilitychange', onVisChange)
       <div v-if="loading" class="loading-state" aria-live="polite"><span v-for="item in 3" :key="item" class="skeleton-row"></span></div>
       <div v-else-if="users.length" class="table-wrap">
         <table>
-          <thead><tr><th>用户</th><th>角色</th><th>企业授权</th><th>状态</th><th>创建时间</th></tr></thead>
+          <thead><tr><th>用户</th><th>角色</th><th>企业授权</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead>
           <tbody>
             <tr v-for="user in users" :key="user.id">
-              <td><strong>{{ user.displayName }}</strong><span class="subtext">{{ user.username }}</span></td>
+              <td><strong>{{ user.displayName }}</strong><span v-if="user.displayName !== user.username" class="subtext">{{ user.username }}</span></td>
               <td><span class="role-badge">{{ roleLabel(user.role) }}</span></td>
               <td><div class="company-list"><span v-for="company in user.companies" :key="company.id">{{ company.name }}</span></div></td>
               <td><span class="status-badge" :class="{ enabled: user.enabled }"><i></i>{{ user.enabled ? '已启用' : '已停用' }}</span></td>
               <td class="subtext">{{ new Date(user.createdAt).toLocaleDateString('zh-CN') }}</td>
+              <td><el-button type="danger" link :loading="deletingId === user.id" :disabled="deletingId !== null" @click="deleteUser(user)">删除</el-button></td>
             </tr>
           </tbody>
         </table>
@@ -141,13 +159,10 @@ document.addEventListener('visibilitychange', onVisChange)
     <el-dialog v-model="dialogOpen" title="创建 HR 账号" width="560px" destroy-on-close append-to-body>
       <el-form label-position="top" @submit.prevent="createUser">
         <div class="form-grid">
-          <el-form-item label="用户名" required><el-input v-model="form.username" maxlength="64" autocomplete="username" placeholder="例如：hr_beijing" /></el-form-item>
-          <el-form-item label="姓名" required><el-input v-model="form.displayName" maxlength="100" autocomplete="name" placeholder="例如：张三" /></el-form-item>
-        </div>
-        <div class="form-grid">
-          <el-form-item label="角色" required><el-select v-model="form.role" class="full-width"><el-option v-for="(label, value) in roleLabels" :key="value" :label="label" :value="value" /></el-select></el-form-item>
+          <el-form-item label="用户名" required><el-input v-model="form.username" maxlength="64" autocomplete="username" placeholder="例如：张三、招聘小李或 hr_beijing" /></el-form-item>
           <el-form-item label="初始密码" required><el-input v-model="form.password" type="password" show-password maxlength="72" autocomplete="new-password" placeholder="至少 12 个字符" /></el-form-item>
         </div>
+        <el-form-item label="角色" required><el-select v-model="form.role" class="full-width"><el-option v-for="(label, value) in availableRoles" :key="value" :label="label" :value="value" /></el-select></el-form-item>
         <el-form-item label="企业授权" required><el-select v-model="form.companyIds" class="full-width" multiple collapse-tags collapse-tags-tooltip placeholder="请选择可访问的企业"><el-option v-for="company in activeCompanies" :key="company.id" :label="`${company.name}（${company.code}）`" :value="company.id" /></el-select></el-form-item>
         <p class="dialog-note">账号创建后，HR 使用用户名和初始密码登录；系统不会在页面中再次显示密码。</p>
       </el-form>

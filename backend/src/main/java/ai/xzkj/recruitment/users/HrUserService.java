@@ -4,6 +4,7 @@ import ai.xzkj.recruitment.audit.AuditService;
 import ai.xzkj.recruitment.auth.SystemUser;
 import ai.xzkj.recruitment.auth.SystemUserRepository;
 import ai.xzkj.recruitment.auth.UserRole;
+import ai.xzkj.recruitment.auth.CurrentUserService;
 import ai.xzkj.recruitment.common.ApiException;
 import ai.xzkj.recruitment.organization.Company;
 import ai.xzkj.recruitment.organization.CompanyRepository;
@@ -25,20 +26,27 @@ public class HrUserService {
     private final CompanyRepository companyRepository;
     private final PasswordEncoder passwordEncoder;
     private final AuditService auditService;
+    private final CurrentUserService currentUsers;
+    private final jakarta.persistence.EntityManager entityManager;
 
     public HrUserService(SystemUserRepository userRepository, CompanyRepository companyRepository,
-                         PasswordEncoder passwordEncoder, AuditService auditService) {
+                         PasswordEncoder passwordEncoder, AuditService auditService, CurrentUserService currentUsers,
+                         jakarta.persistence.EntityManager entityManager) {
         this.userRepository = userRepository;
         this.companyRepository = companyRepository;
         this.passwordEncoder = passwordEncoder;
         this.auditService = auditService;
+        this.currentUsers = currentUsers;
+        this.entityManager = entityManager;
     }
 
     @Transactional(readOnly = true)
     public List<HrUserResponse> list(String keyword, UserRole role, Boolean enabled) {
         validateHrRoleFilter(role);
+        SystemUser actor = requireManager();
         String normalized = keyword == null ? "" : keyword.trim().toLowerCase(Locale.ROOT);
         return userRepository.findAllByRoleNotOrderByCreatedAtDesc(UserRole.SYSTEM_ADMIN).stream()
+                .filter(user -> !user.isDeleted() && canManage(actor, user))
                 .filter(user -> role == null || user.getRole() == role)
                 .filter(user -> enabled == null || user.isEnabled() == enabled)
                 .filter(user -> normalized.isBlank()
@@ -95,18 +103,53 @@ public class HrUserService {
     }
 
     private SystemUser requireManagedUser(UUID id) {
+        SystemUser actor = requireManager();
         SystemUser user = userRepository.findWithCompanyScopesById(id)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "HR_USER_NOT_FOUND", "HR 用户不存在"));
         if (user.getRole() == UserRole.SYSTEM_ADMIN) {
             throw new ApiException(HttpStatus.FORBIDDEN, "SYSTEM_ADMIN_PROTECTED", "系统管理员不能在 HR 用户模块中修改");
         }
+        if (user.isDeleted()) throw new ApiException(HttpStatus.NOT_FOUND, "HR_USER_NOT_FOUND", "HR 用户不存在");
+        if (!canManage(actor, user)) throw forbidden();
         return user;
     }
 
+    @Transactional
+    public void delete(UUID id) {
+        SystemUser user = requireManagedUser(id);
+        user.deleteAccount();
+        entityManager.createQuery("update BrowserDevice d set d.status = 'REVOKED', d.runtimeState = 'OFFLINE', d.revokedAt = :now where d.pairedBy.id = :userId")
+                .setParameter("userId", id).setParameter("now", java.time.Instant.now()).executeUpdate();
+        auditService.success("DELETE_HR_USER", "SYSTEM_USER", user.getId(), user.getDisplayName(),
+                "删除 HR 账号，禁止登录并保留历史业务关联；用户名不再复用");
+    }
+
+    private SystemUser requireManager() {
+        SystemUser actor = currentUsers.requireCurrentUser();
+        if (actor.getRole() != UserRole.SYSTEM_ADMIN && actor.getRole() != UserRole.RECRUITMENT_ADMIN) throw forbidden();
+        return actor;
+    }
+
+    private boolean canManage(SystemUser actor, SystemUser target) {
+        return actor.getRole() == UserRole.SYSTEM_ADMIN ||
+                (target.getRole() == UserRole.RECRUITER && !target.getCompanyScopes().isEmpty()
+                        && companyIds(actor).containsAll(companyIds(target)));
+    }
+
+    private Set<UUID> companyIds(SystemUser user) {
+        return user.getCompanyScopes().stream().map(Company::getId).collect(java.util.stream.Collectors.toSet());
+    }
+
+    private ApiException forbidden() {
+        return new ApiException(HttpStatus.FORBIDDEN, "HR_USER_SCOPE_FORBIDDEN", "只能管理授权企业范围内的招聘专员");
+    }
+
     private Set<Company> requireActiveCompanies(Set<UUID> ids) {
+        SystemUser actor = requireManager();
         if (ids == null || ids.isEmpty()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "COMPANY_SCOPE_REQUIRED", "请至少授权一家企业");
         }
+        if (actor.getRole() != UserRole.SYSTEM_ADMIN && !companyIds(actor).containsAll(ids)) throw forbidden();
         List<Company> companies = companyRepository.findAllById(ids);
         if (companies.size() != ids.size()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_COMPANY_SCOPE", "授权范围中包含不存在的企业");
@@ -118,9 +161,11 @@ public class HrUserService {
     }
 
     private UserRole requireHrRole(UserRole role) {
+        SystemUser actor = requireManager();
         if (role != UserRole.RECRUITMENT_ADMIN && role != UserRole.RECRUITER) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_HR_ROLE", "HR 用户角色只能是招聘管理员或招聘专员");
         }
+        if (actor.getRole() != UserRole.SYSTEM_ADMIN && role != UserRole.RECRUITER) throw forbidden();
         return role;
     }
 

@@ -22,6 +22,17 @@ public class BossAccountController {
 
     public BossAccountController(BossAccountService service) { this.service = service; }
 
+    @GetMapping("/bindable")
+    public List<BossAccountService.BindableAccount> bindable() { return service.bindableAccounts(); }
+
+    @PostMapping("/{id}/claim")
+    @PreAuthorize("hasRole('RECRUITER')")
+    public BossAccountResponse claim(@PathVariable UUID id) { return service.claim(id); }
+
+    @org.springframework.web.bind.annotation.DeleteMapping("/{id}")
+    @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'RECRUITMENT_ADMIN')")
+    public void delete(@PathVariable UUID id) { service.delete(id); }
+
     @GetMapping
     public List<BossAccountResponse> list(@RequestParam(required = false) String keyword,
                                           @RequestParam(required = false) UUID companyId,

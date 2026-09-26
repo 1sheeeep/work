@@ -58,15 +58,6 @@ async function initialise() {
   const stored = await chrome.storage.local.get(SETTINGS_KEY);
   if (!stored[SETTINGS_KEY]) {
     await chrome.storage.local.set({ [SETTINGS_KEY]: { backendUrl: DEFAULT_BACKEND_URL, enabled: true } });
-  } else if (stored[SETTINGS_KEY].backendUrlMigration !== 'local-v1'
-      && String(stored[SETTINGS_KEY].backendUrl || '').replace(/\/+$/, '') !== DEFAULT_BACKEND_URL) {
-    const { deviceId: _deviceId, deviceToken: _deviceToken, accountId: _accountId, accountName: _accountName, ...safeSettings } = stored[SETTINGS_KEY];
-    await chrome.storage.local.set({ [SETTINGS_KEY]: {
-      ...safeSettings, backendUrl: DEFAULT_BACKEND_URL, backendUrlMigration: 'local-v1',
-    } });
-    await chrome.storage.local.remove(RUNTIME_KEY);
-  } else if (stored[SETTINGS_KEY].backendUrlMigration !== 'local-v1') {
-    await chrome.storage.local.set({ [SETTINGS_KEY]: { ...stored[SETTINGS_KEY], backendUrlMigration: 'local-v1' } });
   }
   await recoverVerifiedInterviewEntryLock();
   await chrome.alarms.create(ALARM_NAME, { delayInMinutes: 0.1, periodInMinutes: 1 });
@@ -1363,7 +1354,10 @@ async function pair(payload) {
   const deviceName = String(payload?.deviceName || '').trim();
   if (pairingToken.length < 20 || pairingToken.length > 200) throw new Error('请粘贴有效的一次性接入码。');
   if (!deviceName || deviceName.length > 80) throw new Error('请填写 1–80 字的设备名称。');
-  const backendUrl = validateBackendUrl(payload?.backendUrl || DEFAULT_BACKEND_URL);
+  const backendUrl = validateBackendUrl(payload?.backendUrl || (await getSettings()).backendUrl || DEFAULT_BACKEND_URL);
+  if ((await getSettings()).deviceToken) await forgetDevice();
+  // Persist the chosen environment even when its one-time code is rejected.
+  await saveBackendUrl(backendUrl);
   const credentials = await request(backendUrl, '/api/local-connector/runtime/pair', {
     method: 'POST',
     body: {
@@ -1372,6 +1366,8 @@ async function pair(payload) {
       clientType: 'BROWSER_READONLY_BRIDGE',
       clientVersion: chrome.runtime.getManifest().version,
     },
+  }).catch(error => {
+    throw new Error(`配对后台 ${backendUrl}：${error.message}。请在此后台重新生成一次性接入码，勿使用其他环境的接入码。`);
   });
   const settings = {
     backendUrl,
@@ -1391,10 +1387,12 @@ async function saveBackendUrl(rawBackendUrl) {
   const backendUrl = validateBackendUrl(rawBackendUrl);
   const settings = await getSettings();
   const changed = settings.backendUrl !== backendUrl;
+  if (changed && settings.deviceToken) await forgetDevice();
   const next = changed ? { backendUrl, enabled: true } : { ...settings, backendUrl };
   await chrome.storage.local.set({ [SETTINGS_KEY]: next });
+  if (changed) await chrome.storage.local.remove(RUNTIME_KEY);
   await setRuntime({
-    state: changed ? 'UNPAIRED' : 'PAIRED',
+    state: next.deviceToken ? 'PAIRED' : 'UNPAIRED',
     reason: changed ? '后台地址已保存，请使用该环境的一次性接入码重新配对。' : '后台地址已保存。',
   });
   return { ok: true, status: await getPublicStatus() };
@@ -1467,7 +1465,18 @@ async function syncDutyAutomation() {
 }
 
 async function forgetDevice() {
-  await chrome.storage.local.set({ [SETTINGS_KEY]: { backendUrl: DEFAULT_BACKEND_URL, enabled: true } });
+  const settings = await getSettings();
+  // Remove credentials first so subsequent runtime requests cannot use the old account.
+  await chrome.storage.local.set({ [SETTINGS_KEY]: { backendUrl: settings.backendUrl || DEFAULT_BACKEND_URL, enabled: false } });
+  const tabs = await chrome.tabs.query({ url: BOSS_TAB_PATTERNS });
+  await Promise.all(tabs.filter(tab => tab.id).map(async tab => {
+    try {
+      await sendToBossTab(tab.id, { type: 'BRIDGE_SET_SINGLE_ACCOUNT_AUTO_REPLY', enabled: false });
+    } catch {
+      // A disconnected content script must not retain its old in-memory tasks.
+      await chrome.tabs.reload(tab.id);
+    }
+  }));
   await chrome.storage.local.remove(RUNTIME_KEY);
   return { ok: true, status: await getPublicStatus() };
 }

@@ -63,7 +63,7 @@ public class JobPositionController {
     }
 
     @PostMapping("/{id}/review-and-activate")
-    @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'RECRUITMENT_ADMIN')")
+    @PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'RECRUITMENT_ADMIN', 'RECRUITER')")
     public JobPositionResponse reviewAndActivate(@PathVariable UUID id,
                                                   @Valid @RequestBody JobPositionReviewRequest request) {
         return service.reviewAndActivate(id, request);

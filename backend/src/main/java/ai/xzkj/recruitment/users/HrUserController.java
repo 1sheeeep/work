@@ -18,12 +18,17 @@ import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/hr-users")
-@PreAuthorize("hasRole('SYSTEM_ADMIN')")
+@PreAuthorize("hasAnyRole('SYSTEM_ADMIN', 'RECRUITMENT_ADMIN')")
 public class HrUserController {
     private final HrUserService service;
 
     public HrUserController(HrUserService service) {
         this.service = service;
+    }
+
+    @org.springframework.web.bind.annotation.DeleteMapping("/{id}")
+    public void delete(@PathVariable UUID id) {
+        service.delete(id);
     }
 
     @GetMapping

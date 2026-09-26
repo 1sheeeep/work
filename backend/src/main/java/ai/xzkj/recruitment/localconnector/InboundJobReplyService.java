@@ -207,6 +207,12 @@ class InboundJobReplyService {
         if (isInterviewCoordination(message, context)) return blocked("INTERVIEW_COORDINATION", "疑似正在确认或变更面试时间，已停止自动回复并转 HR 跟进");
         if (!job.isKnowledgeApproved()) return blocked("UNCERTAIN", "岗位回复资料尚未审核");
         if (trustedRuntime.interviewScheduled()) return blocked("INTERVIEW_COORDINATION", "可信会话状态显示已经进入面试安排，已转 HR 跟进");
+        if (isSkillIntroduction(message)) return new Decision(true, "SOCIAL_ACKNOWLEDGEMENT", 1.0,
+                "好的，了解了，谢谢您的介绍。", "候选人介绍个人技能，简短回应，不扩展岗位事实");
+        if (message.matches(".*(?:培训|带教|有人带|KPI|kpi|考核).*")
+                && message.matches(".*(?:吗|么|有没有|是否|怎么|如何|？|\\?).*"))
+            return new Decision(true, "GENERAL_JOB_CONSULTATION", 1.0,
+                    "工作方面的具体情况，面试的时候会详细解答。", "培训或考核细节交由面试解答，不编造岗位承诺");
         var explicitIntents = InboundReplyQualityGate.explicitIntents(message);
         boolean needsContextAnalysis = explicitIntents.size() > 1
                 || (isResumePermissionQuestion(message) && !explicitIntents.isEmpty());
@@ -526,10 +532,19 @@ class InboundJobReplyService {
 
     static boolean isInterviewResultInquiry(String message, String context) {
         String current = normalize(message);
+        // Bare result fragments are ambiguous without context: never interpret them as a rejection of the job.
+        if (current.matches("(?:没有通过|没通过|未通过|通过了|被淘汰了|没录用)[。！!，,\\s]*")) return true;
         if (INTERVIEW_RESULT_INQUIRY.matcher(current).find()) return true;
         String history = normalize(context);
         return INTERVIEW_WORDS.matcher(history).find()
-                && current.matches(".*(?:有结果了吗|结果出来了吗|结果出了没|通过了吗|录用了吗|什么时候出结果|多久出结果|有消息了吗).*");
+                && current.matches(".*(?:有结果了吗|结果出来了吗|结果出了没|通过了吗|录用了吗|什么时候出结果|多久出结果|有消息了吗|没有通过|没通过|未通过|已经通过|通过了|没录用).*");
+    }
+
+    static boolean isSkillIntroduction(String message) {
+        String text = normalize(message);
+        return text.matches("(?i).*(?:photoshop|剪映|excel|office|办公软件|视频剪辑|ps软件).*")
+                && text.matches(".*(?:熟悉|熟练|擅长|会用|掌握|使用过).*")
+                && !text.matches(".*(?:吗|么|是否|能否|请问|怎么|如何|多少|有没有|？|\\?).*");
     }
 
     private Map<String, String> allApprovedFacts(JobPosition job) {

@@ -21,7 +21,7 @@ const router = createRouter({
         { path: 'candidates', redirect: '/dashboard#attention-panel' },
         { path: 'resume-intakes', name: 'resume-intakes', component: () => import('./views/ResumeIntakesView.vue'), meta: { depth: 0 } },
         { path: 'system-logs', name: 'system-logs', component: () => import('./views/SystemLogsView.vue'), meta: { depth: 0, role: 'SYSTEM_ADMIN' } },
-        { path: 'hr-users', name: 'hr-users', component: () => import('./views/HrUsersView.vue'), meta: { depth: 0, role: 'SYSTEM_ADMIN' } },
+        { path: 'hr-users', name: 'hr-users', component: () => import('./views/HrUsersView.vue'), meta: { depth: 0, roles: ['SYSTEM_ADMIN', 'RECRUITMENT_ADMIN'] } },
         { path: 'auto-replies', redirect: '/dashboard' },
         { path: 'audit-logs', redirect: '/system-logs' },
         { path: 'operations', redirect: '/system-logs' },
@@ -40,6 +40,7 @@ router.beforeEach(async (to) => {
   }
   if (!user) return { name: 'login', query: { redirect: to.fullPath } }
   if (to.meta.role && user.role !== to.meta.role) return { name: 'dashboard' }
+  if (Array.isArray(to.meta.roles) && !to.meta.roles.includes(user.role)) return { name: 'dashboard' }
   return true
 })
 

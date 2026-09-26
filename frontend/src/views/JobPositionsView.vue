@@ -476,7 +476,6 @@ function showJobsHelp() {
             <footer>
               <el-button v-if="!job.reviewReadiness.companyKnowledgeReady && canApproveCompanyKnowledge" link type="warning" @click="openJobCompanyKnowledge(job)">先完善公司回复资料</el-button><span v-else-if="!job.reviewReadiness.companyKnowledgeReady" class="internal-blocker">公司回复资料未就绪</span><el-button
                 type="primary"
-                :disabled="!job.reviewReadiness.companyKnowledgeReady"
                 @click="openImportedReview(job)"
                 >补全、审核并启用</el-button
               >
@@ -647,7 +646,6 @@ function showJobsHelp() {
                 }}</el-tag></template
               ></el-table-column
             ><el-table-column
-              v-if="canManage"
               label="操作"
               width="120"
               class-name="job-actions-column"
@@ -660,7 +658,7 @@ function showJobsHelp() {
                   >完整审核</el-button
                 ><el-button
                   v-if="
-                    row.status === 'DRAFT' && row.captureSource === 'MANUAL'
+                    canManage && row.status === 'DRAFT' && row.captureSource === 'MANUAL'
                   "
                   link
                   type="success"
@@ -668,7 +666,7 @@ function showJobsHelp() {
                   @click="changeStatus(row as JobPosition, 'ACTIVE')"
                   >启用</el-button
                 ><el-button
-                  v-if="row.status !== 'CLOSED'"
+                  v-if="canManage && row.status !== 'CLOSED'"
                   link
                   type="danger"
                   :loading="changingStatusId === row.id"
@@ -719,7 +717,7 @@ function showJobsHelp() {
                 </div>
               </dl>
               <p class="job-description">{{ job.description }}</p>
-              <footer v-if="canManage && job.status !== 'CLOSED'">
+              <footer v-if="job.status !== 'CLOSED' && (canManage || job.reviewReadiness?.importedDraft)">
                 <el-button
                   v-if="job.reviewReadiness?.importedDraft"
                   type="warning"
@@ -728,7 +726,7 @@ function showJobsHelp() {
                   >完整审核</el-button
                 ><el-button
                   v-if="
-                    job.status === 'DRAFT' && job.captureSource === 'MANUAL'
+                    canManage && job.status === 'DRAFT' && job.captureSource === 'MANUAL'
                   "
                   type="success"
                   plain
@@ -736,7 +734,7 @@ function showJobsHelp() {
                   @click="changeStatus(job, 'ACTIVE')"
                   >启用</el-button
                 ><el-button
-                  type="danger"
+                  v-if="canManage" type="danger"
                   plain
                   :loading="changingStatusId === job.id"
                   @click="changeStatus(job, 'CLOSED')"

@@ -33,13 +33,16 @@ class HrUserServiceTest {
     @Mock private CompanyRepository companyRepository;
     @Mock private PasswordEncoder passwordEncoder;
     @Mock private AuditService auditService;
+    @Mock private ai.xzkj.recruitment.auth.CurrentUserService currentUsers;
+    @Mock private jakarta.persistence.EntityManager entityManager;
 
     private HrUserService service;
     private Company company;
 
     @BeforeEach
     void setUp() {
-        service = new HrUserService(userRepository, companyRepository, passwordEncoder, auditService);
+        service = new HrUserService(userRepository, companyRepository, passwordEncoder, auditService, currentUsers, entityManager);
+        when(currentUsers.requireCurrentUser()).thenReturn(new SystemUser("admin", "hash", "管理员", UserRole.SYSTEM_ADMIN));
         company = new Company(new GroupProfile("测试集团", "测试"), "上海公司", "SH", null, null);
     }
 
@@ -97,5 +100,60 @@ class HrUserServiceTest {
         assertThat(response.companies()).hasSize(1);
         verify(auditService).success("CHANGE_HR_USER_STATUS", "SYSTEM_USER", recruiter.getId(), "招聘专员",
                 "停用 HR 用户");
+    }
+
+    private void asManager() {
+        SystemUser manager = new SystemUser("manager", "hash", "招聘管理员", UserRole.RECRUITMENT_ADMIN);
+        manager.assignCompanyScopes(Set.of(company));
+        when(currentUsers.requireCurrentUser()).thenReturn(manager);
+    }
+
+    @Test
+    void managerCanCreateScopedRecruiter() {
+        asManager();
+        when(companyRepository.findAllById(Set.of(company.getId()))).thenReturn(List.of(company));
+        when(passwordEncoder.encode(any())).thenReturn("encoded");
+        assertThat(service.create(new HrUserCreateRequest("hr", "专员", UserRole.RECRUITER,
+                "SecurePass123", Set.of(company.getId()))).role()).isEqualTo(UserRole.RECRUITER);
+    }
+
+    @Test
+    void managerCannotCreateManagerOrGrantAnotherCompany() {
+        asManager();
+        assertThatThrownBy(() -> service.create(new HrUserCreateRequest("hr", "管理员", UserRole.RECRUITMENT_ADMIN,
+                "SecurePass123", Set.of(company.getId())))).isInstanceOf(ApiException.class);
+        assertThatThrownBy(() -> service.create(new HrUserCreateRequest("hr", "专员", UserRole.RECRUITER,
+                "SecurePass123", Set.of(java.util.UUID.randomUUID())))).isInstanceOf(ApiException.class);
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void managerCannotDeleteCrossCompanyRecruiter() {
+        asManager();
+        Company other = new Company(new GroupProfile("集团", "测试"), "其他企业", "OTHER", null, null);
+        SystemUser target = new SystemUser("hr", "hash", "专员", UserRole.RECRUITER);
+        target.assignCompanyScopes(Set.of(company, other));
+        when(userRepository.findWithCompanyScopesById(target.getId())).thenReturn(Optional.of(target));
+        assertThatThrownBy(() -> service.delete(target.getId())).isInstanceOf(ApiException.class);
+        assertThat(target.isEnabled()).isTrue();
+    }
+
+    @Test
+    void deletionDisablesLoginRevokesDevicesAndHidesUser() {
+        asManager();
+        SystemUser target = new SystemUser("hr", "hash", "专员", UserRole.RECRUITER);
+        target.assignCompanyScopes(Set.of(company));
+        when(userRepository.findWithCompanyScopesById(target.getId())).thenReturn(Optional.of(target));
+        jakarta.persistence.Query query = org.mockito.Mockito.mock(jakarta.persistence.Query.class);
+        when(entityManager.createQuery(any(String.class))).thenReturn(query);
+        when(query.setParameter("userId", target.getId())).thenReturn(query);
+        when(query.setParameter(org.mockito.ArgumentMatchers.eq("now"), any())).thenReturn(query);
+        service.delete(target.getId());
+        assertThat(target.isDeleted()).isTrue();
+        assertThat(target.isEnabled()).isFalse();
+        verify(query).executeUpdate();
+        when(userRepository.findAllByRoleNotOrderByCreatedAtDesc(UserRole.SYSTEM_ADMIN)).thenReturn(List.of(target));
+        assertThat(service.list(null, null, null)).isEmpty();
+        assertThatThrownBy(() -> service.changeStatus(target.getId(), true)).isInstanceOf(ApiException.class);
     }
 }

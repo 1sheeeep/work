@@ -29,6 +29,14 @@ public class BossAccount {
     @JoinColumn(name = "company_id", nullable = false)
     private Company company;
 
+    @ElementCollection
+    @CollectionTable(name = "boss_account_recruiters", joinColumns = @JoinColumn(name = "account_id"))
+    @Column(name = "user_id", nullable = false)
+    private Set<UUID> recruiterIds = new LinkedHashSet<>();
+
+    public Set<UUID> getRecruiterIds() { return Set.copyOf(recruiterIds); }
+    public void assignRecruiters(Set<UUID> ids) { recruiterIds.clear(); recruiterIds.addAll(ids); }
+
     @Column(name = "display_name", nullable = false, length = 100)
     private String displayName;
 
@@ -54,6 +62,7 @@ public class BossAccount {
     private Set<BossCapability> capabilities = new LinkedHashSet<>();
 
     @Column(name = "last_checked_at") private Instant lastCheckedAt;
+    @Column(name = "deleted_at") private Instant deletedAt;
     @Version private long version;
     @Column(name = "created_at", nullable = false) private Instant createdAt;
     @Column(name = "updated_at", nullable = false) private Instant updatedAt;
@@ -81,6 +90,8 @@ public class BossAccount {
     }
 
     public void changeStatus(BossAccountStatus status) { this.status = status; }
+    public boolean isDeleted() { return deletedAt != null; }
+    public void deleteAccount() { status = BossAccountStatus.INACTIVE; deletedAt = Instant.now(); }
 
     public void applyCapabilityCheck(BossConnectionStatus connectionStatus, Set<BossCapability> capabilities) {
         this.connectionStatus = connectionStatus;

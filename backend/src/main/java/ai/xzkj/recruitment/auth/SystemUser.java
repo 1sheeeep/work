@@ -39,6 +39,9 @@ public class SystemUser {
     @Column(nullable = false)
     private boolean enabled;
 
+    @Column(name = "deleted_at")
+    private Instant deletedAt;
+
     @ManyToMany
     @JoinTable(
             name = "user_company_scopes",
@@ -95,7 +98,12 @@ public class SystemUser {
     public String getPasswordHash() { return passwordHash; }
     public String getDisplayName() { return displayName; }
     public UserRole getRole() { return role; }
-    public boolean isEnabled() { return enabled; }
+    public boolean isEnabled() { return enabled && deletedAt == null; }
+    public boolean isDeleted() { return deletedAt != null; }
+    public void deleteAccount() {
+        enabled = false;
+        deletedAt = Instant.now();
+    }
     public Set<Company> getCompanyScopes() { return Set.copyOf(companyScopes); }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }

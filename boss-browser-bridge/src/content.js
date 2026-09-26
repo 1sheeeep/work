@@ -1174,6 +1174,20 @@
     });
   }
 
+  function rememberPendingReply(result, snapshot, pendingRowSignature, now = Date.now()) {
+    const existing = singleAccountPendingReplies.get(result.taskId);
+    if (existing) return existing; // Preserve poll deadline, retry backoff and SEND lane.
+    const task = {
+      taskId: result.taskId, chatDigest: snapshot.chatDigest, messageDigest: snapshot.messageDigest,
+      resumeReceipt: result.resumeReceipt === true,
+      pendingRowSignature: result.pendingRowSignature || pendingRowSignature,
+      nextPollAt: result.recovered ? 0 : now + 500, holdStartedAt: now,
+    };
+    singleAccountPendingReplies.set(result.taskId, task);
+    enqueuePipelineTask(result.taskId, 'ANALYSIS');
+    return task;
+  }
+
   async function nextReadyInboundReply(preferredTaskId = null, { includeRetryable = true } = {}) {
     const now = Date.now();
     const preferredTask = preferredTaskId ? singleAccountPendingReplies.get(preferredTaskId) : null;
@@ -2574,6 +2588,16 @@
       });
       let decision = queuedDecision;
       if (!decision) {
+        const pending = [...singleAccountPendingReplies.values()].find(task =>
+          task.chatDigest === second.chatDigest && task.messageDigest === second.messageDigest);
+        if (pending) {
+          traceAutoReply('AI_EXISTING_TASK_WAITING', {
+            chatDigest: second.chatDigest, messageDigest: second.messageDigest, taskId: pending.taskId,
+            outcome: 'WAITING', reason: '同一消息已有任务，保留查询时间；下一轮优先查询结果，不重复提交分析。',
+          });
+          return scheduleSingleAccountAutoReply(Math.max(100, Math.min(5_000,
+            Number(pending.nextPollAt || 0) - Date.now())));
+        }
         traceAutoReply('AI_REQUESTED', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, queueLane: 'ANALYSIS', outcome: 'INFO', reason: '已向后端提交候选人消息分析请求。' });
         const selectedRowAtQueue = [...document.querySelectorAll(SELECTORS.selectedConversation)].find(visible);
         const pendingRowSignature = selectedRowAtQueue && hasUnread(selectedRowAtQueue)
@@ -2626,13 +2650,7 @@
           return scheduleSingleAccountAutoReply(waitMs);
         }
         if (replyResult.pending && replyResult.taskId) {
-          singleAccountPendingReplies.set(replyResult.taskId, {
-            taskId: replyResult.taskId, chatDigest: second.chatDigest, messageDigest: second.messageDigest,
-            resumeReceipt: replyResult.resumeReceipt === true,
-            pendingRowSignature: replyResult.pendingRowSignature || pendingRowSignature,
-            nextPollAt: Date.now() + 500, holdStartedAt: Date.now(),
-          });
-          enqueuePipelineTask(replyResult.taskId, 'ANALYSIS');
+          rememberPendingReply(replyResult, second, pendingRowSignature);
           const keepCurrentConversation = replyResult.resumeReceipt === true;
           singleAccountPendingChatDigest = keepCurrentConversation ? second.chatDigest : null;
           const processingCount = singleAccountPendingReplies.size;
@@ -2786,6 +2804,7 @@
         reason: '发送前已重新核对会话摘要、最新消息摘要、候选人方向与唯一发送按钮。',
       });
       const activeBeforeClick = [...document.querySelectorAll(SELECTORS.activeConversation)].find(visible);
+      const receiptAnchors = activeBeforeClick ? readConversationTurns(activeBeforeClick).slice(-3) : [];
       const outboundBeforeClick = activeBeforeClick
         ? [...activeBeforeClick.querySelectorAll(SELECTORS.message)].filter(visible).filter((item) => directionOf(item) === 'OUTBOUND')
         : [];
@@ -2823,13 +2842,13 @@
       let confirmationDiagnostic = `发送前出站消息=${outboundBeforeCount}`;
       for (let attempt = 0; attempt < 28; attempt++) {
         await delay(attempt < 8 ? 250 : 500);
-        const current = await collectSelectedConversation();
+        const current = await collectPostSendConversation(second.chatDigest, activeBeforeClick, receiptAnchors);
         if (current.ok && current.chatDigest !== second.chatDigest) {
           confirmationDiagnostic = '等待回执期间选中会话发生变化';
           break;
         }
         if (!current.ok) {
-          confirmationDiagnostic = `第 ${attempt + 1} 次复核时会话详情暂不可读`;
+          confirmationDiagnostic = `第 ${attempt + 1} 次复核时会话详情暂不可读（${current.code || 'UNKNOWN'}）`;
           continue;
         }
         const active = [...document.querySelectorAll(SELECTORS.activeConversation)].find(visible);
@@ -2852,18 +2871,18 @@
           break;
         }
       }
-      const receiptOutcome = confirmed ? 'SUCCEEDED' : 'UNKNOWN';
-      const receiptAfterShape = `${second.chatDigest}|${second.messageDigest}|${confirmed ? 'OUTBOUND_CONFIRMED' : 'SEND_RESULT_UNCONFIRMED'}|${await digest(replyText)}`;
-      const receiptReason = confirmed ? '页面已确认输入框清空且出现新增的相同出站回复。'
-        : `已点击一次发送，但页面结果无法确认；禁止重试。${confirmationDiagnostic}`;
-      let receipt = sendLease ? await receiptInboundReplySend(sendLease, receiptOutcome, receiptAfterShape, receiptReason) : null;
+      let receipt = sendLease ? await receiptInboundReplySend(sendLease, confirmed ? 'SUCCEEDED' : 'UNKNOWN',
+        `${second.chatDigest}|${second.messageDigest}|${confirmed ? 'OUTBOUND_CONFIRMED' : 'SEND_RESULT_UNCONFIRMED'}|${await digest(replyText)}`,
+        confirmed ? '页面已确认输入框清空且出现新增的相同出站回复。'
+          : `已点击一次发送，但页面结果无法确认；禁止重试。${confirmationDiagnostic}`) : null;
       // A lost bridge response must not leave the backend lease CLAIMED for
       // the full 45-second expiry window. Retry the idempotent receipt once;
       // this never retries the BOSS send click itself.
-      if (sendLease && !receipt?.status) {
+      if (sendLease && !confirmed && !receipt?.status) {
         await delay(300);
-        const retryReceipt = await receiptInboundReplySend(sendLease, receiptOutcome, receiptAfterShape,
-          `${receiptReason} SEND_CONFIRMATION_RECEIPT_RETRY：回执响应超时，已重试一次回执提交。`);
+        const retryReceipt = await receiptInboundReplySend(sendLease, 'UNKNOWN',
+          `${second.chatDigest}|${second.messageDigest}|SEND_RESULT_UNCONFIRMED|${await digest(replyText)}`,
+          `SEND_CONFIRMATION_UNKNOWN：回执响应超时，已重试一次回执提交。${confirmationDiagnostic}`);
         if (retryReceipt?.status) receipt = retryReceipt;
       }
       if (sendLease && receipt?.status !== 'SUCCEEDED') {
@@ -4214,6 +4233,27 @@
     }
     const signature = entries.map((entry) => `${entry.chatDigest}:${entry.unreadCount}:${entry.previewDigest || ''}:${entry.jobDigest || ''}:${entry.timeDigest || ''}`).join('|');
     return { ok: true, entries, signature };
+  }
+
+  async function collectPostSendConversation(expectedChatDigest, originalPanel, anchors) {
+    const selected = await collectSelectedConversation();
+    if (selected.ok) return selected; // A different selected chat must never use the fallback.
+    if (selected.code !== 'NO_SELECTED_CONVERSATION') return selected;
+    const panels = [...document.querySelectorAll(SELECTORS.activeConversation)].filter(visible);
+    if (panels.length !== 1 || panels[0] !== originalPanel || !originalPanel.isConnected
+        || anchors.length === 0) return selected;
+    const currentTurns = readConversationTurns(originalPanel);
+    // Panel continuity alone is insufficient: BOSS can reuse its container for another chat.
+    // Require the original message nodes AND their identities/content/directions in order.
+    let previousIndex = -1;
+    for (const anchor of anchors) {
+      const index = currentTurns.findIndex(turn => turn.node === anchor.node
+        && turn.identity === anchor.identity && turn.rawText === anchor.rawText
+        && turn.direction === anchor.direction);
+      if (index <= previousIndex) return selected;
+      previousIndex = index;
+    }
+    return collectActiveConversationDetail(expectedChatDigest, false);
   }
 
   async function collectSelectedConversation() {

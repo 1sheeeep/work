@@ -49,7 +49,7 @@ class AiDutyConversationTimelineService {
         BrowserUnreadObservation observation = observations.findWithAccountById(observationId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "DUTY_OBSERVATION_NOT_FOUND", "值守会话不存在或已过期"));
         UUID companyId = observation.getAccount().getCompany().getId();
-        if (!canAccess(companyId, user)) {
+        if (!ai.xzkj.recruitment.boss.BossAccountAccess.canAccess(observation.getAccount(), user)) {
             throw new ApiException(HttpStatus.FORBIDDEN, "COMPANY_SCOPE_FORBIDDEN", "当前账号无权访问该企业会话");
         }
 
@@ -80,11 +80,6 @@ class AiDutyConversationTimelineService {
 
     private AiDutyConversationTimelineResponse unavailable(UUID observationId, String anonymousKey, String reason) {
         return new AiDutyConversationTimelineResponse(observationId, anonymousKey, null, false, reason, List.of());
-    }
-
-    private boolean canAccess(UUID companyId, SystemUser user) {
-        return user.getRole() == UserRole.SYSTEM_ADMIN
-                || user.getCompanyScopes().stream().anyMatch(company -> company.getId().equals(companyId));
     }
 
     private String safeAnonymousKey(String digest) {

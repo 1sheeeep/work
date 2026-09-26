@@ -13,7 +13,7 @@ import java.util.UUID;
 public record HrUserCreateRequest(
         @NotBlank(message = "请输入用户名")
         @Size(max = 64, message = "用户名不能超过 64 个字符")
-        @Pattern(regexp = "^[A-Za-z0-9._-]+$", message = "用户名只能包含字母、数字、点、下划线和横线")
+        @Pattern(regexp = "^[\\p{IsHan}A-Za-z0-9._-]+$", message = "用户名只能包含中文、英文字母、数字、点、下划线和横线")
         String username,
         @NotBlank(message = "请输入姓名") @Size(max = 100, message = "姓名不能超过 100 个字符") String displayName,
         @NotNull(message = "请选择角色") UserRole role,

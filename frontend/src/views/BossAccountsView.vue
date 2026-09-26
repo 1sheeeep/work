@@ -8,13 +8,16 @@ import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import { Connection, InfoFilled, MoreFilled, Plus, Refresh } from '@element-plus/icons-vue'
 import { api, apiErrorMessage, apiFieldErrors, ensureCsrf } from '../services/api'
 import { authStore } from '../stores/auth'
-import type { BossAccount, BossAccountStatus, BrowserDevice, BrowserUnreadObservation, Company, JobPosition } from '../types'
+import type { BossAccount, BrowserDevice, BrowserUnreadObservation, Company, JobPosition, HrUser } from '../types'
 
-interface AccountFormValue { displayName: string; externalIdentifier: string }
+interface AccountFormValue { displayName: string; recruiterIds: string[] }
 
 const loading = ref(true)
 const loadError = ref('')
 const accounts = ref<BossAccount[]>([])
+type BindableAccount = { id: string; displayName: string; bindingStatus: 'AVAILABLE' | 'BOUND' | 'MINE' | 'UNAVAILABLE' }
+const bindableAccounts = ref<BindableAccount[]>([])
+const claimingId = ref('')
 const devices = ref<BrowserDevice[]>([])
 const companies = ref<Company[]>([])
 const observations = ref<BrowserUnreadObservation[]>([])
@@ -23,7 +26,10 @@ const dialogOpen = ref(false)
 const saving = ref(false)
 const editingAccount = ref<BossAccount | null>(null)
 const formRef = ref<FormInstance>()
-const form = reactive<AccountFormValue>({ displayName: '', externalIdentifier: '' })
+const form = reactive<AccountFormValue>({ displayName: '', recruiterIds: [] })
+const hrUsers = ref<HrUser[]>([])
+const assignableRecruiters = computed(() => hrUsers.value.filter(user => user.enabled && user.role === 'RECRUITER'
+  && user.companies.some(company => company.id === (editingAccount.value?.company.id ?? activeCompany.value?.id))))
 const formError = ref('')
 const fieldErrors = reactive<Record<string, string>>({})
 const changingStatusId = ref('')
@@ -63,7 +69,6 @@ const filteredAccounts = computed(() => visibleAccounts.value.filter(account => 
 const dialogTitle = computed(() => editingAccount.value ? '编辑招聘账号' : '新增招聘账号')
 const rules: FormRules<AccountFormValue> = {
   displayName: [{ required: true, message: '请输入账号名称', trigger: 'blur' }, { max: 100, message: '最多 100 个字符', trigger: 'blur' }],
-  externalIdentifier: [{ required: true, message: '请输入内部标识', trigger: 'blur' }, { max: 120, message: '最多 120 个字符', trigger: 'blur' }],
 }
 
 function clearFieldErrors() { Object.keys(fieldErrors).forEach(key => delete fieldErrors[key]) }
@@ -109,18 +114,22 @@ async function loadData() {
   loading.value = true
   loadError.value = ''
   try {
-    const [accountResponse, companyResponse, deviceResponse, observationResponse, jobResponse] = await Promise.all([
+    const [accountResponse, companyResponse, deviceResponse, observationResponse, jobResponse, hrResponse, bindableResponse] = await Promise.all([
       api.get<BossAccount[]>('/boss-accounts'),
       api.get<Company[]>('/organization/companies'),
       api.get<BrowserDevice[]>('/local-connector/devices'),
       api.get<BrowserUnreadObservation[]>('/local-connector/observations'),
       api.get<JobPosition[]>('/job-positions'),
+      canManage.value ? api.get<HrUser[]>('/hr-users') : Promise.resolve({ data: [] as HrUser[] }),
+      !canManage.value ? api.get<BindableAccount[]>('/boss-accounts/bindable') : Promise.resolve({ data: [] as BindableAccount[] }),
     ])
     accounts.value = accountResponse.data
     companies.value = companyResponse.data
     devices.value = deviceResponse.data
     observations.value = observationResponse.data
     jobs.value = jobResponse.data
+    hrUsers.value = hrResponse.data
+    bindableAccounts.value = bindableResponse.data
   } catch (error) { loadError.value = apiErrorMessage(error, '招聘账号加载失败') }
   finally { loading.value = false }
 }
@@ -130,6 +139,23 @@ function openConnection(account: BossAccount) {
   pairingToken.value = ''
   pairingExpiresAt.value = ''
   connectionOpen.value = true
+}
+
+async function claimAccount(account: BindableAccount) {
+  try {
+    await ElMessageBox.confirm(`绑定“${account.displayName}”后，你可以查看该账号的历史值守记录并配对插件。请确认这是你负责的 BOSS 账号。`, '绑定招聘账号', { confirmButtonText: '确认绑定', cancelButtonText: '取消' })
+  } catch { return }
+  claimingId.value = account.id
+  try {
+    await ensureCsrf()
+    const { data } = await api.post<BossAccount>(`/boss-accounts/${account.id}/claim`)
+    await loadData()
+    openConnection(data)
+    ElMessage.success('绑定成功，请生成连接码配对插件')
+  } catch (error) {
+    ElMessage.error(apiErrorMessage(error, '绑定失败'))
+    await loadData()
+  } finally { claimingId.value = '' }
 }
 
 async function generatePairing() {
@@ -153,7 +179,7 @@ async function copyToken() {
 function openCreate() {
   if (!activeCompany.value) { ElMessage.error('内部企业主体尚未初始化，暂时无法新增账号'); return }
   editingAccount.value = null
-  Object.assign(form, { displayName: '', externalIdentifier: '' })
+  Object.assign(form, { displayName: '', recruiterIds: [] })
   formError.value = ''
   clearFieldErrors()
   dialogOpen.value = true
@@ -161,7 +187,7 @@ function openCreate() {
 
 function openEdit(account: BossAccount) {
   editingAccount.value = account
-  Object.assign(form, { displayName: account.displayName, externalIdentifier: account.externalIdentifier })
+  Object.assign(form, { displayName: account.displayName, recruiterIds: [...(account.recruiterIds ?? [])] })
   formError.value = ''
   clearFieldErrors()
   dialogOpen.value = true
@@ -188,24 +214,22 @@ async function saveAccount() {
   } finally { saving.value = false }
 }
 
-async function toggleStatus(account: BossAccount) {
-  const status: BossAccountStatus = account.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE'
-  if (status === 'INACTIVE') {
-    try { await ElMessageBox.confirm(`确认停用“${account.displayName}”？`, '停用招聘账号', { confirmButtonText: '停用', cancelButtonText: '取消' }) }
-    catch { return }
-  }
+async function deleteAccount(account: BossAccount) {
+  try { await ElMessageBox.confirm(`确认删除“${account.displayName}”？关联插件将失效，历史简历和会话记录保留。`, '删除招聘账号', { confirmButtonText: '确认删除', cancelButtonText: '取消', type: 'warning' }) }
+  catch { return }
   changingStatusId.value = account.id
   try {
     await ensureCsrf()
-    await api.patch(`/boss-accounts/${account.id}/status`, { status })
+    await api.delete(`/boss-accounts/${account.id}`)
+    ElMessage.success('招聘账号已删除')
     await loadData()
-  } catch (error) { ElMessage.error(apiErrorMessage(error, '账号状态变更失败')) }
+  } catch (error) { ElMessage.error(apiErrorMessage(error, '账号删除失败')) }
   finally { changingStatusId.value = '' }
 }
 
-function handleAccountCommand(account: BossAccount, command: 'edit' | 'toggle') {
+function handleAccountCommand(account: BossAccount, command: 'edit' | 'delete') {
   if (command === 'edit') openEdit(account)
-  else void toggleStatus(account)
+  else void deleteAccount(account)
 }
 
 function showConnectionHelp() {
@@ -248,6 +272,17 @@ document.addEventListener('visibilitychange', onVisChange)
     <AsyncState v-if="loading" state="loading" aria-label="正在加载招聘账号" />
     <AsyncState v-else-if="loadError" state="error" title="账号暂时无法加载" :message="loadError" @retry="loadData"><template #icon><el-icon><Refresh /></el-icon></template></AsyncState>
     <template v-else>
+      <section v-if="!canManage" class="account-workspace card-panel" aria-label="选择招聘账号">
+        <div class="account-toolbar"><div><strong>选择招聘账号</strong><span>仅展示授权企业内的账号。绑定后可查看值守记录并连接插件。</span></div></div>
+        <section v-if="bindableAccounts.length" class="account-grid">
+          <article v-for="account in bindableAccounts" :key="account.id" class="entity-card account-card">
+            <header><strong>{{ account.displayName }}</strong><span>{{ { AVAILABLE: '未绑定', BOUND: '已被绑定', MINE: '我的账号', UNAVAILABLE: '不可绑定' }[account.bindingStatus] }}</span></header>
+            <el-button v-if="account.bindingStatus === 'AVAILABLE'" type="primary" :loading="claimingId === account.id" :disabled="!!claimingId" @click="claimAccount(account)">绑定此账号</el-button>
+            <small v-else-if="account.bindingStatus === 'BOUND'">如需转交，请联系管理员</small>
+          </article>
+        </section>
+        <p v-else>授权企业内暂无招聘账号，请联系管理员创建。</p>
+      </section>
       <section class="accounts-overview" aria-label="招聘账号概览">
         <article class="surface-panel section-card card-panel connection-overview">
           <div class="overview-heading"><div><span>正常采集账号</span><strong>{{ collectingCount }} / {{ visibleAccounts.length }}</strong></div><span class="overview-state" :class="collectingCount === visibleAccounts.length ? 'healthy' : 'warning'"><i></i>{{ collectingCount === visibleAccounts.length ? '采集正常' : `${collectionBlockedCount} 个账号待恢复` }}</span></div>
@@ -271,10 +306,10 @@ document.addEventListener('visibilitychange', onVisChange)
           <button v-for="option in accountFilterOptions" :key="option.value" type="button" :class="{ active: accountFilter === option.value }" :aria-pressed="accountFilter === option.value" @click="accountFilter = option.value">{{ option.label }}</button>
         </div>
       </div>
-      <AsyncState v-if="!visibleAccounts.length" state="empty" embedded title="尚未添加招聘账号"><template #icon><el-icon><Connection /></el-icon></template><el-button v-if="canManage" type="primary" @click="openCreate">新增账号</el-button></AsyncState>
+      <AsyncState v-if="!visibleAccounts.length" state="empty" embedded :title="canManage ? '尚未添加招聘账号' : '尚未绑定招聘账号，请在上方选择账号'" ><template #icon><el-icon><Connection /></el-icon></template><el-button v-if="canManage" type="primary" @click="openCreate">新增账号</el-button></AsyncState>
       <section v-else-if="filteredAccounts.length" class="account-grid" :class="{ 'account-grid--single': filteredAccounts.length === 1 }">
         <article v-for="account in filteredAccounts" :key="account.id" class="entity-card account-card" aria-label="招聘账号运行状态">
-          <header><span class="account-avatar">{{ account.displayName.slice(0, 1) }}</span><div><strong>{{ account.displayName }}</strong><small>{{ account.externalIdentifier }}</small></div><StatusBadge :label="connectionState(account).label" :tone="connectionState(account).type" /></header>
+          <header><span class="account-avatar">{{ account.displayName.slice(0, 1) }}</span><div><strong>{{ account.displayName }}</strong></div><StatusBadge :label="connectionState(account).label" :tone="connectionState(account).type" /></header>
           <div class="bridge-state" :class="connectionState(account).tone"><span class="status-dot"></span><div><strong>{{ pageContextLabel(activeDevice(account.id)) }}</strong><small>最近心跳 {{ formatDate(activeDevice(account.id)?.lastHeartbeatAt) }}</small></div><StatusBadge compact class="bridge-collection-badge" :label="collectionState(account).label" :tone="collectionState(account).type" /></div>
           <div class="account-facts" aria-label="账号同步数据"><span><b>{{ unreadTotal(account.id) }}</b> 条未读</span><span><b>{{ syncedJobCount(account.id) }}</b> 个同步岗位</span><span><b>{{ draftJobCount(account.id) }}</b> 个待核对岗位</span><span class="account-facts__sync">最后同步 {{ lastSuccessfulSync(activeDevice(account.id)) }}</span></div>
           <details class="collection-health" :class="`collection-health--${collectionState(account).tone}`">
@@ -287,9 +322,9 @@ document.addEventListener('visibilitychange', onVisChange)
           </details>
           <footer>
             <el-button type="primary" plain @click="openConnection(account)">{{ activeDevice(account.id) ? '查看桥接' : '连接浏览器' }}</el-button>
-            <el-dropdown v-if="canManage" trigger="click" @command="handleAccountCommand(account, $event as 'edit' | 'toggle')">
+            <el-dropdown v-if="canManage" trigger="click" @command="handleAccountCommand(account, $event as 'edit' | 'delete')">
               <el-button text :icon="MoreFilled" aria-label="更多账号操作">更多</el-button>
-              <template #dropdown><el-dropdown-menu><el-dropdown-item command="edit">编辑账号</el-dropdown-item><el-dropdown-item command="toggle" :disabled="changingStatusId === account.id" :class="{ 'danger-menu-item': account.status === 'ACTIVE' }">{{ account.status === 'ACTIVE' ? '停用账号' : '启用账号' }}</el-dropdown-item></el-dropdown-menu></template>
+              <template #dropdown><el-dropdown-menu><el-dropdown-item command="edit">编辑账号</el-dropdown-item><el-dropdown-item command="delete" :disabled="changingStatusId === account.id" class="danger-menu-item">删除账号</el-dropdown-item></el-dropdown-menu></template>
             </el-dropdown>
           </footer>
         </article>
@@ -313,7 +348,8 @@ document.addEventListener('visibilitychange', onVisChange)
       <el-alert v-if="formError" :title="formError" type="error" :closable="false" class="dialog-alert" />
       <el-form ref="formRef" :model="form" :rules="rules" label-position="top" @submit.prevent="saveAccount">
         <el-form-item label="账号名称" prop="displayName" :error="fieldErrors.displayName"><el-input v-model="form.displayName" maxlength="100" placeholder="例如：BOSS 主招聘账号" /></el-form-item>
-        <el-form-item label="内部标识" prop="externalIdentifier" :error="fieldErrors.externalIdentifier"><el-input v-model="form.externalIdentifier" maxlength="120" placeholder="例如：boss-main-01" /></el-form-item>
+        <el-form-item label="可访问的招聘专员" prop="recruiterIds"><el-select v-model="form.recruiterIds" multiple style="width:100%" placeholder="不选择时，仅管理员可访问"><el-option v-for="user in assignableRecruiters" :key="user.id" :label="user.username" :value="user.id" /></el-select></el-form-item>
+        <p>专员仅能查看分配给自己的账号和值守记录。修改分配后需重新配对插件。</p>
       </el-form>
       <template #footer><el-button @click="dialogOpen = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveAccount">保存</el-button></template>
     </el-dialog>
