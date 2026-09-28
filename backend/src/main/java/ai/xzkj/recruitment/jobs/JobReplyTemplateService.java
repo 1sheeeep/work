@@ -104,17 +104,16 @@ public class JobReplyTemplateService {
         return facts;
     }
 
-    /**
-     * 优先复用当前岗位已审核资料中的试岗安排；岗位资料没有明确写出时，
-     * 使用统一的业务兜底“三天”，避免候选人询问试岗期时被错误静默或转人工。
-     */
+    /** 试岗期必须来自当前岗位已审核资料，不能将其他岗位的天数套用到本岗位。 */
     private String trialPeriod(JobPosition job) {
-        String source = String.join(" ", clean(job.getDescription()), clean(job.getReplySummary()),
+        String source = String.join(" ", clean(job.getReplySummary()), clean(job.getDescription()),
                 clean(job.getScreeningRequirements()));
-        if (source.isBlank() || !source.contains("试岗")) return "3天";
+        if (source.isBlank() || !source.contains("试岗")) return "";
+        if (!java.util.regex.Pattern.compile("(?:试岗.{0,24}\\d+天|\\d+天.{0,24}试岗)")
+                .matcher(source).find()) return "";
         java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(
                 "([^。；;\\n]{0,80}试岗(?:期|安排)[^。；;\\n]{0,120})").matcher(source);
-        if (!matcher.find()) return "3天";
+        if (!matcher.find()) return "";
         return clean(matcher.group(1));
     }
 
