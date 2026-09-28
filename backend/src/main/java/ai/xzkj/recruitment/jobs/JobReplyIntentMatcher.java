@@ -6,7 +6,8 @@ import java.util.regex.Pattern;
 
 /** Shared matcher for deterministic job facts and social reply templates. */
 public final class JobReplyIntentMatcher {
-    private static final Pattern SALARY = Pattern.compile("(薪资|工资|月薪|年薪|底薪|提成|多少钱|薪酬|待遇)");
+    // “福利待遇”属于福利，不应因单独命中“待遇”而变成多意图、失去快速事实回复。
+    private static final Pattern SALARY = Pattern.compile("(薪资|工资|月薪|年薪|底薪|提成|多少钱|薪酬)");
     private static final Pattern LOCATION = Pattern.compile("(工作地址|上班地址|工作地点|上班地点|办公地址|在哪里上班|在哪上班|工作地)");
     private static final Pattern RESPONSIBILITIES = Pattern.compile("(工作内容|主要做什么|主要负责|岗位职责|职责是什么|平时做什么|日常工作|干什么|干嘛)");
     private static final Pattern WORK_TIME = Pattern.compile("(上班时间|工作时间|上下班时间|几点上班|几点下班|打卡时间|休息时间|月休|休息几天|每周休息|单双休|大小周)");

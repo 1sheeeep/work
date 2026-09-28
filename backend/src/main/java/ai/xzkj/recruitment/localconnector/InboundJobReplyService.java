@@ -210,7 +210,8 @@ class InboundJobReplyService {
         if (isSkillIntroduction(message)) return new Decision(true, "SOCIAL_ACKNOWLEDGEMENT", 1.0,
                 "好的，了解了，谢谢您的介绍。", "候选人介绍个人技能，简短回应，不扩展岗位事实");
         if (message.matches(".*(?:培训|带教|有人带|KPI|kpi|考核).*")
-                && message.matches(".*(?:吗|么|有没有|是否|怎么|如何|？|\\?).*"))
+                && message.matches(".*(?:吗|么|有没有|是否|怎么|如何|？|\\?).*")
+                && !hasCuratedTrainingAnswer(job, message))
             return new Decision(true, "GENERAL_JOB_CONSULTATION", 1.0,
                     "工作方面的具体情况，面试的时候会详细解答。", "培训或考核细节交由面试解答，不编造岗位承诺");
         var explicitIntents = InboundReplyQualityGate.explicitIntents(message);
@@ -219,7 +220,7 @@ class InboundJobReplyService {
         Decision leadReply = needsContextAnalysis ? null : deterministicLeadReply(job, message, context, memory, trustedRuntime);
         if (leadReply != null) return leadReply;
         if (replyTemplates != null && !needsContextAnalysis) {
-            var fixedReply = replyTemplates.renderFixedFact(job, message);
+            var fixedReply = replyTemplates.renderFixedFact(job, message, context);
             if (fixedReply.isPresent()) {
                 JobReplyTemplateService.RenderedReply rendered = fixedReply.get();
                 return new Decision(true, rendered.intent(), 1.0, rendered.content(), rendered.reason());
@@ -830,10 +831,12 @@ class InboundJobReplyService {
                             : "已命中公司固定发薪日回复并完成轻量 AI 润色");
         }
         if (isDetailedResponsibilityQuestion(message)) {
+            if (hasCuratedTalkTrack(job)) return null;
             return new Decision(true, "RESPONSIBILITIES", 1.0, "具体的等面试再了解。",
                     "岗位职责问题过于详细，先引导面试沟通，不猜测未审核细节");
         }
         if (isNoExperienceQuestion(message)) {
+            if (!explicitlyAcceptsNoExperience(job)) return null;
             String base = resumeAlreadyReceived
                     ? "可以的，我们会结合您的简历和岗位要求进一步了解。"
                     : "可以的，您先发一份简历过来，我了解后再和您沟通。";
@@ -862,11 +865,13 @@ class InboundJobReplyService {
             }
         }
         if (isWorkTimeQuestion(message)) {
+            if (replyTemplates != null && job.getWorkTime() != null && !job.getWorkTime().isBlank()) return null;
             return new Decision(true, "WORK_TIME", 1.0, "工作方面的具体情况，面试的时候会详细解答。",
                     "已命中工作安排问题固定回复，将具体细节留待面试说明");
         }
         if (isBenefitsQuestion(message, memory)) {
             String benefits = clean(job.getBenefits(), 500);
+            if (replyTemplates != null && !benefits.isBlank()) return null;
             String base = benefits.isBlank()
                     ? "社保情况面试时会详细说明。"
                     : "公司福利待遇包括" + benefits + "，具体细节面试时再沟通。";
@@ -904,6 +909,23 @@ class InboundJobReplyService {
                 1.0, reply, reply.equals(base)
                 ? "已命中求职意向固定模板"
                 : "已命中求职意向固定模板并完成轻量 AI 润色");
+    }
+
+    private static boolean hasCuratedTalkTrack(JobPosition job) {
+        return job != null && job.getReplySummary() != null
+                && job.getReplySummary().startsWith("话术补充：");
+    }
+
+    private static boolean hasCuratedTrainingAnswer(JobPosition job, String message) {
+        if (!hasCuratedTalkTrack(job) || !message.matches(".*(?:培训|带教|有人带).*")) return false;
+        String summary = job.getReplySummary();
+        return summary.contains("培训") || summary.contains("带教");
+    }
+
+    private static boolean explicitlyAcceptsNoExperience(JobPosition job) {
+        if (job == null) return false;
+        String summary = clean(job.getReplySummary(), 700);
+        return summary.contains("接受无经验") || summary.contains("可接受无相关经验");
     }
 
     private Decision deterministicDetailedJobQuestion(JobPosition job) {

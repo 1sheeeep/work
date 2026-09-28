@@ -7,6 +7,7 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 /** 岗位级回复模板。模板只负责已知事实的确定性渲染，不替代复杂消息的 AI 判断。 */
@@ -32,6 +33,15 @@ public class JobReplyTemplateService {
             new TemplateDefinition("CANDIDATE_DECLINE", "感谢投递，祝您求职顺利。", ""),
             new TemplateDefinition("CONVERSATION_CLOSING", "好的，后续有需要欢迎随时联系。", "")
     );
+    private static final Map<String, List<String>> FACT_VARIANTS = Map.of(
+            "SALARY", List.of("这个岗位的薪资是{{SALARY_VALUE}}。", "薪资范围为{{SALARY_VALUE}}，您可以参考一下。", "薪资这块是{{SALARY_VALUE}}。"),
+            "LOCATION", List.of("工作地点在{{LOCATION_VALUE}}。", "目前是在{{LOCATION_VALUE}}上班。", "岗位地址是{{LOCATION_VALUE}}。"),
+            "RESPONSIBILITIES", List.of("主要工作是{{RESPONSIBILITIES_VALUE}}。", "这个岗位主要负责{{RESPONSIBILITIES_VALUE}}。"),
+            "EXPERIENCE", List.of("经验要求是{{EXPERIENCE_VALUE}}。", "这个岗位对经验的要求是{{EXPERIENCE_VALUE}}。"),
+            "EDUCATION", List.of("学历要求是{{EDUCATION_VALUE}}。", "这个岗位要求{{EDUCATION_VALUE}}学历。"),
+            "WORK_TIME", List.of("上班时间是{{WORK_TIME_VALUE}}。", "工作时间为{{WORK_TIME_VALUE}}，您可以参考一下。", "时间安排是{{WORK_TIME_VALUE}}。"),
+            "BENEFITS", List.of("岗位福利包括{{BENEFITS_VALUE}}。", "福利待遇这块是{{BENEFITS_VALUE}}。", "目前提供的福利有{{BENEFITS_VALUE}}。")
+    );
 
     private final JobReplyTemplateRepository templates;
 
@@ -56,6 +66,11 @@ public class JobReplyTemplateService {
 
     @Transactional
     public Optional<RenderedReply> renderFixedFact(JobPosition job, String message) {
+        return renderFixedFact(job, message, "");
+    }
+
+    @Transactional
+    public Optional<RenderedReply> renderFixedFact(JobPosition job, String message, String context) {
         if (job == null || !job.isKnowledgeApproved() || message == null || message.isBlank()) return Optional.empty();
         ensureDefaults(job);
         String intent = JobReplyIntentMatcher.detectFixedIntent(message);
@@ -68,13 +83,32 @@ public class JobReplyTemplateService {
         for (String key : template.getRequiredFactKeys().split(",")) {
             if (!key.isBlank() && (!facts.containsKey(key) || facts.get(key).isBlank())) return Optional.empty();
         }
-        String rendered = template.getTemplateText();
-        for (Map.Entry<String, String> fact : facts.entrySet()) {
-            rendered = rendered.replace("{{" + fact.getKey() + "}}", fact.getValue());
+        String rendered = render(template.getTemplateText(), facts);
+        TemplateDefinition builtIn = DEFAULTS.stream().filter(item -> item.intent().equals(intent)).findFirst().orElse(null);
+        if (builtIn != null && builtIn.templateText().equals(template.getTemplateText())) {
+            List<String> variants = FACT_VARIANTS.get(intent);
+            if (variants != null) {
+                int start = Math.floorMod(Objects.hash(job.getId(), message.trim(), context), variants.size());
+                for (int offset = 0; offset < variants.size(); offset++) {
+                    String candidate = render(variants.get((start + offset) % variants.size()), facts);
+                    if (candidate.length() <= 200 && (context == null || !context.contains("HR：" + candidate))) {
+                        rendered = candidate;
+                        break;
+                    }
+                }
+            }
         }
         if (rendered.contains("{{") || rendered.length() > 200) return Optional.empty();
         return Optional.of(new RenderedReply(intent, rendered,
                 "已命中岗位固定事实模板，未调用 AI；事实来自当前岗位已审核资料"));
+    }
+
+    private static String render(String template, Map<String, String> facts) {
+        String result = template;
+        for (Map.Entry<String, String> fact : facts.entrySet()) {
+            result = result.replace("{{" + fact.getKey() + "}}", fact.getValue());
+        }
+        return result;
     }
 
     @Transactional

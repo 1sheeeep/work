@@ -92,6 +92,7 @@ class InboundJobReplyServiceTest {
     void noExperienceAndInterviewCancellationUseSafeRepliesWithoutCallingTheModel() {
         JobPosition job = mock(JobPosition.class);
         when(job.isKnowledgeApproved()).thenReturn(true);
+        when(job.getReplySummary()).thenReturn("话术补充：可接受无相关经验，入职后有人带教。");
         InboundJobReplyService service = new InboundJobReplyService(new OpenAiProperties(), new ObjectMapper());
 
         InboundJobReplyService.Decision noExperience = service.decide(job, "我之前没有做过，你这边是可以接受的吗");
@@ -204,7 +205,7 @@ class InboundJobReplyServiceTest {
         JobPosition job = mock(JobPosition.class);
         when(job.isKnowledgeApproved()).thenReturn(true);
         JobReplyTemplateService templates = mock(JobReplyTemplateService.class);
-        when(templates.renderFixedFact(job, "工作这边有试岗期吗")).thenReturn(Optional.of(
+        when(templates.renderFixedFact(job, "工作这边有试岗期吗", "")).thenReturn(Optional.of(
                 new JobReplyTemplateService.RenderedReply(
                         "TRIAL_PERIOD", "岗位试岗安排为3天，具体细节面试时再详细沟通。", "岗位资料")));
         InboundJobReplyService service = new InboundJobReplyService(
