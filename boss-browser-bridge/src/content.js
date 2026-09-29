@@ -19,7 +19,11 @@
   };
   const TEST_DRAFT_TEXT = '【草稿测试，不会自动发送】您好，已收到您的消息。';
   const RESUME_ATTACHMENT_RECEIPT_CONTEXT = '[SYSTEM_RESUME_ATTACHMENT_RECEIPT]';
-  const SINGLE_ACCOUNT_PREFETCH_LIMIT = 5;
+  // A browser tab can safely write to only one BOSS conversation at a time.
+  // Keep the page-side queue at one item; the backend may still analyse up to
+  // its configured per-account concurrency, but this tab never opens a
+  // second conversation while the current task is unresolved.
+  const SINGLE_ACCOUNT_PREFETCH_LIMIT = 1;
   // A full BOSS virtual list can contain thousands of rows. Give the page
   // loop back to READY sends after a small read-only scan window instead of
   // monopolising it for an 80-position sweep.
@@ -42,6 +46,10 @@
   let singleAccountAutoReplyDueAt = 0;
   let dutyControlTimer = null;
   let singleAccountPendingChatDigest = null;
+  // Backend tasks remain the source of truth. This id is the only task that
+  // the page-side scheduler may poll or locate at a time. It survives a page
+  // re-render and is cleared only after the task reaches a terminal outcome.
+  let singleAccountCurrentTaskId = null;
   // BOSS virtualizes the conversation list. The selected row can disappear
   // from the list DOM while its detail pane remains open, so retain only the
   // digest of the last positively verified active conversation. This lets the
@@ -479,6 +487,7 @@
       clearTimeout(resumeCardScanTimer);
       resumeCardScanTimer = null;
       singleAccountPendingChatDigest = null;
+      singleAccountCurrentTaskId = null;
       singleAccountActiveChatDigest = null;
       singleAccountUnreadBaseline = new Map();
       singleAccountSelectedMessageBaseline = new Map();
@@ -542,13 +551,12 @@
       }]));
       resetPipelineQueues();
       for (const task of singleAccountPendingReplies.values()) {
-        if (task.recoveredSend === true || task.queueLane === 'SEND') enqueuePipelineTask(task.taskId, 'SEND');
-        else if (task.retryable === true || task.queueLane === 'REVALIDATION') enqueuePipelineTask(task.taskId, 'REVALIDATION');
-        else enqueuePipelineTask(task.taskId, 'ANALYSIS');
-      }
-      for (const task of singleAccountPendingReplies.values()) {
         if (task.recoveredSend === true) markReadyTaskDiscovered(task);
       }
+      // Recover only one page-side task. READY/SEND work wins over analysis,
+      // while older revalidation work waits behind the current task instead
+      // of competing for the same tab.
+      promoteNextCurrentTask();
       singleAccountRetryRefreshAt = Date.now() + 10_000;
       singleAccountConversationQueue = [];
       singleAccountReadReviewInventory = [];
@@ -593,6 +601,50 @@
     singleAccountPipelineQueue.length = 0;
   }
 
+  function queueLaneForTask(task) {
+    if (task?.recoveredSend === true || task?.queueLane === 'SEND') return 'SEND';
+    if (task?.retryable === true || task?.queueLane === 'REVALIDATION') return 'REVALIDATION';
+    return 'ANALYSIS';
+  }
+
+  function pendingTaskSort(left, right) {
+    const laneDelta = (PIPELINE_LANE_PRIORITY[queueLaneForTask(left)] ?? 1)
+      - (PIPELINE_LANE_PRIORITY[queueLaneForTask(right)] ?? 1);
+    if (laneDelta) return laneDelta;
+    const leftCreated = Date.parse(left?.createdAt || left?.updatedAt || '') || 0;
+    const rightCreated = Date.parse(right?.createdAt || right?.updatedAt || '') || 0;
+    return leftCreated - rightCreated;
+  }
+
+  function currentPendingTask() {
+    return singleAccountCurrentTaskId
+      ? singleAccountPendingReplies.get(singleAccountCurrentTaskId) || null
+      : null;
+  }
+
+  function promoteNextCurrentTask(preferredTaskId = null) {
+    let current = currentPendingTask();
+    if (!current && preferredTaskId && singleAccountPendingReplies.has(preferredTaskId)) {
+      singleAccountCurrentTaskId = preferredTaskId;
+      current = singleAccountPendingReplies.get(preferredTaskId);
+    }
+    if (!current) {
+      singleAccountCurrentTaskId = null;
+      current = [...singleAccountPendingReplies.values()].sort(pendingTaskSort)[0] || null;
+      if (current) singleAccountCurrentTaskId = current.taskId;
+    }
+    // Keep the page-side queue strictly single-item even when the backend
+    // returns several historical tasks during recovery.
+    resetPipelineQueues();
+    if (!current) {
+      singleAccountPendingChatDigest = null;
+      return null;
+    }
+    singleAccountPendingChatDigest = current.chatDigest || null;
+    enqueuePipelineTask(current.taskId, queueLaneForTask(current));
+    return current;
+  }
+
   function orderedPipelineTaskIds() {
     return singleAccountPipelineQueue
       .slice()
@@ -612,13 +664,20 @@
   function enqueuePipelineTask(taskId, lane = 'ANALYSIS') {
     if (!taskId) return;
     removePipelineTask(taskId);
-    singleAccountPipelineQueue.push({ taskId, lane: PIPELINE_LANE_PRIORITY[lane] == null ? 'ANALYSIS' : lane });
+    const normalizedLane = PIPELINE_LANE_PRIORITY[lane] == null ? 'ANALYSIS' : lane;
+    const task = singleAccountPendingReplies.get(taskId);
+    if (task) task.queueLane = normalizedLane;
+    singleAccountPipelineQueue.push({ taskId, lane: normalizedLane });
   }
 
   function removePendingPipelineTask(taskId, chatDigest = null) {
     removePipelineTask(taskId);
     singleAccountPendingReplies.delete(taskId);
-    if (chatDigest && singleAccountPendingChatDigest === chatDigest) {
+    if (singleAccountCurrentTaskId === taskId) {
+      singleAccountCurrentTaskId = null;
+      singleAccountPendingChatDigest = null;
+      promoteNextCurrentTask();
+    } else if (chatDigest && singleAccountPendingChatDigest === chatDigest) {
       singleAccountPendingChatDigest = null;
     }
   }
@@ -1176,7 +1235,11 @@
 
   function rememberPendingReply(result, snapshot, pendingRowSignature, now = Date.now()) {
     const existing = singleAccountPendingReplies.get(result.taskId);
-    if (existing) return existing; // Preserve poll deadline, retry backoff and SEND lane.
+    if (existing) {
+      // Preserve poll deadline, retry backoff and the current task lease.
+      if (!singleAccountCurrentTaskId) promoteNextCurrentTask(result.taskId);
+      return existing;
+    }
     const task = {
       taskId: result.taskId, chatDigest: snapshot.chatDigest, messageDigest: snapshot.messageDigest,
       resumeReceipt: result.resumeReceipt === true,
@@ -1184,13 +1247,14 @@
       nextPollAt: result.recovered ? 0 : now + 500, holdStartedAt: now,
     };
     singleAccountPendingReplies.set(result.taskId, task);
-    enqueuePipelineTask(result.taskId, 'ANALYSIS');
+    if (!singleAccountCurrentTaskId) promoteNextCurrentTask(result.taskId);
     return task;
   }
 
   async function nextReadyInboundReply(preferredTaskId = null, { includeRetryable = true } = {}) {
     const now = Date.now();
-    const preferredTask = preferredTaskId ? singleAccountPendingReplies.get(preferredTaskId) : null;
+    const current = promoteNextCurrentTask(preferredTaskId);
+    const activeTaskId = current?.taskId || null;
     // Backend tasks can reach a terminal state between polls. Remove their
     // lane ids before building the next polling batch so stale ids do not keep
     // the scheduler waking up and re-scanning the same work forever.
@@ -1198,10 +1262,9 @@
     for (let index = singleAccountPipelineQueue.length - 1; index >= 0; index -= 1) {
       if (!liveTaskIds.has(singleAccountPipelineQueue[index].taskId)) singleAccountPipelineQueue.splice(index, 1);
     }
-    const orderedTaskIds = preferredTask
-      ? [preferredTaskId]
-      : [...orderedPipelineTaskIds(),
-        ...singleAccountPendingReplies.keys()];
+    // Never poll a batch of page-side tasks. The backend may process several
+    // AI requests, but this browser tab owns exactly one locate/send task.
+    const orderedTaskIds = activeTaskId ? [activeTaskId] : [];
     const seenTaskIds = new Set();
     const entries = orderedTaskIds
       .filter((taskId) => taskId && !seenTaskIds.has(taskId) && seenTaskIds.add(taskId))
@@ -1348,10 +1411,10 @@
         readyDiscoveredAt: Number.isFinite(Date.parse(task.updatedAt || ''))
           ? Date.parse(task.updatedAt) : Date.now() };
       singleAccountPendingReplies.set(task.taskId, restored);
-      enqueuePipelineTask(task.taskId, activeReady ? 'SEND' : 'REVALIDATION');
       if (activeReady) markReadyTaskDiscovered(restored);
       added += 1;
     }
+    if (added || !singleAccountCurrentTaskId) promoteNextCurrentTask();
     if (added) traceAutoReply('DEFERRED_REVALIDATION_READY', {
       outcome: 'WAITING', reason: `发现 ${added} 条长时间无新消息且此前未回复的库存会话，开始逐条重新读取正文并安全二次复核。`,
     });
@@ -1361,6 +1424,27 @@
     if (['WAITING', 'BLOCKED'].includes(outcome)) return 'WAITING';
     if (['SENT', 'SKIPPED', 'UNKNOWN', 'STOPPED'].includes(outcome)) return 'DONE';
     return 'PROCESSING';
+  }
+
+  const SINGLE_TASK_STATES = new Set([
+    'IDLE', 'READING', 'AI_PROCESSING', 'READY_TO_SEND', 'PRE_SEND_CHECK',
+    'SENDING', 'CONFIRMING', 'WAITING_PAGE', 'WAITING_HR', 'FINISHED',
+  ]);
+
+  function taskStateForTrace(stage, requestedState = null) {
+    if (SINGLE_TASK_STATES.has(requestedState)) return requestedState;
+    if (/^(?:TARGET_|SNAPSHOT_|CURRENT_CONVERSATION_CHANGED|READ_UNREPLIED_REVIEW_|ATTACHMENT_|TRANSCRIPT_)/.test(stage)) return 'READING';
+    if (/^(?:AI_REQUEST|AI_QUEUED|AI_TASK_RECOVERED|AI_EXISTING_TASK|AI_POLL|AI_RETRY_SCHEDULED|CURRENT_CONVERSATION_WAITING_AI|CURRENT_TASK_WAITING_AI|QUEUE_WINDOW_WAITING_AI)/.test(stage)) return 'AI_PROCESSING';
+    if (/^(?:AI_READY|READY_(?:DISPATCH|DEEP_SCAN|RELOCATION|RELOCATE|TARGET_LOCATED|VISIBLE_LOOKUP|TASK_))/.test(stage)
+        || stage === 'CURRENT_CONVERSATION_AI_READY') return 'READY_TO_SEND';
+    if (/^(?:PRE_SEND|SEND_LEASE|READY_EDITOR_CONFIRMED|LEASE_)/.test(stage)) return 'PRE_SEND_CHECK';
+    if (/^(?:DRAFT_FILLED|SEND_CLICKED)/.test(stage)) return 'SENDING';
+    if (/^(?:SEND_RECONCILIATION|SEND_EVIDENCE|SEND_RECOVERY|SEND_RECEIPT)/.test(stage)) return 'CONFIRMING';
+    if (/^(?:PAGE_|LIST_|QUEUE_|UNREAD_SCAN|LOOP_BUSY|EDITOR_WAITING|RESUME_PREVIEW_CLOSE|RESUME_UPLOAD)/.test(stage)) return 'WAITING_PAGE';
+    if (/^(?:INTERVIEW_|DECISION_BLOCKED|DECISION_RATE_LIMIT|AUTO_REPLY_STOPPED|STOPPED_BEFORE_SEND|READY_TARGET_DEFERRED|AI_RETRY_TARGET_DEFERRED|AI_RETRY_REJECTED)/.test(stage)) return 'WAITING_HR';
+    if (/^(?:DECISION_SILENT|HR_LAST_MESSAGE_CONFIRMED|AI_TASK_SEND_TERMINAL|AI_TASK_TERMINAL_CLEARED|AI_FINAL_FAILED|RESULT_REPORT_FAILED)/.test(stage)
+        || /^(?:SEND_CONFIRMED|SEND_UNKNOWN)$/.test(stage)) return 'FINISHED';
+    return 'IDLE';
   }
 
   function traceAutoReply(stage, fields = {}) {
@@ -1384,6 +1468,7 @@
       queueLane: ['SCAN', 'ANALYSIS', 'SEND', 'REVALIDATION', 'TERMINAL'].includes(fields.queueLane) ? fields.queueLane : null,
       queuePosition: Number.isInteger(fields.queuePosition) ? fields.queuePosition : null,
       attempt: Number.isInteger(fields.attempt) ? fields.attempt : null,
+      taskState: taskStateForTrace(stage, fields.taskState),
       elapsedMs: Number.isFinite(fields.elapsedMs) ? fields.elapsedMs : autoReplyTraceRunStartedAt ? now - autoReplyTraceRunStartedAt : null,
       reason,
       occurredAt: new Date(now).toISOString(),
@@ -1632,11 +1717,7 @@
       return { queued: false, duplicate: false, error: result?.error || '简历收件确认入队失败。' };
     }
     if (result.pending && result.taskId) {
-      singleAccountPendingReplies.set(result.taskId, {
-        taskId: result.taskId, chatDigest: selected.chatDigest, messageDigest: selected.messageDigest,
-        resumeReceipt: true, nextPollAt: Date.now() + 300, holdStartedAt: Date.now(),
-      });
-      enqueuePipelineTask(result.taskId, 'ANALYSIS');
+      rememberPendingReply(result, selected, null, Date.now() - 200);
       singleAccountPendingChatDigest = selected.chatDigest;
       traceAutoReply('RESUME_RECEIPT_QUEUED', {
         chatDigest: selected.chatDigest, messageDigest: selected.messageDigest, taskId: result.taskId, queueLane: 'ANALYSIS',
@@ -1890,14 +1971,15 @@
         if (!preparation.stopped) scheduleSingleAccountAutoReply(preparation.delay || 3_000);
         return;
       }
+      const currentTaskAtStart = promoteNextCurrentTask();
       // Keep the conversation that created an AI task open until the decision
       // is ready. This avoids navigating away and later trying to rediscover a
       // virtualized BOSS row. A bounded hold prevents one slow AI task from
       // blocking the account forever.
-      const heldTask = singleAccountPendingChatDigest
-        ? [...singleAccountPendingReplies.values()].find((task) => task.retryable !== true
-          && task.chatDigest === singleAccountPendingChatDigest) || null
-        : null;
+      const heldTask = currentTaskAtStart && singleAccountPendingChatDigest
+        && currentTaskAtStart.retryable !== true
+        && currentTaskAtStart.chatDigest === singleAccountPendingChatDigest
+        ? currentTaskAtStart : null;
       let heldReadyReply = null;
       if (heldTask) {
         heldTask.holdStartedAt = Number(heldTask.holdStartedAt || Date.now());
@@ -1942,6 +2024,21 @@
       // real-time unread so it cannot monopolize the page.
       const priorityReadyReply = heldReadyReply
         || await nextReadyInboundReply(null, { includeRetryable: false });
+      // An unresolved analysis task owns this tab. Do not open a different
+      // unread conversation while its result is still pending; once READY it
+      // continues through the normal locate, digest and direction checks.
+      if (currentTaskAtStart && !priorityReadyReply
+          && singleAccountPendingReplies.has(currentTaskAtStart.taskId)
+          && currentTaskAtStart.retryable !== true) {
+        const nextPollAt = Number(currentTaskAtStart.nextPollAt || 0);
+        const waitMs = Math.max(200, Math.min(5_000, nextPollAt - Date.now()));
+        traceAutoReply('CURRENT_TASK_WAITING_AI', {
+          chatDigest: currentTaskAtStart.chatDigest, messageDigest: currentTaskAtStart.messageDigest,
+          taskId: currentTaskAtStart.taskId, queueLane: 'ANALYSIS', outcome: 'WAITING',
+          reason: '当前任务尚未返回结果，保持单会话锁；不扫描或切换其他会话。',
+        });
+        return scheduleSingleAccountAutoReply(waitMs);
+      }
       // BOSS immediately clears the unread badge when a message arrives in the
       // conversation that is already open. Detect that changed detail first;
       // otherwise a list-only scan sees zero unread rows and silently misses it.
@@ -2651,16 +2748,16 @@
         }
         if (replyResult.pending && replyResult.taskId) {
           rememberPendingReply(replyResult, second, pendingRowSignature);
-          const keepCurrentConversation = replyResult.resumeReceipt === true;
-          singleAccountPendingChatDigest = keepCurrentConversation ? second.chatDigest : null;
-          const processingCount = singleAccountPendingReplies.size;
+          // One tab, one current task. AI backend concurrency remains
+          // available for other accounts, but this page never prefetches and
+          // opens another conversation before the current result is sent or
+          // reaches an explicit terminal state.
+          singleAccountPendingChatDigest = second.chatDigest;
           traceAutoReply(replyResult.recovered ? 'AI_TASK_RECOVERED' : 'AI_QUEUED', {
             chatDigest: second.chatDigest, messageDigest: second.messageDigest, taskId: replyResult.taskId,
             queueLane: 'ANALYSIS',
-            queuePosition: processingCount, outcome: 'WAITING',
-            reason: keepCurrentConversation
-              ? `简历收件回复正在生成（AI 并发任务 ${processingCount}/3），保持当前会话以优先发送。`
-              : `AI 并发处理中（${processingCount}/3）；当前会话快照已冻结，继续提交预取窗口中的其他消息。`,
+            queuePosition: 1, outcome: 'WAITING',
+            reason: 'AI 回复正在生成；当前会话已锁定，完成前不扫描或切换其他会话。',
           });
           return scheduleSingleAccountAutoReply(100);
         }

@@ -651,6 +651,7 @@ async function recordAutoReplyTrace(payload) {
       || (payload.queueLane != null && !['SCAN', 'ANALYSIS', 'SEND', 'REVALIDATION', 'TERMINAL'].includes(payload.queueLane))
       || (payload.queuePosition != null && (!Number.isInteger(payload.queuePosition) || payload.queuePosition < 0 || payload.queuePosition > 500))
       || (payload.attempt != null && (!Number.isInteger(payload.attempt) || payload.attempt < 0 || payload.attempt > 100))
+      || (payload.taskState != null && !['IDLE', 'READING', 'AI_PROCESSING', 'READY_TO_SEND', 'PRE_SEND_CHECK', 'SENDING', 'CONFIRMING', 'WAITING_PAGE', 'WAITING_HR', 'FINISHED'].includes(payload.taskState))
       || (payload.elapsedMs != null && (!Number.isFinite(payload.elapsedMs) || payload.elapsedMs < 0 || payload.elapsedMs > 900_000))) {
     throw new Error('自动回复诊断日志无效。');
   }
@@ -668,6 +669,7 @@ async function recordAutoReplyTrace(payload) {
     queueLane: payload.queueLane || null,
     queuePosition: Number.isInteger(payload.queuePosition) ? payload.queuePosition : null,
     attempt: Number.isInteger(payload.attempt) ? payload.attempt : null,
+    taskState: payload.taskState || 'IDLE',
     elapsedMs: Number.isFinite(payload.elapsedMs) ? Math.round(payload.elapsedMs) : null,
     reason: String(payload.reason || '').slice(0, 300),
   };

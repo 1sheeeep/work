@@ -20,7 +20,7 @@ web
 
 ## Operating Context
 
-核心链路为：HR 开启挂机，系统监测未读消息，生成安全回复草稿，HR 审核或人工接管，接收简历，AI 分析，HR 查看并复核结果。
+核心链路为：发现候选人新消息，稳定读取上下文，按固定规则或 AI 判断回复/转 HR，记录发送回执后继续下一条；简历接收与提取、聊天记录同步和示例库导入在后台异步完成，HR 查看并复核 AI 结果。
 
 ## Capabilities and Constraints
 
@@ -29,7 +29,7 @@ web
 - 保留 Vue 3、TypeScript、Element Plus、现有路由、接口、权限和数据结构。
 - 不暴露 Cookie、Token、密码、API Key 或候选人消息正文。
 - AI 结果仅供参考，最终判断由 HR 作出。
-- 不新增候选人 ATS、企业资料、HR 用户、独立自动回复、旧值守规则或独立 AI 配置入口。
+- 不新增候选人 ATS、企业资料、旧值守规则或独立自动回复/AI 配置入口；HR 用户管理仅作为权限控制的管理入口存在。
 
 ## Brand Commitments
 

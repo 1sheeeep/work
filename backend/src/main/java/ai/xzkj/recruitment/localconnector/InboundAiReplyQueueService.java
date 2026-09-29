@@ -59,7 +59,6 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
     private final SecureRandom random = new SecureRandom();
     @Value("${app.inbound-reply.queue-retention:P7D}")
     private Duration queueRetention = Duration.ofDays(7);
-    @Value("${app.inbound-reply.max-pending-per-account:100}") private long maxPendingPerAccount = 100;
     @Value("${app.inbound-reply.max-pending-global:1000}") private long maxPendingGlobal = 1000;
     @Value("${app.inbound-reply.auto-send-enabled:false}") private boolean autoSendEnabled;
     @Value("${app.inbound-reply.shadow-evaluation-enabled:false}") private boolean shadowEvaluationEnabled;
@@ -203,13 +202,8 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
             BrowserUnreadObservation observation = observations.findById(task.getObservationId()).orElse(null);
             if (task.isExpectedSilence() && observation != null && observation.isSelectedConversationUnread())
                 throw new ApiException(HttpStatus.CONFLICT, "AI_REPLY_RETRY_READ_REQUIRED", "静默复核只允许已读且没有新消息的会话");
-            long accountOutstanding = tasks.countByAccountIdAndStatusIn(accountId, List.of("QUEUED", "PROCESSING", "RETRY_WAIT"))
-                    + tasks.countByAccountIdAndSendStatus(accountId, "READY")
-                    + tasks.countByAccountIdAndSendStatus(accountId, "CLAIMED");
             long globalOutstanding = tasks.countByStatusIn(List.of("QUEUED", "PROCESSING", "RETRY_WAIT"))
                     + tasks.countBySendStatus("READY") + tasks.countBySendStatus("CLAIMED");
-            if (accountOutstanding >= maxPendingPerAccount)
-                throw unavailable("AI_REPLY_ACCOUNT_QUEUE_FULL", "当前招聘账号的 AI 回复队列已满，请稍后重试");
             if (globalOutstanding >= maxPendingGlobal)
                 throw unavailable("AI_REPLY_GLOBAL_QUEUE_FULL", "AI 回复系统当前繁忙，请稍后重试");
             if (!task.requeueWithFreshInput(text, context, Instant.now()))
@@ -429,13 +423,8 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
         existing = tasks.findByAccountIdAndChatDigestAndMessageDigest(accountId, chatDigest, messageDigest).orElse(null);
         if (existing != null) return existing;
         List<String> pending = List.of("QUEUED","PROCESSING","RETRY_WAIT");
-        long accountOutstanding = tasks.countByAccountIdAndStatusIn(accountId,pending)
-                + tasks.countByAccountIdAndSendStatus(accountId,"READY")
-                + tasks.countByAccountIdAndSendStatus(accountId,"CLAIMED");
         long globalOutstanding = tasks.countByStatusIn(pending)
                 + tasks.countBySendStatus("READY") + tasks.countBySendStatus("CLAIMED");
-        if (accountOutstanding >= maxPendingPerAccount)
-            throw unavailable("AI_REPLY_ACCOUNT_QUEUE_FULL","当前招聘账号的 AI 回复队列已满，请稍后重试");
         if (globalOutstanding >= maxPendingGlobal)
             throw unavailable("AI_REPLY_GLOBAL_QUEUE_FULL","AI 回复系统当前繁忙，请稍后重试");
         try {
@@ -503,7 +492,8 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
                         LOG.log(System.Logger.Level.INFO, "AI_TASK_STAGE lane=" + InboundAiReplyTask.QUEUE_ANALYSIS
                                 + " stage=AI_REQUEST_FINISHED task=" + task.getId()
                                 + " category=" + safeCategory(evaluated.category()) + " allowed=" + evaluated.replyAllowed()
-                                + " retryable=" + evaluated.retryable());
+                                + " retryable=" + evaluated.retryable()
+                                + " elapsedMs=" + elapsedMs(task, Instant.now()));
                     }
                     finally {
                         execution.releaseModelSlot();
@@ -788,6 +778,10 @@ class InboundAiReplyQueueService implements InboundReplyWorkGate {
     private String safeDigest(String value) {
         if (value == null || value.isBlank()) return "none";
         return value.substring(0, Math.min(16, value.length()));
+    }
+    private long elapsedMs(InboundAiReplyTask task, Instant now) {
+        Instant started = task == null ? null : task.getStartedAt();
+        return started == null || now == null ? 0L : Math.max(0L, Duration.between(started, now).toMillis());
     }
     private String token() { byte[] value=new byte[32];random.nextBytes(value);return Base64.getUrlEncoder().withoutPadding().encodeToString(value); }
     private String hash(String value) { try{return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));}catch(Exception error){throw new IllegalStateException(error);} }

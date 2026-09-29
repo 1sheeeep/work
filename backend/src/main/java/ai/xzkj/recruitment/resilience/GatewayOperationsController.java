@@ -19,7 +19,6 @@ import java.util.UUID;
 public class GatewayOperationsController {
     private final GatewayResilienceGuard guard;
     private final JdbcTemplate jdbcTemplate;
-    @Value("${app.inbound-reply.max-pending-per-account:100}") private long maxPendingPerAccount;
     @Value("${app.inbound-reply.max-pending-global:1000}") private long maxPendingGlobal;
     @Value("${app.inbound-reply.send-limit-per-hour:20}") private long sendLimitPerHour;
     @Value("${app.inbound-reply.send-limit-per-day:100}") private long sendLimitPerDay;
@@ -43,6 +42,8 @@ public class GatewayOperationsController {
         long staleDevices = count("SELECT COUNT(*) FROM local_connector_devices WHERE status = 'ACTIVE' AND (last_heartbeat_at IS NULL OR last_heartbeat_at < CURRENT_TIMESTAMP - INTERVAL '2 minutes')");
         long unreadObservations = count("SELECT COUNT(*) FROM local_connector_unread_observations WHERE unread = TRUE");
         long unverifiedCaptures = count("SELECT COUNT(*) FROM job_positions WHERE capture_source = 'VISIBLE_PAGE' AND capture_verified = FALSE");
+        // -1 keeps the existing operations response shape while explicitly
+        // reporting that per-account pending tasks are no longer capped.
         QueueOperations queue = new QueueOperations(
                 count("SELECT COUNT(*) FROM inbound_ai_reply_tasks WHERE status IN ('QUEUED','RETRY_WAIT')"),
                 count("SELECT COUNT(*) FROM inbound_ai_reply_tasks WHERE status = 'PROCESSING'"),
@@ -54,7 +55,7 @@ public class GatewayOperationsController {
                 count("SELECT COUNT(*) FROM inbound_ai_reply_tasks WHERE send_status = 'SUCCEEDED' AND send_completed_at > CURRENT_TIMESTAMP - INTERVAL '1 hour'"),
                 count("SELECT COUNT(*) FROM inbound_ai_reply_tasks WHERE send_status = 'SUCCEEDED' AND send_completed_at > CURRENT_TIMESTAMP - INTERVAL '1 day'"),
                 nullableLong("SELECT EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - MIN(created_at)))::bigint FROM inbound_ai_reply_tasks WHERE status IN ('QUEUED','RETRY_WAIT')"),
-                maxPendingPerAccount,maxPendingGlobal,sendLimitPerHour,sendLimitPerDay,inboundAutoSendEnabled);
+                -1L,maxPendingGlobal,sendLimitPerHour,sendLimitPerDay,inboundAutoSendEnabled);
         long activeDutyPolicies = count("SELECT COUNT(*) FROM auto_reply_policies WHERE enabled = TRUE AND auto_send_enabled = TRUE AND away_mode <> 'IN_OFFICE' AND (away_ends_at IS NULL OR away_ends_at > CURRENT_TIMESTAMP)");
         List<InboundReplyEvent> recentInboundReplyEvents = jdbcTemplate.query("""
                 SELECT task.id, account.display_name, job.title, LEFT(task.chat_digest, 12),
