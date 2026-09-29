@@ -55,7 +55,7 @@ class LocalConnectorResumeControllerTest {
         LocalConnectorResumeController controller = new LocalConnectorResumeController(connectors, observations, jobs, tasks, pipeline);
         assertThat(controller.receive("token", observationId, digest, null, file)).isEqualTo(response);
         verify(observation).markResumeImporting(any(Instant.class));
-        verify(observation).recordResumePipelineResult(eq(intakeId), eq("SUCCEEDED"), isNull(), any(Instant.class));
+        verify(observation).recordResumePipelineResult(eq(intakeId), eq("READY_FOR_AI"), eq("SUCCEEDED"), isNull(), any(Instant.class));
         verify(observations, times(2)).saveAndFlush(observation);
     }
 }

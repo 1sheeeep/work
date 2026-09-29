@@ -20,18 +20,15 @@ class ResumeDocumentPipelineServiceTest {
     void scansExtractsAndStoresOnlyDigests() {
         Fixture f = new Fixture();
         when(f.documents.readBytes(f.file)).thenReturn("safe-pdf".getBytes());
-        when(f.malware.scan(any())).thenReturn(ResumeMalwareScanner.ScanResult.clean());
-        when(f.ocr.supports(any())).thenReturn(false);
-        when(f.documents.extract(any())).thenReturn(new ResumeDocumentTextExtractor.ExtractedResumeDocument(
-                "PDF", "Java 开发经验", "a".repeat(64)));
 
         ResumeDocumentProcessingResponse result = f.service.processVisibleResume(f.job, "b".repeat(64), "c".repeat(64), null, f.file);
 
-        assertThat(result.processingStatus()).isEqualTo("READY_FOR_AI");
-        assertThat(result.documentType()).isEqualTo("PDF");
-        assertThat(result.malwareScanned()).isTrue();
-        assertThat(result.extractedTextDigestPrefix()).hasSize(12);
+        assertThat(result.processingStatus()).isEqualTo("QUEUED");
+        assertThat(result.documentType()).isNull();
+        assertThat(result.malwareScanned()).isFalse();
+        assertThat(result.extractedTextDigestPrefix()).isNull();
         assertThat(result.duplicate()).isFalse();
+        verify(f.documentQueue).enqueue(any(ResumeIntake.class));
     }
 
     @Test
@@ -46,7 +43,7 @@ class ResumeDocumentPipelineServiceTest {
         ResumeDocumentProcessingResponse result = f.service.processVisibleResume(f.job, "b".repeat(64), "c".repeat(64), null, f.file);
 
         assertThat(result.duplicate()).isTrue();
-        verifyNoInteractions(f.malware, f.ocr);
+        verifyNoInteractions(f.malware, f.ocr, f.documentQueue);
     }
 
     @Test
@@ -60,16 +57,11 @@ class ResumeDocumentPipelineServiceTest {
         existing.readyForAi("PDF", "a".repeat(64), true, java.time.Instant.now());
         existing.analysisUnavailable("FAILED", "AI_REQUEST_FAILED", "AI 请求失败", java.time.Instant.now());
         when(f.intakes.findByContactIdAndResumeDigest(eq(f.contactId), any())).thenReturn(Optional.of(existing));
-        when(f.malware.scan(any())).thenReturn(ResumeMalwareScanner.ScanResult.clean());
-        when(f.ocr.supports(any())).thenReturn(false);
-        when(f.documents.extract(any())).thenReturn(new ResumeDocumentTextExtractor.ExtractedResumeDocument(
-                "PDF", "候选人姓名 林嘉明 工作经历 Java 开发".repeat(10), "a".repeat(64)));
 
         ResumeDocumentProcessingResponse result = f.service.processVisibleResume(f.job, "b".repeat(64), "c".repeat(64), null, f.file);
 
         assertThat(result.duplicate()).isTrue();
-        verify(f.analysisQueue).enqueue(eq(existing));
-        verify(f.documents, times(2)).extract(any());
+        verify(f.documentQueue).enqueue(eq(existing));
     }
 
     @Test
@@ -96,6 +88,7 @@ class ResumeDocumentPipelineServiceTest {
         final ResumeDocumentTextExtractor documents=mock(ResumeDocumentTextExtractor.class);
         final ResumeMalwareScanner malware=mock(ResumeMalwareScanner.class);
         final ResumeImageOcrClient ocr=mock(ResumeImageOcrClient.class);
+        final ResumeDocumentProcessingQueueService documentQueue=mock(ResumeDocumentProcessingQueueService.class);
         final ResumeAnalysisQueueService analysisQueue=mock(ResumeAnalysisQueueService.class);
         final AuditService audit=mock(AuditService.class);
         final MultipartFile file=mock(MultipartFile.class);
@@ -105,7 +98,7 @@ class ResumeDocumentPipelineServiceTest {
         final CandidateProfile candidate=mock(CandidateProfile.class);
         final CandidateJobContact contact=mock(CandidateJobContact.class);
         final UUID companyId=UUID.randomUUID(),jobId=UUID.randomUUID(),candidateId=UUID.randomUUID(),contactId=UUID.randomUUID();
-        final ResumeDocumentPipelineService service=new ResumeDocumentPipelineService(candidates,contacts,intakes,documents,malware,ocr,analysisQueue,audit);
+        final ResumeDocumentPipelineService service=new ResumeDocumentPipelineService(candidates,contacts,intakes,documents,documentQueue,analysisQueue,audit);
         Fixture(){
             when(company.getId()).thenReturn(companyId);when(job.getCompany()).thenReturn(company);when(job.getBossAccount()).thenReturn(account);when(job.getId()).thenReturn(jobId);
             when(candidate.getId()).thenReturn(candidateId);when(candidate.getDisplayName()).thenReturn("匿名候选人");
@@ -115,6 +108,8 @@ class ResumeDocumentPipelineServiceTest {
             when(intakes.findByContactIdAndResumeDigest(eq(contactId),any())).thenReturn(Optional.empty());
             when(intakes.findByContactIdAndSourceEventDigest(eq(contactId),any())).thenReturn(Optional.empty());
             when(intakes.save(any())).thenAnswer(invocation->invocation.getArgument(0));
+            doAnswer(invocation -> { invocation.<ResumeIntake>getArgument(0).queueDocumentProcessing(java.time.Instant.now()); return null; })
+                    .when(documentQueue).enqueue(any(ResumeIntake.class));
         }
     }
 

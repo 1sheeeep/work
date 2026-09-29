@@ -12,6 +12,12 @@ public interface ResumeIntakeRepository extends JpaRepository<ResumeIntake,UUID>
  Optional<ResumeIntake> findByContactIdAndSourceEventDigest(UUID contactId,String sourceEventDigest);
  @EntityGraph(attributePaths={"contact","contact.candidate","contact.candidate.company","contact.jobPosition","contact.bossAccount"})List<ResumeIntake> findTop100ByProcessingStatusOrderByReceivedAtDesc(String processingStatus);
  @Lock(LockModeType.PESSIMISTIC_WRITE)
+ @Query("select i from ResumeIntake i where i.processingStatus in ('QUEUED','RETRY_WAIT') and (i.processingNextAttemptAt is null or i.processingNextAttemptAt <= :now) order by i.processingQueuedAt asc, i.receivedAt asc")
+ List<ResumeIntake> findDueForDocumentProcessing(@Param("now") Instant now, Pageable pageable);
+ @Lock(LockModeType.PESSIMISTIC_WRITE)
+ @Query("select i from ResumeIntake i where i.processingStatus = 'PROCESSING' and i.processingLeaseUntil < :now")
+ List<ResumeIntake> findExpiredDocumentProcessingLeases(@Param("now") Instant now, Pageable pageable);
+ @Lock(LockModeType.PESSIMISTIC_WRITE)
  @Query("select i from ResumeIntake i where i.analysisQueueStatus in ('QUEUED','RETRY_WAIT') and (i.analysisQueueNextAttemptAt is null or i.analysisQueueNextAttemptAt <= :now) order by i.analysisQueueQueuedAt asc, i.receivedAt asc")
  List<ResumeIntake> findDueForAnalysis(@Param("now") Instant now, Pageable pageable);
  @Lock(LockModeType.PESSIMISTIC_WRITE)

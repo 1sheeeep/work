@@ -65,7 +65,7 @@ class LocalConnectorResumeController {
                     job, observation.getChatDigest(), sourceEventDigest, sourceActionTaskId, file);
             String failureReason = result.analysisFailureReason() != null
                     ? result.analysisFailureReason() : result.failureReason();
-            observation.recordResumePipelineResult(result.intakeId(), result.analysisStatus(), failureReason, Instant.now());
+            observation.recordResumePipelineResult(result.intakeId(), result.processingStatus(), result.analysisStatus(), failureReason, Instant.now());
             observations.saveAndFlush(observation);
             return result;
         } catch (RuntimeException exception) {
@@ -99,7 +99,7 @@ class LocalConnectorResumeController {
                     job, observation.getChatDigest(), request.sourceEventDigest(), request.resumeText());
             String failureReason = result.analysisFailureReason() != null
                     ? result.analysisFailureReason() : result.failureReason();
-            observation.recordResumePipelineResult(result.intakeId(), result.analysisStatus(), failureReason, Instant.now());
+            observation.recordResumePipelineResult(result.intakeId(), result.processingStatus(), result.analysisStatus(), failureReason, Instant.now());
             observations.saveAndFlush(observation);
             return result;
         } catch (RuntimeException exception) {

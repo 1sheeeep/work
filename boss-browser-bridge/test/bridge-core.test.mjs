@@ -128,6 +128,10 @@ test('keeps transcript learning and timeline imports independent and scoped to o
   assert.match(source, /const results = await Promise\.allSettled\(\[/);
   assert.match(source, /body: \{ transcript: transcript\.text, chatDigest: transcript\.chatDigest \}/);
   assert.match(source, /body: \{ chatDigest: transcript\.chatDigest, jobTitle: transcript\.jobTitle, messages: transcript\.turns/);
+  assert.match(source, /const TRANSCRIPT_SYNC_QUEUE_KEY = 'transcriptSyncQueueV1';/);
+  assert.match(source, /TRANSCRIPT_SYNC_MAX_ATTEMPTS = 8/);
+  assert.match(source, /saveTranscriptSyncQueue\(remaining\)/);
+  assert.match(source, /await clearTranscriptSyncQueue\(\)/);
 });
 
 test('uses one BOSS turn identity for selected snapshots and imported history', async () => {

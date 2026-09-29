@@ -5031,6 +5031,8 @@
     const analysisReason = response.analysisFailureReason || response.analysisFailureCode || '';
     if (response.processingStatus === 'FAILED') {
       showResumeCaptureStatus('后端处理失败：' + (processingReason || '简历文件未能完成提取。'), 'error');
+    } else if (['QUEUED', 'PROCESSING', 'RETRY_WAIT'].includes(response.processingStatus)) {
+      showResumeCaptureStatus('简历已进入后台安全处理队列，页面可以继续处理其他会话。', 'info');
     } else {
       showResumeCaptureStatus(`简历提取成功：后端已${response.duplicate ? '识别为重复记录' : '接收并建立记录'}，处理状态 ${response.processingStatus || '已接收'}。`, 'success');
     }

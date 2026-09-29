@@ -2,6 +2,7 @@ import { DEFAULT_BACKEND_URL, canPollInboundReplyTask, classifyProcessedMessageC
 
 const SETTINGS_KEY = 'bridgeSettingsV1';
 const RUNTIME_KEY = 'bridgeRuntimeV1';
+const TRANSCRIPT_SYNC_QUEUE_KEY = 'transcriptSyncQueueV1';
 const ALARM_NAME = 'bridge-observe';
 const MIN_SYNC_INTERVAL_MS = 10_000;
 const BOSS_TAB_PATTERNS = ['https://zhipin.com/*', 'https://*.zhipin.com/*'];
@@ -9,10 +10,14 @@ const AUTO_REPLY_TRACE_LIMIT = 200;
 const PENDING_SEND_RECONCILIATION_LIMIT = 5;
 const PENDING_SEND_RECONCILIATION_MS = 3 * 60_000;
 const TAB_MESSAGE_TIMEOUT_MS = 30_000;
+const TRANSCRIPT_SYNC_QUEUE_LIMIT = 12;
+const TRANSCRIPT_SYNC_MAX_ATTEMPTS = 8;
+const TRANSCRIPT_SYNC_RETRY_DELAYS_MS = [5_000, 30_000, 120_000, 300_000, 900_000];
 let syncInFlight = null;
 let jobSyncInFlight = null;
 let actionExecutionInFlight = null;
 let runtimeMutationTail = Promise.resolve();
+let transcriptSyncInFlight = null;
 let locationPolling = false;
 
 chrome.runtime.onInstalled.addListener(() => initialise());
@@ -20,6 +25,7 @@ chrome.runtime.onStartup.addListener(() => initialise());
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM_NAME) {
     void prunePendingSendReconciliations();
+    void processTranscriptSyncQueue();
     void runObservationCycle();
   }
 });
@@ -61,6 +67,7 @@ async function initialise() {
   }
   await recoverVerifiedInterviewEntryLock();
   await chrome.alarms.create(ALARM_NAME, { delayInMinutes: 0.1, periodInMinutes: 1 });
+  if (typeof processTranscriptSyncQueue === 'function') void processTranscriptSyncQueue();
   void pollConversationLocations();
 }
 
@@ -866,7 +873,9 @@ async function importVisibleResumePdf(payload) {
     lastVisibleResumeEventDigest: payload.sourceEventDigest,
     visibleResumeState: result?.analysisStatus === 'SUCCEEDED'
       ? '当前 BOSS PDF 简历已完成 AI 分析，可在简历分析页查看。'
-      : `当前 BOSS PDF 简历已导入，处理状态：${result?.analysisStatus || result?.processingStatus || '处理中'}。`,
+      : ['QUEUED', 'PROCESSING', 'RETRY_WAIT'].includes(result?.processingStatus)
+        ? '当前 BOSS PDF 简历已进入后台安全处理队列，页面可继续处理其他会话。'
+        : `当前 BOSS PDF 简历已导入，处理状态：${result?.processingStatus || result?.analysisStatus || '处理中'}。`,
     lastVisibleResumeAt: new Date().toISOString(),
   });
   return {
@@ -989,9 +998,95 @@ async function importCapturedTranscript(transcript) {
   const settings = await getSettings();
   if (!settings.deviceToken) throw new Error('请先完成本机账号配对，才能同步聊天记录。');
   if (settings.enabled === false) throw new Error('浏览器桥接已暂停，无法同步聊天记录。');
-  if (!/^[a-f0-9]{64}$/.test(transcript.chatDigest || '') || !Array.isArray(transcript.turns)) {
+  const normalized = normalizeTranscriptForSync(transcript);
+  const key = `${settings.deviceId || settings.accountId || settings.backendUrl}:${normalized.chatDigest}`;
+  const queue = await getTranscriptSyncQueue();
+  const next = queue.filter((item) => item.key !== key);
+  next.push({ key, transcript: normalized, backendUrl: settings.backendUrl, deviceId: settings.deviceId || null,
+    accountId: settings.accountId || null, queuedAt: new Date().toISOString(), attemptCount: 0,
+    nextAttemptAt: 0, lastError: null });
+  await saveTranscriptSyncQueue(next);
+  return processTranscriptSyncQueue(key);
+}
+
+function normalizeTranscriptForSync(transcript) {
+  if (!transcript || !/^[a-f0-9]{64}$/.test(transcript.chatDigest || '') || !Array.isArray(transcript.turns)
+      || transcript.turns.length === 0 || transcript.turns.length > 1_000 || typeof transcript.text !== 'string'
+      || transcript.text.length === 0 || transcript.text.length > 120_000) {
     throw new Error('页面返回的结构化聊天记录格式无效，未写入后端。');
   }
+  const turns = transcript.turns.map((turn) => {
+    if (!turn || !/^[a-f0-9]{64}$/.test(turn.messageDigest || '')
+        || !['INBOUND', 'OUTBOUND'].includes(turn.direction)
+        || typeof turn.content !== 'string' || !turn.content.trim() || turn.content.length > 5_000) {
+      throw new Error('页面返回的聊天消息格式无效，未写入后端。');
+    }
+    const parsedAt = turn.messageAt && Number.isFinite(Date.parse(turn.messageAt))
+      ? new Date(turn.messageAt).toISOString() : null;
+    return { messageDigest: turn.messageDigest, direction: turn.direction,
+      messageAt: parsedAt, content: turn.content.trim() };
+  });
+  return { text: transcript.text, messageCount: turns.length,
+    chatDigest: transcript.chatDigest, jobTitle: String(transcript.jobTitle || '').slice(0, 120), turns,
+    possiblyTruncated: transcript.possiblyTruncated === true, redacted: transcript.redacted === true };
+}
+
+async function getTranscriptSyncQueue() {
+  const stored = await chrome.storage.local.get(TRANSCRIPT_SYNC_QUEUE_KEY);
+  return Array.isArray(stored[TRANSCRIPT_SYNC_QUEUE_KEY]) ? stored[TRANSCRIPT_SYNC_QUEUE_KEY] : [];
+}
+
+async function saveTranscriptSyncQueue(queue) {
+  const bounded = Array.isArray(queue) ? queue.slice(-TRANSCRIPT_SYNC_QUEUE_LIMIT) : [];
+  await chrome.storage.local.set({ [TRANSCRIPT_SYNC_QUEUE_KEY]: bounded });
+}
+
+async function clearTranscriptSyncQueue() {
+  await chrome.storage.local.remove(TRANSCRIPT_SYNC_QUEUE_KEY);
+}
+
+async function processTranscriptSyncQueue(preferredKey = null) {
+  const previous = transcriptSyncInFlight;
+  let release;
+  const current = new Promise((resolve) => { release = resolve; });
+  transcriptSyncInFlight = current;
+  await previous;
+  try {
+    const settings = await getSettings();
+    if (!settings.deviceToken || settings.enabled === false) return null;
+    const queue = await getTranscriptSyncQueue();
+    const now = Date.now();
+    const candidate = preferredKey
+      ? queue.find((item) => item.key === preferredKey)
+      : queue.find((item) => Number(item.nextAttemptAt || 0) <= now && Number(item.attemptCount || 0) < TRANSCRIPT_SYNC_MAX_ATTEMPTS
+          && (!item.deviceId || item.deviceId === settings.deviceId)
+          && (!item.accountId || item.accountId === settings.accountId)
+          && (!item.backendUrl || item.backendUrl === settings.backendUrl));
+    if (!candidate) return null;
+    const result = await submitTranscriptSync(settings, candidate.transcript);
+    const failures = [result.importError, result.timelineImportError].filter(Boolean);
+    const remaining = queue.filter((item) => item.key !== candidate.key);
+    if (failures.length === 0) {
+      await saveTranscriptSyncQueue(remaining);
+      await setRuntime({ transcriptSyncState: `聊天记录已同步：${candidate.transcript.chatDigest.slice(0, 12)}`, transcriptSyncLastAt: new Date().toISOString() });
+      return { ...candidate.transcript, ...result, syncPending: false };
+    }
+    const attemptCount = Number(candidate.attemptCount || 0) + 1;
+    const exhausted = attemptCount >= TRANSCRIPT_SYNC_MAX_ATTEMPTS;
+    const nextAttemptAt = exhausted ? 0 : Date.now() + TRANSCRIPT_SYNC_RETRY_DELAYS_MS[Math.min(attemptCount - 1, TRANSCRIPT_SYNC_RETRY_DELAYS_MS.length - 1)];
+    remaining.push({ ...candidate, attemptCount, nextAttemptAt, lastError: failures.join('；'), lastAttemptAt: new Date().toISOString() });
+    await saveTranscriptSyncQueue(remaining);
+    await setRuntime({ transcriptSyncState: exhausted
+      ? `聊天记录同步重试已耗尽：${candidate.transcript.chatDigest.slice(0, 12)}，请重新采集。`
+      : `聊天记录同步失败，已安排第 ${attemptCount + 1} 次重试：${candidate.transcript.chatDigest.slice(0, 12)}`, transcriptSyncLastAt: new Date().toISOString() });
+    return { ...candidate.transcript, ...result, syncPending: !exhausted, syncAttemptCount: attemptCount, syncNextAttemptAt: nextAttemptAt || null };
+  } finally {
+    release();
+    if (transcriptSyncInFlight === current) transcriptSyncInFlight = null;
+  }
+}
+
+async function submitTranscriptSync(settings, transcript) {
   const results = await Promise.allSettled([
     request(settings.backendUrl, '/api/local-connector/runtime/hr-reply-examples/import', {
       method: 'POST', token: settings.deviceToken,
@@ -1007,7 +1102,6 @@ async function importCapturedTranscript(transcript) {
   const examples = results[0];
   const timeline = results[1];
   return {
-    ...transcript,
     import: examples.status === 'fulfilled' ? examples.value : null,
     importError: examples.status === 'rejected' ? safeError(examples.reason) : null,
     timelineImport: timeline.status === 'fulfilled' ? timeline.value : null,
@@ -1394,7 +1488,10 @@ async function saveBackendUrl(rawBackendUrl) {
   if (changed && settings.deviceToken) await forgetDevice();
   const next = changed ? { backendUrl, enabled: true } : { ...settings, backendUrl };
   await chrome.storage.local.set({ [SETTINGS_KEY]: next });
-  if (changed) await chrome.storage.local.remove(RUNTIME_KEY);
+  if (changed) {
+    await chrome.storage.local.remove(RUNTIME_KEY);
+    if (typeof clearTranscriptSyncQueue === 'function') await clearTranscriptSyncQueue();
+  }
   await setRuntime({
     state: next.deviceToken ? 'PAIRED' : 'UNPAIRED',
     reason: changed ? '后台地址已保存，请使用该环境的一次性接入码重新配对。' : '后台地址已保存。',
@@ -1483,6 +1580,7 @@ async function forgetDevice() {
     }
   }));
   await chrome.storage.local.remove(RUNTIME_KEY);
+  if (typeof clearTranscriptSyncQueue === 'function') await clearTranscriptSyncQueue();
   return { ok: true, status: await getPublicStatus() };
 }
 
@@ -1704,7 +1802,9 @@ async function ingestVisibleResumeFromCurrentTab(settings, observation, expected
     lastVisibleResumeEventDigest: capture.sourceEventDigest,
     visibleResumeState: result?.analysisStatus === 'SUCCEEDED'
       ? '当前 BOSS 在线简历已完成 AI 分析，可在简历分析页查看。'
-      : `当前 BOSS 在线简历已接收，处理状态：${result?.analysisStatus || result?.processingStatus || '处理中'}。`,
+      : ['QUEUED', 'PROCESSING', 'RETRY_WAIT'].includes(result?.processingStatus)
+        ? '当前 BOSS 在线简历已进入后台 AI 处理队列，页面可继续处理其他会话。'
+        : `当前 BOSS 在线简历已接收，处理状态：${result?.processingStatus || result?.analysisStatus || '处理中'}。`,
     lastVisibleResumeAt: new Date().toISOString(),
   });
 }
