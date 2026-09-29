@@ -72,7 +72,8 @@ public class GatewayOperationsController {
                             ORDER BY message.created_at DESC
                             LIMIT 1
                        )), 1000),
-                       task.created_at, task.updated_at, task.send_completed_at
+                       task.created_at, task.updated_at, task.send_completed_at,
+                       task.started_at, task.completed_at
                   FROM inbound_ai_reply_tasks task
                   JOIN boss_accounts account ON account.id = task.account_id
                   JOIN job_positions job ON job.id = task.job_position_id
@@ -82,7 +83,8 @@ public class GatewayOperationsController {
                 rs.getObject(1, UUID.class), rs.getString(2), rs.getString(3), rs.getString(4),
                 rs.getString(5), rs.getString(6), rs.getString(7), rs.getInt(8), rs.getString(9),
                 rs.getString(10), rs.getString(11), rs.getString(12), rs.getTimestamp(13).toInstant(),
-                rs.getTimestamp(14).toInstant(), rs.getTimestamp(15) == null ? null : rs.getTimestamp(15).toInstant()));
+                rs.getTimestamp(14).toInstant(), rs.getTimestamp(15) == null ? null : rs.getTimestamp(15).toInstant(),
+                processingDurationMs(rs.getString(5), rs.getTimestamp(14).toInstant(), rs.getTimestamp(16), rs.getTimestamp(17))));
         return new OperationsSummary("READY", version, Boolean.TRUE.equals(immutable), activeDevices, staleDevices,
                 unreadObservations, unverifiedCaptures, activeDutyPolicies, queue, recentInboundReplyEvents,
                 Instant.now(), guard.snapshots());
@@ -102,5 +104,12 @@ public class GatewayOperationsController {
     public record InboundReplyEvent(UUID id,String accountName,String jobTitle,String anonymousChatKey,
                                     String taskStatus,String sendStatus,String category,int attemptCount,
                                     String errorCode,String detail,String replyContent,String messageText,
-                                    Instant createdAt,Instant updatedAt,Instant completedAt) {}
+                                    Instant createdAt,Instant updatedAt,Instant completedAt,Long processingDurationMs) {}
+    private static Long processingDurationMs(String taskStatus, Instant updatedAt, java.sql.Timestamp startedAt, java.sql.Timestamp completedAt) {
+        if (startedAt == null) return null;
+        Instant start = startedAt.toInstant();
+        Instant end = completedAt == null ? ("PROCESSING".equals(taskStatus) ? Instant.now() : updatedAt) : completedAt.toInstant();
+        if (end == null || end.isBefore(start)) return null;
+        return java.time.Duration.between(start, end).toMillis();
+    }
 }

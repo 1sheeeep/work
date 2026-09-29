@@ -117,6 +117,16 @@ function formatDate(value: string) {
   return new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(value))
 }
 
+function formatProcessingDuration(value?: number | null) {
+  if (value == null || value < 0) return ''
+  if (value < 1000) return `${value} ms`
+  const seconds = value / 1000
+  if (seconds < 60) return `${seconds.toFixed(seconds < 10 ? 1 : 0)} 秒`
+  const minutes = Math.floor(seconds / 60)
+  const remainder = Math.round(seconds % 60)
+  return remainder ? `${minutes} 分 ${remainder} 秒` : `${minutes} 分钟`
+}
+
 function openDetails(log: AuditLog) {
   selectedLog.value = log
 }
@@ -150,6 +160,7 @@ function replyProblemRecord(event: InboundReplyRuntimeEvent) {
     sendStatus: event.sendStatus,
     errorCode: event.errorCode || null,
     attempts: event.attemptCount,
+    processingDurationMs: event.processingDurationMs ?? null,
     incomingMessage: event.messageText || null,
     detail: replyEventDetail(event),
   }
@@ -240,7 +251,7 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
             <blockquote v-if="replyProblemEvents.some(item => item.id === event.id) && event.messageText" class="reply-event__incoming"><strong>候选人原话</strong><span>“{{ event.messageText }}”</span></blockquote>
             <p v-else-if="replyProblemEvents.some(item => item.id === event.id)" class="reply-event__incoming-missing">候选人原话未留存（历史记录）</p>
             <p class="reply-event__detail" :title="replyEventDetail(event)">{{ replyEventDetail(event) }}</p>
-            <div class="reply-event__meta"><span v-if="event.errorCode" class="error-code">{{ event.errorCode }}</span><span>尝试 {{ event.attemptCount }} 次</span><time>{{ formatDate(event.updatedAt) }}</time></div>
+            <div class="reply-event__meta"><span v-if="event.errorCode" class="error-code">{{ event.errorCode }}</span><span>尝试 {{ event.attemptCount }} 次</span><span v-if="formatProcessingDuration(event.processingDurationMs)">处理耗时 {{ formatProcessingDuration(event.processingDurationMs) }}</span><time>{{ formatDate(event.updatedAt) }}</time></div>
             <button v-if="replyProblemEvents.some(item => item.id === event.id)" type="button" class="reply-event__copy" :aria-label="`复制 ${event.jobTitle} 的问题信息`" @click="copyReplyProblem(event)"><el-icon><DocumentCopy /></el-icon>复制问题</button>
           </article>
         </div>
