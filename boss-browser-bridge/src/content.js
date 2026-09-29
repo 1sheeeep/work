@@ -62,10 +62,6 @@
   let conversationScanCursors = new Map();
   let singleAccountPendingReplies = new Map();
   let singleAccountUnknownReconciliations = new Map();
-  // One page-side task queue. Each entry keeps its existing lane so the
-  // scheduler can preserve SEND -> ANALYSIS -> REVALIDATION priority without
-  // maintaining three independent arrays.
-  let singleAccountPipelineQueue = [];
   const PIPELINE_LANE_PRIORITY = { SEND: 0, ANALYSIS: 1, REVALIDATION: 2 };
   let singleAccountRetryLocateDeferrals = new Map();
   let singleAccountRetryRefreshAt = 0;
@@ -74,7 +70,6 @@
   let singleAccountReadReviewNextAt = 0;
   let singleAccountBacklogMode = false;
   let singleAccountBacklogSeen = new Map();
-  let singleAccountQueueWindowInitialized = false;
   let lastDeepConversationScanAt = 0;
   let lastConversationSweepCode = 'NOT_RUN';
   let lastConversationSweepCount = 0;
@@ -495,7 +490,6 @@
       conversationScanCursors = new Map();
       singleAccountPendingReplies = new Map();
       singleAccountUnknownReconciliations = new Map();
-      resetPipelineQueues();
       singleAccountRetryLocateDeferrals = new Map();
       singleAccountRetryRefreshAt = 0;
       singleAccountConversationQueue = [];
@@ -503,7 +497,6 @@
       singleAccountReadReviewNextAt = 0;
       singleAccountBacklogMode = false;
       singleAccountBacklogSeen = new Map();
-      singleAccountQueueWindowInitialized = false;
     } else if (!wasEnabled) {
       if (!restore) autoReplyWatchdogRecoveryCount = 0;
       resumePreviewOpenPending = false;
@@ -549,7 +542,6 @@
         readyDiscoveredAt: task.recoveredSend && Number.isFinite(Date.parse(task.updatedAt || ''))
           ? Date.parse(task.updatedAt) : undefined,
       }]));
-      resetPipelineQueues();
       for (const task of singleAccountPendingReplies.values()) {
         if (task.recoveredSend === true) markReadyTaskDiscovered(task);
       }
@@ -565,7 +557,6 @@
       // resumes only unseen/changed messages to avoid replaying old replies.
       singleAccountBacklogMode = !restore;
       singleAccountBacklogSeen = new Map();
-      singleAccountQueueWindowInitialized = false;
       await persistSingleAccountBaseline();
     }
     clearSingleAccountAutoReplyTimer();
@@ -592,13 +583,8 @@
   }
 
   function pipelineQueueFor(lane) {
-    return singleAccountPipelineQueue
-      .filter((entry) => entry.lane === lane)
-      .map((entry) => entry.taskId);
-  }
-
-  function resetPipelineQueues() {
-    singleAccountPipelineQueue.length = 0;
+    const current = currentPendingTask();
+    return current?.queueLane === lane ? [current.taskId] : [];
   }
 
   function queueLaneForTask(task) {
@@ -635,7 +621,6 @@
     }
     // Keep the page-side queue strictly single-item even when the backend
     // returns several historical tasks during recovery.
-    resetPipelineQueues();
     if (!current) {
       singleAccountPendingChatDigest = null;
       return null;
@@ -645,20 +630,9 @@
     return current;
   }
 
-  function orderedPipelineTaskIds() {
-    return singleAccountPipelineQueue
-      .slice()
-      .sort((left, right) => (PIPELINE_LANE_PRIORITY[left.lane] ?? 1) - (PIPELINE_LANE_PRIORITY[right.lane] ?? 1))
-      .map((entry) => entry.taskId);
-  }
-
   function removePipelineTask(taskId) {
-    if (!taskId) return;
-    // Remove every occurrence so a lane transition cannot leave a duplicate
-    // task behind in the unified queue.
-    for (let index = singleAccountPipelineQueue.length - 1; index >= 0; index -= 1) {
-      if (singleAccountPipelineQueue[index].taskId === taskId) singleAccountPipelineQueue.splice(index, 1);
-    }
+    const task = taskId ? singleAccountPendingReplies.get(taskId) : null;
+    if (task) task.queueLane = null;
   }
 
   function enqueuePipelineTask(taskId, lane = 'ANALYSIS') {
@@ -667,7 +641,6 @@
     const normalizedLane = PIPELINE_LANE_PRIORITY[lane] == null ? 'ANALYSIS' : lane;
     const task = singleAccountPendingReplies.get(taskId);
     if (task) task.queueLane = normalizedLane;
-    singleAccountPipelineQueue.push({ taskId, lane: normalizedLane });
   }
 
   function removePendingPipelineTask(taskId, chatDigest = null) {
@@ -1255,13 +1228,6 @@
     const now = Date.now();
     const current = promoteNextCurrentTask(preferredTaskId);
     const activeTaskId = current?.taskId || null;
-    // Backend tasks can reach a terminal state between polls. Remove their
-    // lane ids before building the next polling batch so stale ids do not keep
-    // the scheduler waking up and re-scanning the same work forever.
-    const liveTaskIds = new Set(singleAccountPendingReplies.keys());
-    for (let index = singleAccountPipelineQueue.length - 1; index >= 0; index -= 1) {
-      if (!liveTaskIds.has(singleAccountPipelineQueue[index].taskId)) singleAccountPipelineQueue.splice(index, 1);
-    }
     // Never poll a batch of page-side tasks. The backend may process several
     // AI requests, but this browser tab owns exactly one locate/send task.
     const orderedTaskIds = activeTaskId ? [activeTaskId] : [];
@@ -2256,7 +2222,6 @@
             outcome: 'INFO', reason: '当前队列已清空，先滚动扫描未读；若无未读，再复核已读但最后一条可能来自候选人的会话。',
           });
           refill = await refillSingleAccountConversationQueue();
-          singleAccountQueueWindowInitialized = !['SCROLLER_NOT_FOUND', 'PAGE_NOT_READY', 'PREVIEW_OPEN', 'PARTIAL'].includes(refill?.scanCode);
           traceAutoReply('QUEUE_WINDOW_SCAN_COMPLETED', {
             queueLane: 'SCAN',
             outcome: ['SCROLLER_NOT_FOUND', 'PAGE_NOT_READY', 'PREVIEW_OPEN', 'PARTIAL'].includes(refill?.scanCode) ? 'WAITING' : 'INFO',

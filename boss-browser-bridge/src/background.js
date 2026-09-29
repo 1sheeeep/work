@@ -676,6 +676,7 @@ async function recordAutoReplyTrace(payload) {
   await mutateRuntime((runtime) => ({
     autoReplyTrace: [...(Array.isArray(runtime.autoReplyTrace) ? runtime.autoReplyTrace : []), event].slice(-AUTO_REPLY_TRACE_LIMIT),
     lastAutoReplyTraceAt: occurredAt,
+    singleAccountTaskState: event.taskState,
     ...(event.stage === 'PAGE_HIDDEN_PAUSED'
       ? { singleAccountAutoReplyState: 'BOSS 页面隐藏或最小化，页面操作已暂停；请保持沟通页可见。' }
       : event.stage === 'PAGE_VISIBLE_RESUMED'
@@ -716,6 +717,7 @@ async function recordSingleAccountAutoReplyResult(payload) {
         ? `连续 ${consecutiveFailures} 次发送回执详情暂不可读；相关任务已冻结且不会重发，继续处理其他会话。`
       : payload.outcome === 'SENT' ? `已发送：${payload.reason}`
       : payload.outcome === 'SILENT' ? `已静默跳过：${payload.reason}` : `结果待人工确认：${payload.reason}`,
+    singleAccountTaskState: shouldStop ? 'WAITING_HR' : 'FINISHED',
     singleAccountAutoReplyLifecycle: 'DONE',
     singleAccountAutoReplyReason: shouldStop ? `连续 ${consecutiveFailures} 次页面发送结果无法确认，已自动停止，请 HR 检查 BOSS 页面。`
       : transientDetailReadFailure && consecutiveFailures >= 3
@@ -1430,6 +1432,7 @@ async function setSingleAccountAutoReply(enabled, explicit = false) {
     ...(explicit ? { singleAccountSafetyStop: null, singleAccountSafetyStopDutyStartedAt: null } : {}),
     ...(enabled ? {} : { singleAccountUnreadBaseline: [], singleAccountSelectedMessageBaseline: [] }),
     singleAccountConsecutiveFailures: enabled ? 0 : Number((await getRuntime()).singleAccountConsecutiveFailures || 0),
+    singleAccountTaskState: enabled ? 'READING' : 'IDLE',
     singleAccountAutoReplyState: enabled
       ? `正在监测“${settings.accountName || '当前配对账号'}”的未读消息。`
       : '已由 HR 停止；不会再选择会话或发送消息。',
@@ -1786,13 +1789,21 @@ function classifyAutoReplyLifecycle(state, disabled = false) {
 }
 
 function normalizeAutoReplyRuntimePatch(patch) {
-  if (!patch || typeof patch !== 'object' || !Object.prototype.hasOwnProperty.call(patch, 'singleAccountAutoReplyState')) return patch;
+  if (!patch || typeof patch !== 'object') return patch;
+  const taskStates = ['IDLE', 'READING', 'AI_PROCESSING', 'READY_TO_SEND', 'PRE_SEND_CHECK', 'SENDING', 'CONFIRMING', 'WAITING_PAGE', 'WAITING_HR', 'FINISHED'];
+  const normalizedTaskState = Object.prototype.hasOwnProperty.call(patch, 'singleAccountTaskState')
+    ? (taskStates.includes(patch.singleAccountTaskState) ? patch.singleAccountTaskState : 'IDLE')
+    : undefined;
+  if (!Object.prototype.hasOwnProperty.call(patch, 'singleAccountAutoReplyState')) {
+    return normalizedTaskState ? { ...patch, singleAccountTaskState: normalizedTaskState } : patch;
+  }
   const reason = String(patch.singleAccountAutoReplyReason || patch.singleAccountAutoReplyState || '').slice(0, 300);
   const lifecycle = ['WAITING', 'PROCESSING', 'DONE'].includes(patch.singleAccountAutoReplyLifecycle)
     ? patch.singleAccountAutoReplyLifecycle
     : classifyAutoReplyLifecycle(reason, patch.singleAccountAutoReplyEnabled === false);
   return {
     ...patch,
+    ...(normalizedTaskState ? { singleAccountTaskState: normalizedTaskState } : {}),
     singleAccountAutoReplyState: lifecycle,
     singleAccountAutoReplyLifecycle: lifecycle,
     singleAccountAutoReplyReason: reason,

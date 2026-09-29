@@ -358,6 +358,13 @@ export function nextConsecutiveFailureCount(previous, outcome) {
 
 export function publicStatus(settings, runtime) {
   const rawReplyState = runtime?.singleAccountAutoReplyState || '';
+  const taskStates = ['IDLE', 'READING', 'AI_PROCESSING', 'READY_TO_SEND', 'PRE_SEND_CHECK', 'SENDING', 'CONFIRMING', 'WAITING_PAGE', 'WAITING_HR', 'FINISHED'];
+  const latestTraceTaskState = Array.isArray(runtime?.autoReplyTrace)
+    ? runtime.autoReplyTrace.at(-1)?.taskState
+    : null;
+  const singleAccountTaskState = taskStates.includes(runtime?.singleAccountTaskState)
+    ? runtime.singleAccountTaskState
+    : taskStates.includes(latestTraceTaskState) ? latestTraceTaskState : 'IDLE';
   const inferredReplyLifecycle = /等待|稍后|暂停|复核|重试|暂不可读|未找到|未就绪|不可用/.test(rawReplyState)
     ? 'WAITING'
     : /已发送|已静默|已完成|已处理|结果待人工|已停止|失败/.test(rawReplyState)
@@ -405,6 +412,7 @@ export function publicStatus(settings, runtime) {
     singleAccountAutoReplyState: replyLifecycle,
     singleAccountAutoReplyLifecycle: replyLifecycle,
     singleAccountAutoReplyReason: replyReason,
+    singleAccountTaskState,
     singleAccountAutoReplyProcessedCount: Array.isArray(runtime?.singleAccountProcessedMessages) ? runtime.singleAccountProcessedMessages.length : 0,
     singleAccountConsecutiveFailures: Number(runtime?.singleAccountConsecutiveFailures || 0),
     lastSingleAccountAutoReplyAt: runtime?.lastSingleAccountAutoReplyAt || null,

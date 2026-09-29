@@ -242,6 +242,7 @@ test('public status never exposes the local device token and keeps legacy counte
   assert.equal(status.detailState, '尚未复核当前会话详情。');
   assert.equal(status.sendTestLocked, false);
   assert.equal(status.singleAccountAutoReplyEnabled, false);
+  assert.equal(status.singleAccountTaskState, 'IDLE');
   assert.equal(status.singleAccountAutoReplyProcessedCount, 0);
   assert.equal('deviceToken' in status, false);
 });
@@ -254,8 +255,23 @@ test('exposes only bounded single-account reply status without message digests',
     lastSingleAccountAutoReplyAt: '2026-09-07T08:00:00.000Z',
   });
   assert.equal(status.singleAccountAutoReplyEnabled, true);
+  assert.equal(status.singleAccountTaskState, 'IDLE');
   assert.equal(status.singleAccountAutoReplyProcessedCount, 1);
   assert.equal('singleAccountProcessedMessages' in status, false);
+});
+
+test('exposes only the bounded unified page task state', () => {
+  const status = publicStatus({ enabled: true }, {
+    singleAccountTaskState: 'READY_TO_SEND',
+    autoReplyTrace: [{ taskState: 'AI_PROCESSING', reason: 'internal' }],
+  });
+  assert.equal(status.singleAccountTaskState, 'READY_TO_SEND');
+  const inferred = publicStatus({ enabled: true }, {
+    autoReplyTrace: [{ taskState: 'WAITING_PAGE', reason: 'internal' }],
+  });
+  assert.equal(inferred.singleAccountTaskState, 'WAITING_PAGE');
+  const invalid = publicStatus({ enabled: true }, { singleAccountTaskState: 'secret' });
+  assert.equal(invalid.singleAccountTaskState, 'IDLE');
 });
 
 test('exposes only the latest bounded automatic-reply trace events', () => {

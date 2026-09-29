@@ -4,13 +4,12 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 
 const source = readFileSync(new URL('../src/content.js', import.meta.url), 'utf8');
-const start = source.indexOf('  function resetPipelineQueues(');
+const start = source.indexOf('  function queueLaneForTask(');
 const helper = source.slice(start, source.indexOf('\n  async function nextReadyInboundReply(', start));
 function fixture() {
   const tasks = new Map();
   const context = {
     singleAccountPendingReplies: tasks,
-    singleAccountPipelineQueue: [],
     singleAccountCurrentTaskId: null,
     singleAccountPendingChatDigest: null,
     PIPELINE_LANE_PRIORITY: { SEND: 0, ANALYSIS: 1, REVALIDATION: 2 },
@@ -30,7 +29,7 @@ test('repeated recovery cannot postpone polling or reset task state', () => {
     assert.equal(task.nextPollAt, 1500);
     assert.equal(task.locateFailures, 2);
   }
-  assert.equal(f.context.singleAccountPipelineQueue.length, 1);
+  assert.equal(task.queueLane, 'ANALYSIS');
   assert.ok(task.nextPollAt <= 1600);
 });
 
@@ -45,7 +44,8 @@ test('page scheduler keeps one current task even when recovery returns more work
   f.remember({ taskId: 'second' }, { chatDigest: 'chat-2', messageDigest: 'message-2' }, 'row-2', 1000);
   assert.equal(f.tasks.size, 2);
   assert.equal(f.context.singleAccountCurrentTaskId, 'first');
-  assert.deepEqual(f.context.singleAccountPipelineQueue.map(item => item.taskId), ['first']);
+  assert.equal(f.tasks.get('first').queueLane, 'ANALYSIS');
+  assert.equal(f.tasks.get('second').queueLane, undefined);
 });
 
 test('existing message guard precedes analysis request and retains the deadline', () => {
