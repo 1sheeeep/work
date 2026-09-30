@@ -43,8 +43,21 @@ public class CandidateProfile {
 
     public void refresh(String displayName, String currentTitle, Integer yearsExperience, String education, String skillsSummary) {
         if (privacyStatus == CandidatePrivacyStatus.ANONYMIZED) return;
-        this.displayName = displayName; this.currentTitle = currentTitle; this.yearsExperience = yearsExperience;
+        // Timeline observations often only know the BOSS conversation digest. Do not
+        // let that fallback overwrite a real name already verified from a resume.
+        if (displayName != null && !displayName.isBlank()
+                && (!isAnonymousPlaceholder(displayName) || isAnonymousPlaceholder(this.displayName))) {
+            this.displayName = displayName;
+        }
+        this.currentTitle = currentTitle; this.yearsExperience = yearsExperience;
         this.education = education; this.skillsSummary = skillsSummary;
+    }
+
+    private boolean isAnonymousPlaceholder(String value) {
+        if (value == null || value.isBlank()) return true;
+        String normalized = value.trim().toLowerCase(java.util.Locale.ROOT);
+        return normalized.startsWith("匿名候选人") || normalized.startsWith("已匿名候选人")
+                || normalized.equals("匿名") || normalized.equals("unknown");
     }
 
     /** Updates only the display name when a trusted resume extractor identifies it. */

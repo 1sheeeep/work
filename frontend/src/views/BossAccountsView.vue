@@ -263,7 +263,7 @@ document.addEventListener('visibilitychange', onVisChange)
 </script>
 
 <template>
-  <div class="page-shell accounts-page">
+  <div class="page-shell accounts-page accounts-page--viewport">
     <PageHeader>
       <div></div>
       <div class="heading-actions"><el-button v-if="canManage" type="primary" :icon="Plus" @click="openCreate">新增账号</el-button></div>
@@ -272,7 +272,7 @@ document.addEventListener('visibilitychange', onVisChange)
     <AsyncState v-if="loading" state="loading" aria-label="正在加载招聘账号" />
     <AsyncState v-else-if="loadError" state="error" title="账号暂时无法加载" :message="loadError" @retry="loadData"><template #icon><el-icon><Refresh /></el-icon></template></AsyncState>
     <template v-else>
-      <section v-if="!canManage" class="account-workspace card-panel" aria-label="选择招聘账号">
+      <section v-if="!canManage" class="account-workspace account-picker card-panel" aria-label="选择招聘账号">
         <div class="account-toolbar"><div><strong>选择招聘账号</strong><span>仅展示授权企业内的账号。绑定后可查看值守记录并连接插件。</span></div></div>
         <section v-if="bindableAccounts.length" class="account-grid">
           <article v-for="account in bindableAccounts" :key="account.id" class="entity-card account-card">
@@ -358,6 +358,7 @@ document.addEventListener('visibilitychange', onVisChange)
 
 <style scoped>
 .accounts-overview { display:grid; grid-template-columns:minmax(0,1.3fr) minmax(0,1fr); gap:18px; margin-bottom:24px; }
+.accounts-page--viewport { width:min(100%,1480px); }
 .section-card { padding:22px; position:relative; overflow:hidden; box-shadow:var(--shadow-raised), inset 0 1px 0 rgba(255,255,255,.58); }
 .overview-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; position:relative; z-index:1; }
 .overview-heading > div { min-width:0; }
@@ -456,4 +457,42 @@ document.addEventListener('visibilitychange', onVisChange)
 
 @media(max-width:760px) { .accounts-overview { grid-template-columns:1fr; }.account-toolbar { align-items:stretch; flex-direction:column; }.account-filter-tabs button { flex:1; padding-inline:6px; }.collection-health dl { grid-template-columns:1fr; gap:14px; }.collection-health dl > div + div { padding-left:0; border-left:0; }.collection-health dl > div + div::before { display:none; }.account-card { padding:18px; }.overview-heading { flex-wrap:wrap; }.account-card > header { flex-wrap:wrap; } }
 @media(max-width:480px) { .account-facts { gap:8px 16px; }.account-facts b { font-size:14px; }.account-card > footer { flex-wrap:wrap; gap:8px; }.bridge-state { flex-wrap:wrap; }.account-card { padding:14px; }.section-card { padding:16px; } }
+
+@media(min-width:900px) {
+  .accounts-page--viewport { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; }
+  .accounts-page--viewport > .async-state { flex:1 1 auto; min-height:0; }
+  .accounts-page--viewport > .account-picker { flex:0 0 auto; margin-bottom:8px; }
+  .accounts-page--viewport > .accounts-overview { flex:0 0 auto; gap:10px; margin:0 0 10px; }
+  .accounts-page--viewport .section-card { padding:12px 16px; }
+  .accounts-page--viewport .connection-overview > p { margin:7px 0 9px; line-height:1.4; }
+  .accounts-page--viewport .overview-metrics { gap:8px 16px; }
+  .accounts-page--viewport .attention-list { gap:6px; margin-top:8px; }
+  .accounts-page--viewport .attention-list p { line-height:1.4; }
+  .accounts-page--viewport > .account-workspace:not(.account-picker) { flex:1 1 auto; display:flex; flex-direction:column; min-height:0; }
+  .accounts-page--viewport .account-toolbar { flex:0 0 auto; gap:10px; padding:10px 16px; }
+  .accounts-page--viewport .account-toolbar strong { font-size:15px; }
+  .accounts-page--viewport .account-toolbar > div > span { margin-top:2px; }
+  .accounts-page--viewport .account-filter-tabs button { padding:6px 10px; }
+  .accounts-page--viewport .account-grid { flex:1 1 auto; grid-template-columns:repeat(2,minmax(0,1fr)); align-content:start; gap:8px; min-height:0; overflow:auto; padding:8px; }
+  .accounts-page--viewport .account-grid--single { grid-template-columns:minmax(0,1fr); }
+  .accounts-page--viewport .account-card { padding:10px 12px; }
+  .accounts-page--viewport .account-avatar { width:34px; height:34px; border-radius:10px; font-size:15px; }
+  .accounts-page--viewport .account-card > header { gap:8px; }
+  .accounts-page--viewport .account-card > header strong { font-size:14px; }
+  .accounts-page--viewport .bridge-state { gap:8px; margin-top:7px; padding:6px 8px; }
+  .accounts-page--viewport .bridge-state strong { font-size:12px; }
+  .accounts-page--viewport .bridge-state small { margin-top:1px; font-size:11px; line-height:1.3; }
+  .accounts-page--viewport .account-facts { gap:4px 12px; margin-top:6px; font-size:11px; }
+  .accounts-page--viewport .account-facts b { font-size:12px; }
+  .accounts-page--viewport .collection-health { margin-top:5px; }
+  .accounts-page--viewport .collection-health summary { padding:5px 8px; }
+  .accounts-page--viewport .account-card > footer { margin-top:6px; }
+  .accounts-page--viewport .account-card > footer :deep(.el-button) { min-height:28px; }
+  .account-picker .account-toolbar { padding:10px 16px; }
+  .account-picker .account-grid { grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; padding:8px; }
+  .account-picker .account-card { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 12px; }
+  .account-picker .account-card header { min-width:0; }
+  .account-picker .account-card header strong { font-size:13px; }
+}
+@media(max-width:899px) { .accounts-page--viewport { height:auto; min-height:100%; overflow:visible; } }
 </style>

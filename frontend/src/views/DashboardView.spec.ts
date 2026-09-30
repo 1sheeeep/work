@@ -66,6 +66,40 @@ describe('DashboardView', () => {
     expect(wrapper.text()).not.toContain('消息队列')
   })
 
+  it('paginates the duty session queue without removing sessions from the selected conversation', async () => {
+    const observedAt = new Date().toISOString()
+    mockDutyLoad({
+      events: Array.from({ length: 6 }, (_, index) => ({
+        id: `event-${index}`,
+        observationId: `observation-${index}`,
+        anonymousKey: `session-${index}`,
+        accountName: '主招聘账号',
+        jobTitle: '跨境电商运营',
+        category: 'JOB_INTEREST',
+        taskStatus: 'COMPLETED',
+        sendStatus: 'SUCCEEDED',
+        messageText: `候选人消息 ${index}`,
+        replyContent: `回复 ${index}`,
+        updatedAt: observedAt,
+        completedAt: observedAt,
+        attemptCount: 1,
+        needsFollowUp: false,
+      })),
+    })
+
+    const wrapper = mount(DashboardView)
+    await flushPromises()
+
+    expect(wrapper.findAll('.duty-chat-session')).toHaveLength(4)
+    expect(wrapper.text()).toContain('1 / 2 页 · 6 条')
+    await wrapper.get('[aria-label="下一页会话"]').trigger('click')
+    expect(wrapper.findAll('.duty-chat-session')).toHaveLength(2)
+    expect(wrapper.text()).toContain('2 / 2 页 · 6 条')
+    expect(wrapper.text()).toContain('回复 0')
+    await wrapper.get('[aria-label="上一页会话"]').trigger('click')
+    expect(wrapper.findAll('.duty-chat-session')).toHaveLength(4)
+  })
+
   it('keeps a connected account available for first-time duty before a policy exists', async () => {
     mockDutyLoad({
       policies: [{ accountId: 'a1', accountName: '主招聘账号', configured: false, awayActive: false, accountStatus: 'ACTIVE', connectionStatus: 'CONNECTED', autoSendEnabled: false }],
@@ -94,6 +128,39 @@ describe('DashboardView', () => {
     expect(wrapper.text()).toContain('您好，薪资为 8-13K。')
   })
 
+  it('shows a verified candidate name when available and keeps the BOSS session id only as fallback', async () => {
+    mockDutyLoad({
+      events: [{ id: 'named-event', observationId: 'named-session', anonymousKey: '9d9267b416d2', candidateName: '李女士', accountName: '主招聘账号', jobTitle: '跨境电商运营', category: 'JOB_INTEREST', taskStatus: 'COMPLETED', sendStatus: 'SUCCEEDED', messageText: '您好', replyContent: '您好，欢迎沟通', updatedAt: '2026-09-30T08:01:00Z', completedAt: '2026-09-30T08:01:00Z', attemptCount: 1, needsFollowUp: false }],
+    })
+
+    const wrapper = mount(DashboardView)
+    await flushPromises()
+
+    expect(wrapper.get('.duty-chat-session__top strong').text()).toContain('李女士')
+    expect(wrapper.get('.duty-chat-session__top strong').text()).not.toContain('9d9267')
+    expect(wrapper.get('.duty-chat-thread__title h2').text()).toBe('李女士')
+  })
+
+  it('keeps the conversation workspace and selection visible while a manual refresh is in progress', async () => {
+    const observation = { id: 'keep-selected', accountId: 'a1', accountName: '主招聘账号', companyName: '示例公司', anonymousKey: 'keep1234', unreadCount: 1, unread: true, latestDirection: 'INBOUND', observedJobTitle: '跨境电商运营', firstSeenAt: '2026-09-30T08:00:00Z', latestMessageAt: '2026-09-30T08:00:00Z', lastSeenAt: '2026-09-30T08:00:00Z' }
+    mockDutyLoad({ observations: [observation] })
+
+    const wrapper = mount(DashboardView)
+    await flushPromises()
+    const pending: Array<(value: { data: unknown }) => void> = []
+    vi.mocked(api.get).mockImplementation(() => new Promise((resolve) => pending.push(resolve)) as never)
+
+    await wrapper.get('.duty-page-actions button').trigger('click')
+
+    expect(wrapper.find('.duty-chat-workspace').exists()).toBe(true)
+    expect(wrapper.find('.async-state--loading').exists()).toBe(false)
+    expect(wrapper.get('.duty-chat-session.selected .duty-chat-session__top strong').attributes('title')).toContain('keep1234')
+    expect(wrapper.get('.duty-page-actions button').attributes('aria-disabled')).toBe('true')
+
+    pending.forEach(resolve => resolve({ data: [] }))
+    await flushPromises()
+  })
+
   it('loads the imported full timeline for the selected observation', async () => {
     mockDutyLoad({
       events: [{ id: 'event-2', observationId: 'o2', anonymousKey: 'timeline01', accountName: '主招聘账号', jobTitle: 'Java 开发', category: 'JOB_INTEREST', taskStatus: 'COMPLETED', sendStatus: 'SUCCEEDED', messageText: '旧的摘要', replyContent: '旧的回复', updatedAt: '2026-08-31T08:01:00Z', completedAt: '2026-08-31T08:01:00Z', attemptCount: 1, needsFollowUp: false }],
@@ -113,6 +180,69 @@ describe('DashboardView', () => {
     expect(wrapper.text()).toContain('HR')
     expect(wrapper.text()).toContain('收到，我先了解一下')
     expect(vi.mocked(api.get).mock.calls.some(([url]) => url === '/local-connector/ai-duty-sessions/o2/timeline')).toBe(true)
+  })
+
+  it('does not append an old BOSS message again using the later AI-task creation time', async () => {
+    const digest = 'c'.repeat(64)
+    mockDutyLoad({
+      events: [{ id: 'event-late', observationId: 'o-late', anonymousKey: 'late001', accountName: '主招聘账号', jobTitle: '运营', category: 'JOB_INTEREST', taskStatus: 'COMPLETED', sendStatus: 'SKIPPED', messageText: '你好不好意思我现在到不了岗', messageDigest: digest, createdAt: '2026-09-26T14:02:00Z', updatedAt: '2026-09-26T14:02:00Z', attemptCount: 1, needsFollowUp: false }],
+      timelines: { 'o-late': { observationId: 'o-late', anonymousKey: 'late001', available: true, messages: [
+        { id: 'original', externalMessageId: `boss:${digest}`, direction: 'INBOUND', senderType: 'CANDIDATE', deliveryStatus: 'RECEIVED', content: '你好不好意思我现在到不了岗', createdAt: '2026-09-19T08:06:00Z' },
+      ] } },
+    })
+
+    const wrapper = mount(DashboardView)
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.findAll('.duty-chat-bubble--candidate')).toHaveLength(1)
+    expect(wrapper.get('.duty-chat-bubble--candidate .duty-chat-bubble__time').attributes('datetime')).toBe('2026-09-19T08:06:00Z')
+  })
+
+  it('keeps a real repeated utterance when its BOSS message digest is different', async () => {
+    const oldDigest = 'a'.repeat(64)
+    const currentDigest = 'b'.repeat(64)
+    const currentMessageAt = new Date().toISOString()
+    mockDutyLoad({
+      events: [{ id: 'event-repeat', observationId: 'o-repeat', anonymousKey: 'repeat01', accountName: '主招聘账号', jobTitle: '运营', category: 'JOB_INTEREST', taskStatus: 'COMPLETED', sendStatus: 'SKIPPED', messageText: '你好不好意思我现在到不了岗', messageDigest: currentDigest, messageAt: currentMessageAt, createdAt: currentMessageAt, updatedAt: currentMessageAt, attemptCount: 1, needsFollowUp: false }],
+      timelines: { 'o-repeat': { observationId: 'o-repeat', anonymousKey: 'repeat01', available: true, messages: [
+        { id: 'previous', externalMessageId: `boss:${oldDigest}`, direction: 'INBOUND', senderType: 'CANDIDATE', deliveryStatus: 'RECEIVED', content: '你好不好意思我现在到不了岗', createdAt: '2026-09-19T08:06:00Z' },
+      ] } },
+    })
+
+    const wrapper = mount(DashboardView)
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.findAll('.duty-chat-bubble--candidate')).toHaveLength(2)
+    expect(wrapper.findAll('.duty-chat-bubble--candidate .duty-chat-bubble__time').map(time => time.attributes('datetime'))).toEqual(['2026-09-19T08:06:00Z', currentMessageAt])
+  })
+
+  it('keeps the complete conversation available when the viewport timeline is condensed', async () => {
+    const messages = Array.from({ length: 6 }, (_, index) => ({
+      id: `long-${index + 1}`,
+      externalMessageId: `boss:long-${index + 1}`,
+      direction: 'INBOUND',
+      senderType: 'CANDIDATE',
+      deliveryStatus: 'RECEIVED',
+      content: `会话消息 ${index + 1}`,
+      createdAt: `2026-08-31T08:0${index + 1}:00Z`,
+    }))
+    mockDutyLoad({
+      events: [{ id: 'event-long', observationId: 'o-long', anonymousKey: 'long01', accountName: '主招聘账号', jobTitle: 'Java 开发', category: 'JOB_INTEREST', taskStatus: 'COMPLETED', sendStatus: 'SKIPPED', messageText: '会话消息 6', createdAt: '2026-08-31T08:06:00Z', updatedAt: '2026-08-31T08:06:00Z', completedAt: '2026-08-31T08:06:00Z', attemptCount: 1, needsFollowUp: false }],
+      timelines: { 'o-long': { observationId: 'o-long', anonymousKey: 'long01', contactId: 'contact-long', available: true, reason: null, messages } },
+    })
+
+    const wrapper = mount(DashboardView)
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.findAll('.duty-chat-bubble')).toHaveLength(5)
+    expect(wrapper.text()).not.toContain('会话消息 1')
+    expect(wrapper.text()).toContain('会话消息 6')
+    await wrapper.findAll('.duty-chat-thread__history').find(button => button.text().includes('查看完整时间线'))!.trigger('click')
+    await flushPromises()
+    expect(document.body.textContent).toContain('会话消息 1')
   })
 
   it('groups real BOSS message times by calendar day without changing bubble order', async () => {
@@ -166,6 +296,34 @@ describe('DashboardView', () => {
 
     expect(wrapper.find('.duty-chat-filters button.active').text()).toBe('待复核')
     expect(wrapper.text()).toContain('请问有宿舍吗')
+    expect(wrapper.get('.duty-chat-list__filter-state').text()).toContain('状态：待复核')
+    expect(wrapper.get('.duty-chat-list__filter-state').text()).toContain('1 条')
+    await wrapper.get('[aria-label="清除会话筛选条件"]').trigger('click')
+    expect(wrapper.find('.duty-chat-list__filter-state').exists()).toBe(false)
+    expect(wrapper.text()).toContain('全部')
+  })
+
+  it('does not refetch the selected conversation timeline on every background poll', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-09-30T08:00:00Z'))
+    mockDutyLoad({
+      events: [{ id: 'stable-event', observationId: 'stable-session', anonymousKey: 'stable123', accountName: '主招聘账号', jobTitle: '跨境电商运营', category: 'JOB_INTEREST', taskStatus: 'COMPLETED', sendStatus: 'SUCCEEDED', messageText: '你好', replyContent: '你好', updatedAt: '2026-09-30T08:00:00Z', completedAt: '2026-09-30T08:00:00Z', attemptCount: 1, needsFollowUp: false }],
+      timelines: { 'stable-session': { observationId: 'stable-session', anonymousKey: 'stable123', contactId: 'contact-1', available: true, reason: null, messages: [] } },
+    })
+
+    const wrapper = mount(DashboardView)
+    await flushPromises()
+    await flushPromises()
+    const timelineCalls = () => vi.mocked(api.get).mock.calls.filter(([url]) => String(url) === '/local-connector/ai-duty-sessions/stable-session/timeline').length
+    expect(timelineCalls()).toBe(1)
+
+    await vi.advanceTimersByTimeAsync(15_000)
+    await flushPromises()
+    await flushPromises()
+
+    expect(timelineCalls()).toBe(1)
+    expect(wrapper.find('.duty-chat-session.selected').exists()).toBe(true)
+    vi.useRealTimers()
   })
 
   it('uses one seven-day date range for both duty event and review queries', async () => {
@@ -180,7 +338,8 @@ describe('DashboardView', () => {
 
     expect(eventParams).toEqual(reviewParams)
     expect((new Date(eventParams.to).getTime() - new Date(eventParams.from).getTime()) / 86_400_000).toBe(7)
-    expect(wrapper.get('.duty-history-filter').text()).toContain('同时筛选成功回复与待 HR 复核')
+    expect(wrapper.find('.duty-page-actions .duty-history-filter__picker').exists()).toBe(true)
+    expect(wrapper.get('.duty-page-actions').text()).toContain('刷新')
     vi.useRealTimers()
   })
 
@@ -207,7 +366,7 @@ describe('DashboardView', () => {
     await flushPromises()
 
     expect(wrapper.findAll('.duty-chat-session')).toHaveLength(1)
-    expect(wrapper.get('.duty-chat-session').text()).toContain('today-chat')
+    expect(wrapper.get('.duty-chat-session__top strong').text()).toContain('today-')
     expect(wrapper.text()).not.toContain('tuesday-chat')
     expect(wrapper.text()).not.toContain('unknown-date')
     expect(wrapper.get('.duty-chat-list__count').text()).toContain('1 已回复')

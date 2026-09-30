@@ -264,6 +264,50 @@ test('exposes only bounded single-account reply status without message digests',
   assert.equal('singleAccountProcessedMessages' in status, false);
 });
 
+test('exposes HR takeover without exposing its resume token', () => {
+  const status = publicStatus({ enabled: true }, {
+    singleAccountHumanTakeover: true,
+    singleAccountHumanTakeoverToken: 'private-resume-token',
+    singleAccountHumanTakeoverReason: 'HR 正在查看候选人简历。'.repeat(30),
+  });
+  assert.equal(status.singleAccountHumanTakeover, true);
+  assert.equal(status.singleAccountHumanTakeoverReason.length, 220);
+  assert.equal('singleAccountHumanTakeoverToken' in status, false);
+});
+
+test('human page takeover is persisted and blocks background window relocation', async () => {
+  const background = await readFile(new URL('../src/background.js', import.meta.url), 'utf8');
+  const content = await readFile(new URL('../src/content.js', import.meta.url), 'utf8');
+  assert.match(background, /async function recordHumanTakeover\(/);
+  assert.match(background, /async function setHumanTakeover\(/);
+  assert.match(background, /if \(runtime\.singleAccountHumanTakeover === true \|\| runtime\.singleAccountAutoReplyEnabled === true\) return;/);
+  assert.match(content, /function pausePageAutomationForHuman\(/);
+  assert.match(content, /if \(singleAccountHumanTakeover\) return \{ match: null, complete: false, interrupted: true \};/);
+  assert.match(content, /HR_TAKEOVER_SEND_DEFERRED/);
+  assert.match(content, /RESUME_PREVIEW_CLOSE_HR_OWNED/);
+});
+
+test('BOSS overlay shows only current resume analysis and five recent logs', async () => {
+  const background = await readFile(new URL('../src/background.js', import.meta.url), 'utf8');
+  const content = await readFile(new URL('../src/content.js', import.meta.url), 'utf8');
+  const panelStart = content.indexOf('function ensureResumeCaptureStatusBar()');
+  const panelEnd = content.indexOf('function scheduleResumeCardScan(delay)', panelStart);
+  const panel = content.slice(panelStart, panelEnd);
+
+  assert.ok(panelStart >= 0 && panelEnd > panelStart);
+  assert.match(panel, /attachShadow\(\{ mode: 'open' \}\)/);
+  assert.match(panel, /AI 简历摘要/);
+  assert.match(panel, /运行日志/);
+  assert.match(panel, /最近 5 条/);
+  assert.match(panel, /querySelectorAll\('\.log-line'\)\.length > 5/);
+  assert.match(panel, /BRIDGE_GET_CURRENT_RESUME_ANALYSIS/);
+  assert.doesNotMatch(panel, /BRIDGE_SET_HUMAN_TAKEOVER|data-takeover|岗位资料/);
+  assert.match(panel, /避免展示其他候选人的简历信息/);
+  assert.doesNotMatch(panel, /resumeText/);
+  assert.match(background, /case 'BRIDGE_GET_CURRENT_RESUME_ANALYSIS':[\s\S]{0,180}!isBossChatTab\(sender\.tab\)/);
+  assert.match(background, /current-resume-analysis\?chatDigest=/);
+});
+
 test('exposes only the bounded unified page task state', () => {
   const status = publicStatus({ enabled: true }, {
     singleAccountTaskState: 'READY_TO_SEND',

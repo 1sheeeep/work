@@ -11,6 +11,9 @@ import java.util.UUID;
 
 public interface AiAssistanceRunRepository extends JpaRepository<AiAssistanceRun, UUID> {
     @EntityGraph(attributePaths = {"resumeIntake", "resumeIntake.contact", "resumeIntake.contact.candidate", "resumeIntake.contact.candidate.company", "resumeIntake.contact.jobPosition", "resumeIntake.contact.bossAccount", "createdBy"})
+    Optional<AiAssistanceRun> findFirstByResumeIntakeIdOrderByCreatedAtDesc(UUID resumeIntakeId);
+
+    @EntityGraph(attributePaths = {"resumeIntake", "resumeIntake.contact", "resumeIntake.contact.candidate", "resumeIntake.contact.candidate.company", "resumeIntake.contact.jobPosition", "resumeIntake.contact.bossAccount", "createdBy"})
     List<AiAssistanceRun> findByResumeIntakeIdOrderByCreatedAtDesc(UUID resumeIntakeId);
 
     @EntityGraph(attributePaths = {"resumeIntake", "resumeIntake.contact", "resumeIntake.contact.candidate", "resumeIntake.contact.candidate.company", "resumeIntake.contact.jobPosition", "resumeIntake.contact.bossAccount", "createdBy"})

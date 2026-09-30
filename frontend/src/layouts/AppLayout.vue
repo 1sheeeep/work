@@ -239,7 +239,7 @@ async function handleLogout() {
           </div>
         </header>
       </div>
-      <main id="main-content" class="workspace-content" tabindex="-1">
+      <main id="main-content" class="workspace-content" :class="{ 'workspace-content--fit': route.name === 'dashboard' || route.meta.fitViewport }" tabindex="-1">
         <RouterView v-slot="{ Component }">
           <Transition :name="transitionName" mode="out-in">
             <component :is="Component" :key="route.path" />
@@ -260,7 +260,7 @@ async function handleLogout() {
 </template>
 
 <style scoped>
-.app-layout { position:relative; min-height:100dvh; }.skip-link { position:fixed; top:-80px; left:16px; z-index:3000; padding:12px 16px; background:white; color:var(--primary); border-radius:8px; }.skip-link:focus { top:12px; }
+.app-layout { position:relative; height:100dvh; min-height:0; overflow:hidden; }.skip-link { position:fixed; top:-80px; left:16px; z-index:3000; padding:12px 16px; background:white; color:var(--primary); border-radius:8px; }.skip-link:focus { top:12px; }
 /* ── 侧边栏 ── */
 .sidebar { position:fixed; inset:0 auto 0 0; width:232px; display:flex; flex-direction:column; padding:20px 12px; background:linear-gradient(180deg,#08111e 0%,#0f1b2b 54%,#0c1724 100%); color:white; z-index:20; overflow-y:auto; overflow-x:hidden; box-shadow:inset -1px 0 0 rgba(255,255,255,.055), 14px 0 34px rgba(17,28,45,.08); transition:width 280ms cubic-bezier(.4,0,.2,1),padding 280ms cubic-bezier(.4,0,.2,1); }
 .sidebar::before { content:''; position:absolute; inset:0; pointer-events:none; background:radial-gradient(circle at 50% 4%, rgba(45,212,191,.16), transparent 26%), linear-gradient(180deg, rgba(255,255,255,.04), transparent 30%); }
@@ -332,11 +332,14 @@ async function handleLogout() {
 .monitor-chip i { width:7px; height:7px; border-radius:50%; background:#e8ad4b; flex:0 0 auto; }
 
 /* ── 工作区 ── */
-.workspace { position:relative; margin-left:232px; min-height:100dvh; transition:margin-left 280ms cubic-bezier(.4,0,.2,1); }
+.workspace { position:relative; display:flex; flex-direction:column; height:100dvh; min-height:0; margin-left:232px; overflow:hidden; transition:margin-left 280ms cubic-bezier(.4,0,.2,1); }
 .workspace::before { content:''; position:fixed; inset:0 0 auto 232px; height:180px; pointer-events:none; background:linear-gradient(180deg, rgba(255,255,255,.34), transparent); transition:inset 280ms cubic-bezier(.4,0,.2,1); }
 .sidebar-collapsed .workspace::before { left:72px; }
 :root[data-theme="dark"] .workspace::before { background:linear-gradient(180deg, rgba(13,148,136,.06), transparent); }
-.workspace-content { position:relative; z-index:1; padding:30px 30px 50px; min-width:0; }
+.workspace-content { position:relative; z-index:1; flex:1 1 auto; min-width:0; min-height:0; overflow:auto; overscroll-behavior:contain; padding:22px 24px 28px; }
+.workspace-content--fit { display:flex; overflow:hidden; padding:14px 20px 16px; }
+.workspace-content--fit :deep(.duty-page--viewport) { flex:1 1 auto; width:100%; min-height:0; height:100%; }
+.workspace-content--fit :deep(.resume-page--viewport), .workspace-content--fit :deep(.positions-page--viewport) { flex:1 1 auto; width:100%; min-height:0; height:100%; }
 
 /* ── 顶栏：空闲时收缩到顶部 8px，靠近顶部或获取焦点时展开 ── */
 .topbar-shell { position:sticky; top:0; z-index:15; display:grid; grid-template-rows:56px; overflow:visible; transition:grid-template-rows 240ms cubic-bezier(.16,1,.3,1); }
@@ -356,8 +359,8 @@ async function handleLogout() {
 .mobile-menu-button { display:none; border:1px solid var(--border); background:var(--surface); border-radius:var(--radius-control); width:44px; height:44px; place-items:center; }
 
 /* ── 响应式 ── */
-@media(max-width:899px) { .sidebar { display:none; }.workspace,.sidebar-collapsed .workspace { margin-left:0; }.mobile-menu-button { display:grid; flex:0 0 auto; }.topbar-shell,.topbar-shell--collapsed { grid-template-rows:56px; }.topbar-shell--collapsed .topbar { transform:none; border-bottom-color:color-mix(in srgb, var(--border) 78%, transparent); box-shadow:0 1px 0 color-mix(in srgb, var(--border) 60%, transparent); }.topbar { padding:10px 16px; gap:12px; }.topbar-context { margin-right:auto; }.topbar-context span,.topbar-context .breadcrumb-sep,.monitor-chip,.user-copy { display:none; }.topbar-context strong { border:0; padding:0; }.workspace-content { padding:20px 16px 36px; } }
-@media(max-width:460px) { .workspace-content { padding:18px 12px 30px; }.user-avatar { display:none; }.topbar-right,.user-area { gap:0; } }
+@media(max-width:899px) { .sidebar { display:none; }.workspace,.sidebar-collapsed .workspace { margin-left:0; }.mobile-menu-button { display:grid; flex:0 0 auto; }.topbar-shell,.topbar-shell--collapsed { grid-template-rows:56px; }.topbar-shell--collapsed .topbar { transform:none; border-bottom-color:color-mix(in srgb, var(--border) 78%, transparent); box-shadow:0 1px 0 color-mix(in srgb, var(--border) 60%, transparent); }.topbar { padding:10px 16px; gap:12px; }.topbar-context { margin-right:auto; }.topbar-context span,.topbar-context .breadcrumb-sep,.monitor-chip,.user-copy { display:none; }.topbar-context strong { border:0; padding:0; }.workspace-content { padding:20px 16px 36px; }.workspace-content--fit { display:block; overflow:auto; padding:16px; }.workspace-content--fit :deep(.duty-page--viewport) { height:auto; min-height:0; }.workspace-content--fit :deep(.resume-page--viewport),.workspace-content--fit :deep(.positions-page--viewport) { height:auto; min-height:100%; overflow:visible; } }
+@media(max-width:460px) { .workspace-content { padding:18px 12px 30px; }.workspace-content--fit { padding:12px; }.user-avatar { display:none; }.topbar-right,.user-area { gap:0; } }
 @media(prefers-reduced-motion:reduce) { .topbar-shell,.topbar { transition-duration:.01ms; } }
 
 /* ── 页面过渡 ── */

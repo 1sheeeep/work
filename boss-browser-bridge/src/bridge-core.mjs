@@ -409,6 +409,8 @@ export function publicStatus(settings, runtime) {
     autoReplyDiagnosticState: runtime?.autoReplyDiagnosticState || '尚未执行当前触发条件诊断。',
     lastAutoReplyDiagnosticAt: runtime?.lastAutoReplyDiagnosticAt || null,
     singleAccountAutoReplyEnabled: runtime?.singleAccountAutoReplyEnabled === true,
+    singleAccountHumanTakeover: runtime?.singleAccountHumanTakeover === true,
+    singleAccountHumanTakeoverReason: String(runtime?.singleAccountHumanTakeoverReason || '').slice(0, 220),
     singleAccountAutoReplyState: replyLifecycle,
     singleAccountAutoReplyLifecycle: replyLifecycle,
     singleAccountAutoReplyReason: replyReason,

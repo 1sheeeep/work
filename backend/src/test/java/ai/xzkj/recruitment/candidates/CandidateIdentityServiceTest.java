@@ -78,4 +78,20 @@ class CandidateIdentityServiceTest {
         verify(repository).save(any(CandidateProfile.class));
         verify(repository, never()).findAllByCompanyIdAndIdentityPhoneDigest(any(), any());
     }
+
+    @Test
+    void doesNotReplaceAResumeVerifiedNameWithConversationDigestPlaceholder() {
+        CandidateProfileRepository repository = mock(CandidateProfileRepository.class);
+        CandidateIdentityService service = new CandidateIdentityService(repository);
+        Company company = new Company(new GroupProfile("集团", "G"), "企业", "C", null, null);
+        CandidateProfile existing = new CandidateProfile(company, CandidateSource.BOSS, "b".repeat(64),
+                "林嘉明", null, null, null, null);
+        when(repository.findByCompanyIdAndSourceAndDedupKey(company.getId(), CandidateSource.BOSS, "b".repeat(64)))
+                .thenReturn(Optional.of(existing));
+
+        service.resolve(company, CandidateSource.BOSS, "b".repeat(64), "匿名候选人 bbbbbbbb",
+                null, null, null, null, null, null);
+
+        assertThat(existing.getDisplayName()).isEqualTo("林嘉明");
+    }
 }

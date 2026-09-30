@@ -76,6 +76,10 @@ async function pollConversationLocations() {
   locationPolling = true;
   try {
     while (true) {
+      if ((await getRuntime()).singleAccountHumanTakeover === true) {
+        await new Promise(resolve => setTimeout(resolve, 1_500));
+        continue;
+      }
       const settings = await getSettings();
       if (!settings.deviceToken || settings.enabled === false) { await new Promise(resolve => setTimeout(resolve, 3_000)); continue; }
       let claim;
@@ -84,12 +88,27 @@ async function pollConversationLocations() {
       if (!claim?.id) continue;
       let success = false; let reason = '未找到已打开的 BOSS 沟通页。';
       try {
+        if ((await getRuntime()).singleAccountHumanTakeover === true) {
+          reason = 'HR 正在操作 BOSS 页面，未执行会话定位。';
+          await request(settings.backendUrl, '/api/local-connector/runtime/conversation-locations/receipt', {
+            method: 'POST', token: settings.deviceToken,
+            body: { id: claim.id, success: false, reason },
+          }).catch(() => {});
+          await new Promise(resolve => setTimeout(resolve, 1_500));
+          continue;
+        }
         const tabs = await chrome.tabs.query({ url: BOSS_TAB_PATTERNS });
-        const tab = tabs.find(item => /\/web\/chat\/(?:index|user-center)(?:[/?#]|$)/i.test(item.url || ''));
+        const tab = tabs.find(isBossChatTab);
         if (tab?.id) {
           const result = await sendToBossTab(tab.id, { type: 'BRIDGE_LOCATE_CONVERSATION', chatDigest: claim.chatDigest });
           success = result?.ok === true; reason = result?.reason || result?.error || reason;
-          if (success) { await chrome.tabs.update(tab.id, { active: true }); if (tab.windowId) await chrome.windows.update(tab.windowId, { focused: true }); }
+          if (success && (await getRuntime()).singleAccountHumanTakeover !== true) {
+            await chrome.tabs.update(tab.id, { active: true });
+            if (tab.windowId) await chrome.windows.update(tab.windowId, { focused: true });
+          } else if (success) {
+            success = false;
+            reason = 'HR 开始操作 BOSS 页面，已取消后台定位造成的窗口切换。';
+          }
         }
       } catch (error) { reason = safeError(error); }
       await request(settings.backendUrl, '/api/local-connector/runtime/conversation-locations/receipt', { method: 'POST', token: settings.deviceToken, body: { id: claim.id, success, reason: String(reason).slice(0, 300) } }).catch(() => {});
@@ -126,6 +145,15 @@ async function handleMessage(message, sender) {
       return setEnabled(Boolean(message.enabled));
     case 'BRIDGE_SET_SINGLE_ACCOUNT_AUTO_REPLY':
       return setSingleAccountAutoReply(Boolean(message.enabled), true);
+    case 'BRIDGE_SET_HUMAN_TAKEOVER':
+      if (sender.tab?.id) throw new Error('请通过插件弹窗切换页面接管状态。');
+      return setHumanTakeover(Boolean(message.active));
+    case 'BRIDGE_GET_CURRENT_RESUME_ANALYSIS':
+      if (!sender.tab?.id || !isBossChatTab(sender.tab)) throw new Error('只允许在 BOSS 沟通页读取当前会话的简历分析。');
+      return getCurrentResumeAnalysis(message.chatDigest);
+    case 'BRIDGE_HUMAN_TAKEOVER_DETECTED':
+      if (!sender.tab?.id || !isBossChatTab(sender.tab)) throw new Error('只接受 BOSS 沟通页的人事操作状态。');
+      return recordHumanTakeover(sender.tab, message.payload);
     case 'BRIDGE_SYNC_DUTY_AUTOMATION':
       if (!sender.tab?.id) throw new Error('只接受 BOSS 页面脚本的挂机状态同步。');
       return syncDutyAutomation();
@@ -1504,7 +1532,11 @@ async function setEnabled(enabled) {
   await chrome.storage.local.set({ [SETTINGS_KEY]: { ...settings, enabled } });
   if (!enabled) {
     await sendHeartbeatIfPaired({ ...settings, enabled }, 'PAUSED', '已由 HR 暂停只读桥接。', (await getRuntime()).pageContext);
-    await setRuntime({ state: 'PAUSED', reason: '已由 HR 暂停只读桥接。', singleAccountAutoReplyEnabled: false, singleAccountAutoReplyState: '页面观测已暂停，持续自动回复同步停止。' });
+    await setRuntime({ state: 'PAUSED', reason: '已由 HR 暂停只读桥接。', singleAccountAutoReplyEnabled: false,
+      singleAccountHumanTakeover: false, singleAccountHumanTakeoverToken: null,
+      singleAccountHumanTakeoverReason: null, singleAccountHumanTakeoverAt: null,
+      singleAccountHumanTakeoverTabId: null,
+      singleAccountAutoReplyState: '页面观测已暂停，持续自动回复同步停止。' });
     const tabs = await chrome.tabs.query({ url: BOSS_TAB_PATTERNS });
     await Promise.all(tabs.filter((tab) => tab.id && /\/web\/chat\/(?:index|user-center)(?:[/?#]|$)/i.test(tab.url || ''))
       .map((tab) => sendToBossTab(tab.id, { type: 'BRIDGE_SET_SINGLE_ACCOUNT_AUTO_REPLY', enabled: false }).catch(() => null)));
@@ -1520,28 +1552,43 @@ async function setSingleAccountAutoReply(enabled, explicit = false) {
   if (!settings.deviceToken) throw new Error('请先完成本机账号配对。');
   if (settings.enabled === false) throw new Error('请先开启页面观测。');
   if (enabled && (await getRuntime()).autoReplyTestArmed === true) throw new Error('请先取消当前单会话一次触发测试。');
+  const currentRuntime = await getRuntime();
+  const humanTakeover = enabled && currentRuntime.singleAccountHumanTakeover === true;
   const tabs = await chrome.tabs.query({ url: BOSS_TAB_PATTERNS });
   const chatTabs = tabs.filter((item) => item.id && /\/web\/chat\/(?:index|user-center)(?:[/?#]|$)/i.test(item.url || ''));
   if (enabled && chatTabs.length === 0) throw new Error('请先打开当前配对账号的 BOSS 沟通页。');
   if (enabled && chatTabs.length > 1) throw new Error('检测到多个 BOSS 沟通页。单账号模式只允许保留一个沟通页后再开启。');
   await setRuntime({
     singleAccountAutoReplyEnabled: enabled,
+    ...(enabled ? {} : {
+      singleAccountHumanTakeover: false, singleAccountHumanTakeoverToken: null,
+      singleAccountHumanTakeoverReason: null, singleAccountHumanTakeoverAt: null,
+      singleAccountHumanTakeoverTabId: null,
+    }),
     ...(explicit ? { singleAccountSafetyStop: null, singleAccountSafetyStopDutyStartedAt: null } : {}),
     ...(enabled ? {} : { singleAccountUnreadBaseline: [], singleAccountSelectedMessageBaseline: [] }),
     singleAccountConsecutiveFailures: enabled ? 0 : Number((await getRuntime()).singleAccountConsecutiveFailures || 0),
-    singleAccountTaskState: enabled ? 'READING' : 'IDLE',
+    singleAccountTaskState: enabled ? (humanTakeover ? 'WAITING_HR' : 'READING') : 'IDLE',
     singleAccountAutoReplyState: enabled
-      ? `正在监测“${settings.accountName || '当前配对账号'}”的未读消息。`
+      ? humanTakeover ? 'HR 正在操作 BOSS 页面；自动页面操作已暂停，后台 AI 与待处理队列保留。'
+        : `正在监测“${settings.accountName || '当前配对账号'}”的未读消息。`
       : '已由 HR 停止；不会再选择会话或发送消息。',
     lastSingleAccountAutoReplyAt: new Date().toISOString(),
   });
-  const responses = await Promise.all(chatTabs.map((tab) => sendToBossTab(tab.id, { type: 'BRIDGE_SET_SINGLE_ACCOUNT_AUTO_REPLY', enabled }).catch((error) => ({ ok: false, error: safeError(error) }))));
+  const takeoverPayload = humanTakeover ? {
+    humanTakeover: true,
+    token: currentRuntime.singleAccountHumanTakeoverToken || '',
+    reason: currentRuntime.singleAccountHumanTakeoverReason || '恢复了已保存的人事接管状态。',
+  } : {};
+  const responses = await Promise.all(chatTabs.map((tab) => sendToBossTab(tab.id, {
+    type: 'BRIDGE_SET_SINGLE_ACCOUNT_AUTO_REPLY', enabled, humanTakeover: takeoverPayload,
+  }).catch((error) => ({ ok: false, error: safeError(error) }))));
   const response = responses[0] || { ok: true };
   if (enabled && !response?.ok) {
     await setRuntime({ singleAccountAutoReplyEnabled: false, singleAccountAutoReplyState: `未能启动：${response?.error || 'BOSS 页面脚本未连接。'}` });
     throw new Error(response?.error || 'BOSS 页面脚本未连接。');
   }
-  if (enabled) await setRuntime({ singleAccountAutoReplyState: `运行中：已将当前列表的 ${Number(response.initialUnreadCount || 0)} 条未读纳入队列，并持续监测新来信。` });
+  if (enabled && !humanTakeover) await setRuntime({ singleAccountAutoReplyState: `运行中：已将当前列表的 ${Number(response.initialUnreadCount || 0)} 条未读纳入队列，并持续监测新来信。` });
   return { ok: true, status: await getPublicStatus() };
 }
 
@@ -1563,7 +1610,101 @@ async function syncDutyAutomation() {
     await setRuntime({ singleAccountDutyStartedAt: control.startedAt });
   }
   if (runtime.singleAccountAutoReplyEnabled !== desired) await setSingleAccountAutoReply(desired);
-  return { ok: true, enabled: desired, endsAt: control?.endsAt || null };
+  const latestRuntime = await getRuntime();
+  return { ok: true, enabled: desired, endsAt: control?.endsAt || null,
+    humanTakeover: desired && latestRuntime.singleAccountHumanTakeover === true,
+    humanTakeoverToken: desired ? latestRuntime.singleAccountHumanTakeoverToken || '' : '',
+    humanTakeoverReason: desired ? latestRuntime.singleAccountHumanTakeoverReason || '' : '' };
+}
+
+function isBossChatTab(tab) {
+  try {
+    const url = new URL(tab?.url || '');
+    return /(^|\.)zhipin\.com$/i.test(url.hostname)
+      && /\/web\/chat\/(?:index|user-center)(?:[/?#]|$)/i.test(url.pathname);
+  } catch { return false; }
+}
+
+async function recordHumanTakeover(tab, payload = {}) {
+  const token = String(payload.token || '').slice(0, 80);
+  if (!/^[A-Za-z0-9-]{8,80}$/.test(token)) throw new Error('人事接管标识无效。');
+  const settings = await getSettings();
+  if (!settings.deviceToken || settings.enabled === false) return { ok: false, ignored: true };
+  if (!(await getRuntime()).singleAccountAutoReplyEnabled) return { ok: false, ignored: true };
+  const reason = String(payload.reason || '检测到人事正在操作 BOSS 页面。').slice(0, 220);
+  await persistHumanTakeover(true, token, reason, tab.id);
+  const tabs = await chrome.tabs.query({ url: BOSS_TAB_PATTERNS });
+  const chatTabs = tabs.filter(isBossChatTab);
+  await Promise.all(chatTabs.filter(item => item.id).map((item) => sendToBossTab(item.id, {
+    type: 'BRIDGE_APPLY_HUMAN_TAKEOVER', active: true, token, reason,
+  }).catch(() => null)));
+  return { ok: true, active: true, status: await getPublicStatus() };
+}
+
+async function setHumanTakeover(active) {
+  const settings = await getSettings();
+  if (!settings.deviceToken || settings.enabled === false) throw new Error('请先连接并开启本地插件。');
+  const runtime = await getRuntime();
+  if (!runtime.singleAccountAutoReplyEnabled) throw new Error('今日值守未运行，无需切换页面接管状态。');
+  const tabs = await chrome.tabs.query({ url: BOSS_TAB_PATTERNS });
+  const chatTabs = tabs.filter(isBossChatTab);
+  if (!chatTabs.length) throw new Error('请先打开 BOSS 沟通页。');
+
+  if (active) {
+    const token = globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 14)}`;
+    await persistHumanTakeover(true, token, 'HR 手动接管 BOSS 页面。', null);
+    const responses = await Promise.all(chatTabs.filter(item => item.id).map((item) => sendToBossTab(item.id, {
+      type: 'BRIDGE_APPLY_HUMAN_TAKEOVER', active: true, token, reason: 'HR 手动接管 BOSS 页面。',
+    }).catch(() => null)));
+    if (!responses.length || responses.some(response => response?.ok !== true)) {
+      throw new Error('接管状态已保存，但 BOSS 页面未确认暂停；请先关闭今日值守，再继续人工操作。');
+    }
+    return { ok: true, status: await getPublicStatus() };
+  }
+
+  if (chatTabs.length !== 1) throw new Error('检测到多个 BOSS 沟通页。为避免恢复到错误会话，请只保留一个沟通页后再恢复。');
+  const expectedToken = String(runtime.singleAccountHumanTakeoverToken || '');
+  const response = await sendToBossTab(chatTabs[0].id, {
+    type: 'BRIDGE_APPLY_HUMAN_TAKEOVER', active: false, expectedToken,
+  });
+  if (!response?.ok || response.active) throw new Error(response?.error || '页面未确认恢复自动值守。');
+  const cleared = await mutateRuntime((current) => {
+    if (current.singleAccountHumanTakeover !== true
+        || String(current.singleAccountHumanTakeoverToken || '') !== expectedToken) return {};
+    return {
+      singleAccountHumanTakeover: false, singleAccountHumanTakeoverToken: null,
+      singleAccountHumanTakeoverReason: null, singleAccountHumanTakeoverAt: null,
+      singleAccountHumanTakeoverTabId: null,
+      singleAccountTaskState: 'READING',
+      singleAccountAutoReplyState: 'HR 已恢复自动值守；将重新读取当前会话并按原规则复核后继续。',
+    };
+  });
+  if (!cleared || Object.keys(cleared).length === 0) {
+    const latest = await getRuntime();
+    if (latest.singleAccountHumanTakeover === true) {
+      await sendToBossTab(chatTabs[0].id, {
+        type: 'BRIDGE_APPLY_HUMAN_TAKEOVER', active: true,
+        token: latest.singleAccountHumanTakeoverToken || '',
+        reason: latest.singleAccountHumanTakeoverReason || 'HR 接管仍有效。',
+      }).catch(() => null);
+      throw new Error('接管状态刚有更新，仍保持暂停；请稍后再试。');
+    }
+  }
+  return { ok: true, status: await getPublicStatus() };
+}
+
+async function persistHumanTakeover(active, token, reason, tabId) {
+  return mutateRuntime((current) => ({
+    singleAccountHumanTakeover: active,
+    singleAccountHumanTakeoverToken: active ? token : null,
+    singleAccountHumanTakeoverReason: active ? String(reason || '').slice(0, 220) : null,
+    singleAccountHumanTakeoverAt: active ? new Date().toISOString() : null,
+    singleAccountHumanTakeoverTabId: active && Number.isInteger(tabId) ? tabId : null,
+    ...(active ? {
+      singleAccountTaskState: 'WAITING_HR',
+      singleAccountAutoReplyState: 'HR 正在操作 BOSS 页面；自动页面操作已暂停，后台 AI 与待处理队列保留。',
+    } : {}),
+  }));
 }
 
 async function forgetDevice() {
@@ -1587,6 +1728,7 @@ async function forgetDevice() {
 async function collectFromBestTab() {
   const settings = await getSettings();
   if (!settings.deviceToken || settings.enabled === false) return;
+  if ((await getRuntime()).singleAccountHumanTakeover === true) return;
   const tabs = await chrome.tabs.query({ url: BOSS_TAB_PATTERNS });
   const tab = tabs.find((item) => /\/web\/chat\/(?:index|user-center)(?:[/?#]|$)/i.test(item.url || ''));
   if (!tab?.id) {
@@ -1600,7 +1742,14 @@ async function collectFromBestTab() {
     const response = await sendToBossTab(tab.id, { type: 'BRIDGE_COLLECT' });
     if (!response?.ok) throw new Error(response?.error || '页面脚本未连接。');
     const runtime = await getRuntime();
-    await sendToBossTab(tab.id, { type: 'BRIDGE_SET_SINGLE_ACCOUNT_AUTO_REPLY', enabled: runtime.singleAccountAutoReplyEnabled === true, restore: true });
+    await sendToBossTab(tab.id, { type: 'BRIDGE_SET_SINGLE_ACCOUNT_AUTO_REPLY',
+      enabled: runtime.singleAccountAutoReplyEnabled === true, restore: true,
+      humanTakeover: runtime.singleAccountHumanTakeover === true ? {
+        humanTakeover: true,
+        token: runtime.singleAccountHumanTakeoverToken || '',
+        reason: runtime.singleAccountHumanTakeoverReason || '',
+      } : {},
+    });
   } catch {
     await sendHeartbeatIfPaired(settings, 'PAUSED', 'BOSS 页面脚本尚未就绪，请手动刷新该页面。', 'CHAT');
     await setRuntime({ state: 'PAUSED', reason: 'BOSS 页面脚本尚未就绪，请手动刷新该页面。', pageContext: 'CHAT' });
@@ -1628,7 +1777,8 @@ async function executeReadyAction() {
 async function doExecuteReadyAction() {
   const settings = await getSettings();
   if (!settings.deviceToken || settings.enabled === false) return;
-  if ((await getRuntime()).singleAccountAutoReplyEnabled === true) return;
+  const runtime = await getRuntime();
+  if (runtime.singleAccountHumanTakeover === true || runtime.singleAccountAutoReplyEnabled === true) return;
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id || !/(^|\.)zhipin\.com$/i.test(safeHostname(tab.url)) || !/\/web\/chat\/(?:index|user-center)(?:[/?#]|$)/i.test(tab.url || '')) return;
   const prepared = await sendToBossTab(tab.id, { type: 'BRIDGE_PREPARE_ACTION_LEASE' });
@@ -1845,6 +1995,17 @@ async function request(backendUrl, path, options) {
     throw error;
   }
   return body;
+}
+
+async function getCurrentResumeAnalysis(chatDigest) {
+  const digest = String(chatDigest || '');
+  if (!/^[a-f0-9]{64}$/.test(digest)) throw new Error('当前会话标识无效。');
+  const settings = await getSettings();
+  if (!settings.deviceToken) throw new Error('本地插件尚未配对，无法读取简历分析。');
+  const analysis = await request(settings.backendUrl,
+    `/api/local-connector/runtime/current-resume-analysis?chatDigest=${encodeURIComponent(digest)}`,
+    { method: 'GET', token: settings.deviceToken, timeoutMs: 8_000 });
+  return { ok: true, analysis };
 }
 
 async function requestMultipart(backendUrl, path, token, body, timeoutMs) {

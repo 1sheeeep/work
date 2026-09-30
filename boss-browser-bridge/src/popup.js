@@ -1,4 +1,4 @@
-const elements = Object.fromEntries(['stateBadge','enabledToggle','summary','pairForm','accountName','totalCount','currentUnreadCount','trackedUnreadCount','continuousReplyState','continuousReplyBadge','lastContinuousReply','detailState','lastSync','copyCurrentTranscript','jobState','lastJobSync','collectJobs','controlDiagnosticState','lastControlDiagnostic','inspectControls','controlDiagnosticReport','copyControlDiagnostic','pluginVersion','forget','message','saveBackendUrl','backendUrl','deviceName','pairingToken','pageContext','openConsole','collect'].map((id) => [id, document.getElementById(id)]));
+const elements = Object.fromEntries(['stateBadge','enabledToggle','summary','pairForm','accountName','totalCount','currentUnreadCount','trackedUnreadCount','continuousReplyState','continuousReplyBadge','lastContinuousReply','humanTakeoverState','humanTakeoverToggle','detailState','lastSync','copyCurrentTranscript','jobState','lastJobSync','collectJobs','controlDiagnosticState','lastControlDiagnostic','inspectControls','controlDiagnosticReport','copyControlDiagnostic','pluginVersion','forget','message','saveBackendUrl','backendUrl','deviceName','pairingToken','pageContext','openConsole','collect'].map((id) => [id, document.getElementById(id)]));
 
 elements.pluginVersion.textContent = chrome.runtime.getManifest().version;
 elements.connectedBackend = document.getElementById('connectedBackend');
@@ -38,6 +38,15 @@ elements.enabledToggle.addEventListener('click', () => void busy(elements.enable
   if (!result.ok) throw new Error(result.error);
   render(result.status);
   show(enabled ? '插件已开启，恢复页面观测与自动化链路。' : '插件已关闭，已停止页面观测与自动化链路。');
+}, '切换中…'));
+elements.humanTakeoverToggle.addEventListener('click', () => void busy(elements.humanTakeoverToggle, async () => {
+  const active = elements.humanTakeoverToggle.dataset.active !== 'true';
+  const result = await send({ type: 'BRIDGE_SET_HUMAN_TAKEOVER', active });
+  if (!result.ok) throw new Error(result.error);
+  render(result.status);
+  show(active
+    ? '页面已交由 HR 操作；AI 任务和待发送队列保留，插件不会切换会话或自动发送。'
+    : '已请求恢复自动值守；页面会先复核当前会话，再按原来的发送安全检查继续。');
 }, '切换中…'));
 elements.collect.addEventListener('click', () => void busy(elements.collect, async () => { const result = await send({ type: 'BRIDGE_COLLECT_NOW' }); if (!result.ok) throw new Error(result.error); render(result.status); }));
 elements.copyCurrentTranscript.addEventListener('click', () => void busy(elements.copyCurrentTranscript, async () => {
@@ -111,6 +120,17 @@ function render(status) {
   elements.continuousReplyState.textContent = `${status.singleAccountTaskState || 'IDLE'} · ${status.singleAccountAutoReplyReason || '等待状态同步。'}`;
   elements.continuousReplyBadge.textContent = status.singleAccountAutoReplyEnabled ? '运行中' : '已停止';
   elements.continuousReplyBadge.className = `badge ${status.singleAccountAutoReplyEnabled ? 'running' : 'paused'}`;
+  const humanTakeover = status.singleAccountHumanTakeover === true;
+  elements.humanTakeoverToggle.hidden = !status.singleAccountAutoReplyEnabled;
+  elements.humanTakeoverToggle.dataset.active = String(humanTakeover);
+  elements.humanTakeoverToggle.setAttribute('aria-pressed', String(humanTakeover));
+  elements.humanTakeoverToggle.textContent = humanTakeover ? '恢复自动值守' : '暂停自动操作';
+  elements.humanTakeoverToggle.title = humanTakeover
+    ? '恢复前需先关闭简历预览并停止页面操作；恢复后会重新复核会话'
+    : '人事准备操作 BOSS 页面时，可主动让插件暂停点击、滚动、填字和发送';
+  elements.humanTakeoverState.textContent = humanTakeover
+    ? `HR 接管中：${status.singleAccountHumanTakeoverReason || '自动页面操作已暂停，后台任务保留。'}`
+    : '检测到 HR 在 BOSS 沟通页操作时，自动点击与发送会暂停，任务不会丢失。';
   elements.lastContinuousReply.textContent = status.lastSingleAccountAutoReplyAt ? `最近处理：${new Date(status.lastSingleAccountAutoReplyAt).toLocaleString('zh-CN')} · 已检查 ${status.singleAccountAutoReplyProcessedCount} 条` : '尚未处理消息';
   elements.jobState.textContent = status.jobState; elements.lastJobSync.textContent = status.lastJobSyncAt ? `最近职位同步：${new Date(status.lastJobSyncAt).toLocaleString('zh-CN')} · ${status.jobTotal} 个` : '尚未同步职位管理页';
   elements.controlDiagnosticState.textContent = status.controlDiagnosticState; elements.lastControlDiagnostic.textContent = status.lastControlDiagnosticAt ? `最近识别：${new Date(status.lastControlDiagnosticAt).toLocaleString('zh-CN')}` : '尚未生成脱敏结构报告';

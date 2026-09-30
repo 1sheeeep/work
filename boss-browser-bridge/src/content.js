@@ -17,6 +17,11 @@
     education: ['[class*="degree"]', '[class*="education"]'],
     description: ['[class*="job-detail"]', '[class*="description"]', '[class*="job-desc"]'],
   };
+  const PAGE_MUTATION_MESSAGES = new Set([
+    'BRIDGE_LOCATE_CONVERSATION', 'BRIDGE_TEST_CURRENT_ACTION_ENTRY', 'BRIDGE_CONFIRM_CURRENT_EXCHANGE',
+    'BRIDGE_EXECUTE_ACTION_LEASE', 'BRIDGE_FILL_TEST_DRAFT', 'BRIDGE_SEND_CURRENT_TEST_DRAFT',
+    'BRIDGE_ARM_CURRENT_AUTO_REPLY_TEST', 'BRIDGE_FILL_APPROVED_DRAFT', 'BRIDGE_OPEN_VISIBLE_RESUME',
+  ]);
   const TEST_DRAFT_TEXT = '【草稿测试，不会自动发送】您好，已收到您的消息。';
   const RESUME_ATTACHMENT_RECEIPT_CONTEXT = '[SYSTEM_RESUME_ATTACHMENT_RECEIPT]';
   // A browser tab can safely write to only one BOSS conversation at a time.
@@ -42,6 +47,13 @@
   let autoReplyBusy = false;
   let autoReplyGeneration = 0;
   let singleAccountAutoReplyEnabled = false;
+  // Human interaction temporarily owns this BOSS page. The backend AI queue
+  // remains untouched; only automatic page mutations are suspended.
+  let singleAccountHumanTakeover = false;
+  let singleAccountHumanTakeoverToken = '';
+  let humanTakeoverGeneration = 0;
+  let lastTrustedHumanInteractionAt = 0;
+  let humanTakeoverReportTimer = null;
   let singleAccountAutoReplyTimer = null;
   let singleAccountAutoReplyDueAt = 0;
   let dutyControlTimer = null;
@@ -104,8 +116,25 @@
   let jobConfirmationTimer = null;
   let pendingJobConfirmationSignature = '';
   let resumeCaptureStatusBar = null;
-  let resumeCaptureCopyBtn = null;
+  let resumeCaptureStatusRoot = null;
   let resumeCaptureStatusLog = null;
+  let resumeAnalysisStatusNode = null;
+  let resumeAnalysisEmptyNode = null;
+  let resumeAnalysisContentNode = null;
+  let resumeAnalysisCandidateNode = null;
+  let resumeAnalysisRecommendationNode = null;
+  let resumeAnalysisSummaryNode = null;
+  let resumeAnalysisEvidenceNode = null;
+  let resumeAnalysisEvidenceWrapNode = null;
+  let resumeAnalysisFailureNode = null;
+  let resumeAnalysisUpdatedNode = null;
+  let resumeAnalysisCollapseButton = null;
+  let resumeAnalysisCurrentChatDigest = '';
+  let resumeAnalysisRequestGeneration = 0;
+  let resumeAnalysisFetchTimer = null;
+  let resumeAnalysisSelectionTimer = null;
+  let resumeAnalysisPollTimer = null;
+  let resumeAnalysisPollCount = 0;
   let resumeCardScanTimer = null;
   let resumeAttachmentProcessing = false;
   let resumePreviewOpenPending = false;
@@ -145,7 +174,11 @@
   const clickedResumeCardControls = new WeakSet();
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (!['BRIDGE_COLLECT', 'BRIDGE_COLLECT_JOBS', 'BRIDGE_LOCATE_CONVERSATION', 'BRIDGE_CHECK_REPLY_READINESS', 'BRIDGE_INSPECT_CURRENT_CONTROLS', 'BRIDGE_COPY_CURRENT_TRANSCRIPT', 'BRIDGE_TEST_CURRENT_ACTION_ENTRY', 'BRIDGE_CONFIRM_CURRENT_EXCHANGE', 'BRIDGE_PREPARE_ACTION_LEASE', 'BRIDGE_EXECUTE_ACTION_LEASE', 'BRIDGE_FILL_TEST_DRAFT', 'BRIDGE_PREPARE_CURRENT_SEND_TEST', 'BRIDGE_SEND_CURRENT_TEST_DRAFT', 'BRIDGE_DIAGNOSE_CURRENT_AUTO_REPLY', 'BRIDGE_ARM_CURRENT_AUTO_REPLY_TEST', 'BRIDGE_CANCEL_CURRENT_AUTO_REPLY_TEST', 'BRIDGE_SET_SINGLE_ACCOUNT_AUTO_REPLY', 'BRIDGE_PREPARE_APPROVED_DRAFT_FILL', 'BRIDGE_FILL_APPROVED_DRAFT', 'BRIDGE_COLLECT_VISIBLE_RESUME', 'BRIDGE_OPEN_VISIBLE_RESUME'].includes(message?.type)) return false;
+    if (!['BRIDGE_COLLECT', 'BRIDGE_COLLECT_JOBS', 'BRIDGE_LOCATE_CONVERSATION', 'BRIDGE_CHECK_REPLY_READINESS', 'BRIDGE_INSPECT_CURRENT_CONTROLS', 'BRIDGE_COPY_CURRENT_TRANSCRIPT', 'BRIDGE_TEST_CURRENT_ACTION_ENTRY', 'BRIDGE_CONFIRM_CURRENT_EXCHANGE', 'BRIDGE_PREPARE_ACTION_LEASE', 'BRIDGE_EXECUTE_ACTION_LEASE', 'BRIDGE_FILL_TEST_DRAFT', 'BRIDGE_PREPARE_CURRENT_SEND_TEST', 'BRIDGE_SEND_CURRENT_TEST_DRAFT', 'BRIDGE_DIAGNOSE_CURRENT_AUTO_REPLY', 'BRIDGE_ARM_CURRENT_AUTO_REPLY_TEST', 'BRIDGE_CANCEL_CURRENT_AUTO_REPLY_TEST', 'BRIDGE_SET_SINGLE_ACCOUNT_AUTO_REPLY', 'BRIDGE_APPLY_HUMAN_TAKEOVER', 'BRIDGE_PREPARE_APPROVED_DRAFT_FILL', 'BRIDGE_FILL_APPROVED_DRAFT', 'BRIDGE_COLLECT_VISIBLE_RESUME', 'BRIDGE_OPEN_VISIBLE_RESUME'].includes(message?.type)) return false;
+    if (singleAccountHumanTakeover && PAGE_MUTATION_MESSAGES.has(message.type)) {
+      sendResponse({ ok: false, error: 'HR 正在操作 BOSS 页面；自动页面操作已暂停，任务仍保留。' });
+      return false;
+    }
     const task = message.type === 'BRIDGE_COLLECT_JOBS'
       ? collectJobsAndPublish(Boolean(message.allowEmbeddedJobList), Boolean(message.refreshRequested))
       : message.type === 'BRIDGE_LOCATE_CONVERSATION'
@@ -177,7 +210,9 @@
           : message.type === 'BRIDGE_CANCEL_CURRENT_AUTO_REPLY_TEST'
             ? cancelCurrentAutoReplyTest('CANCELLED')
           : message.type === 'BRIDGE_SET_SINGLE_ACCOUNT_AUTO_REPLY'
-            ? setSingleAccountAutoReply(Boolean(message.enabled), Boolean(message.restore))
+            ? setSingleAccountAutoReply(Boolean(message.enabled), Boolean(message.restore), message.humanTakeover || {})
+          : message.type === 'BRIDGE_APPLY_HUMAN_TAKEOVER'
+            ? applyHumanTakeover(Boolean(message.active), message)
           : message.type === 'BRIDGE_PREPARE_APPROVED_DRAFT_FILL'
             ? prepareApprovedDraftFill()
             : message.type === 'BRIDGE_FILL_APPROVED_DRAFT'
@@ -227,6 +262,88 @@
     if (event.data?.type === 'RECRUITMENT_RESUME_DOWNLOAD_DETECTED') void reportResumeDownloadDetected();
     if (event.data?.type === 'RECRUITMENT_RESUME_CAPTURE_STATUS') void forwardResumeCaptureStatus(event.data);
   });
+
+  // A trusted gesture is a synchronous local stop signal: do not wait for the
+  // service worker round trip before preventing a pending click/scroll/send.
+  // A latched takeover is released only by an explicit extension action.
+  for (const type of ['pointerdown', 'keydown', 'wheel', 'input']) {
+    document.addEventListener(type, observeTrustedHumanInteraction, { capture: true, passive: type === 'wheel' });
+  }
+
+  function observeTrustedHumanInteraction(event) {
+    if (!event?.isTrusted || !singleAccountAutoReplyEnabled || !CHAT_URL.test(location.pathname)) return;
+    const target = event.target instanceof Element ? event.target : null;
+    if (target?.closest('#__recruitment_capture_status')) return;
+    lastTrustedHumanInteractionAt = Date.now();
+    if (!singleAccountHumanTakeover) {
+      const token = createHumanTakeoverToken();
+      applyHumanTakeover(true, { token, reason: '检测到人事正在操作 BOSS 页面，自动页面操作已让行。' });
+      void send({ type: 'BRIDGE_HUMAN_TAKEOVER_DETECTED', payload: { token, reason: '检测到人事正在操作 BOSS 页面。' } }).catch(() => {});
+      return;
+    }
+    // Refresh the token while the hold is active. A stale “resume” click that
+    // races with a new human gesture will then be rejected by the content page.
+    const token = createHumanTakeoverToken();
+    singleAccountHumanTakeoverToken = token;
+    clearTimeout(humanTakeoverReportTimer);
+    humanTakeoverReportTimer = setTimeout(() => {
+      humanTakeoverReportTimer = null;
+      void send({ type: 'BRIDGE_HUMAN_TAKEOVER_DETECTED', payload: { token, reason: '人事仍在操作 BOSS 页面。' } }).catch(() => {});
+    }, 350);
+  }
+
+  function createHumanTakeoverToken() {
+    return globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 14)}`;
+  }
+
+  function pausePageAutomationForHuman(reason, token = '') {
+    singleAccountHumanTakeover = true;
+    singleAccountHumanTakeoverToken = token || singleAccountHumanTakeoverToken || createHumanTakeoverToken();
+    humanTakeoverGeneration += 1;
+    autoReplyGeneration += 1;
+    clearSingleAccountAutoReplyTimer();
+    clearTimeout(collectTimer);
+    collectTimer = null;
+    clearTimeout(resumeCardScanTimer);
+    resumeCardScanTimer = null;
+    traceAutoReply('HR_PAGE_TAKEOVER', {
+      outcome: 'WAITING', taskState: 'WAITING_HR',
+      reason: `${reason || '人事接管 BOSS 页面。'} AI 与后端队列继续运行；暂停自动点击、滚动、填字、发送及关闭简历预览。`,
+    });
+  }
+
+  function applyHumanTakeover(active, message = {}) {
+    if (active) {
+      if (!singleAccountHumanTakeover || (message.token && message.token !== singleAccountHumanTakeoverToken)) {
+        pausePageAutomationForHuman(message.reason, message.token);
+      }
+      return { ok: true, active: true };
+    }
+    if (!singleAccountHumanTakeover) {
+      return { ok: true, active: false };
+    }
+    if (message.expectedToken && message.expectedToken !== singleAccountHumanTakeoverToken) {
+      return { ok: false, active: true, error: '人事接管状态刚有更新，请稍后再点恢复。' };
+    }
+    if (Date.now() - lastTrustedHumanInteractionAt < 2_000) {
+      return { ok: false, active: true, error: '刚检测到新的页面操作；请结束操作后稍等片刻，再恢复自动值守。' };
+    }
+    if (findVisibleResumeDialog()) {
+      return { ok: false, active: true, error: 'BOSS 中仍打开着简历预览。请先由人事手动关闭预览，再恢复自动值守。' };
+    }
+    singleAccountHumanTakeover = false;
+    singleAccountHumanTakeoverToken = '';
+    humanTakeoverGeneration += 1;
+    traceAutoReply('HR_PAGE_TAKEOVER_RELEASED', {
+      outcome: 'INFO', reason: '人事已显式恢复自动值守；队列保留，恢复后重新读取当前会话并执行原有安全校验。',
+    });
+    if (singleAccountAutoReplyEnabled) {
+      scheduleCollect(300);
+      scheduleSingleAccountAutoReply(500);
+    }
+    return { ok: true, active: false };
+  }
+
   function wakeVisibleAutomation() {
     if (document.hidden) return;
     scheduleCollect(300);
@@ -300,12 +417,14 @@
   }
 
   function bootResumeCaptureStatusPanel() {
-    showResumeCaptureStatus('简历自动处理状态面板已启动，正在检查当前会话。', 'info');
-    setTimeout(diagnoseScrollContainerAtStartup, 1_500);
-    setTimeout(diagnoseScrollContainerAtStartup, 4_000);
+    ensureResumeCaptureStatusBar();
+    showResumeCaptureStatus('简历分析与运行日志面板已启动。', 'info');
     scheduleResumeCardScan(500);
-    setTimeout(() => showResumeCaptureStatus('状态面板仍在运行，等待简历卡片或预览动作。', 'info'), 2_000);
     setTimeout(() => scheduleResumeCardScan(0), 5_000);
+    document.addEventListener('pointerdown', handleResumeAnalysisSelectionGesture, true);
+    document.addEventListener('pointerup', handleResumeAnalysisSelectionGesture, true);
+    document.addEventListener('keydown', handleResumeAnalysisSelectionGesture, true);
+    setTimeout(refreshResumeAnalysisForSelectedRow, 1_000);
   }
 
   function scheduleDutyControlSync(delay = 5_000) {
@@ -318,6 +437,7 @@
   }
 
   function scheduleCollect(delay) {
+    if (singleAccountHumanTakeover && CHAT_URL.test(location.pathname)) return;
     clearTimeout(collectTimer);
     collectTimer = setTimeout(() => {
       const task = /(?:job|position)/i.test(location.pathname) && !CHAT_URL.test(location.pathname)
@@ -462,16 +582,25 @@
 
   async function restoreSingleAccountAutoReply() {
     const result = await send({ type: 'BRIDGE_SYNC_DUTY_AUTOMATION' });
-    if (result?.ok && result.enabled) await setSingleAccountAutoReply(true, true);
+    if (result?.ok && result.enabled) await setSingleAccountAutoReply(true, true, {
+      humanTakeover: result.humanTakeover === true,
+      token: result.humanTakeoverToken || '',
+      reason: result.humanTakeoverReason || '',
+    });
   }
 
-  async function setSingleAccountAutoReply(enabled, restore = false) {
+  async function setSingleAccountAutoReply(enabled, restore = false, humanTakeover = {}) {
     if (enabled && autoReplyArm) return { ok: false, error: '请先取消当前单会话一次触发测试。' };
     autoReplyGeneration += 1;
     const wasEnabled = singleAccountAutoReplyEnabled;
     let initialUnreadCount = 0;
     singleAccountAutoReplyEnabled = enabled;
     if (!enabled) {
+      singleAccountHumanTakeover = false;
+      singleAccountHumanTakeoverToken = '';
+      humanTakeoverGeneration += 1;
+      clearTimeout(humanTakeoverReportTimer);
+      humanTakeoverReportTimer = null;
       clearInterval(autoReplyWakeWatchdogTimer);
       autoReplyWakeWatchdogTimer = null;
       resumePreviewOpenPending = false;
@@ -497,7 +626,11 @@
       singleAccountReadReviewNextAt = 0;
       singleAccountBacklogMode = false;
       singleAccountBacklogSeen = new Map();
-    } else if (!wasEnabled) {
+    } else {
+      if (humanTakeover.humanTakeover === true) {
+        pausePageAutomationForHuman(humanTakeover.reason || '恢复了已保存的人事接管状态。', humanTakeover.token || '');
+      }
+      if (!wasEnabled) {
       if (!restore) autoReplyWatchdogRecoveryCount = 0;
       resumePreviewOpenPending = false;
       resumeCaptureRequest = null;
@@ -507,11 +640,13 @@
       singleAccountActiveChatDigest = null;
       conversationScanCursors = new Map();
       const saved = restore ? await send({ type: 'BRIDGE_GET_SINGLE_ACCOUNT_BASELINE' }) : null;
-      const currentUnread = await collectUnreadBaseline();
+      const currentUnread = singleAccountHumanTakeover ? new Map() : await collectUnreadBaseline();
       initialUnreadCount = currentUnread.size;
-      traceAutoReply('INITIAL_LIST_SWEEP', {
-        outcome: ['SCROLLER_NOT_FOUND', 'PAGE_NOT_READY', 'PREVIEW_OPEN', 'PARTIAL'].includes(lastConversationSweepCode) ? 'WAITING' : 'SUCCESS',
-        reason: lastConversationSweepCode === 'PARTIAL'
+      traceAutoReply(singleAccountHumanTakeover ? 'HR_TAKEOVER_RESTORED' : 'INITIAL_LIST_SWEEP', {
+        outcome: singleAccountHumanTakeover || ['SCROLLER_NOT_FOUND', 'PAGE_NOT_READY', 'PREVIEW_OPEN', 'PARTIAL'].includes(lastConversationSweepCode) ? 'WAITING' : 'SUCCESS',
+        reason: singleAccountHumanTakeover
+          ? '已恢复人事接管状态；保留服务端任务与页面基线，不扫描、滚动或切换当前会话。'
+          : lastConversationSweepCode === 'PARTIAL'
           ? `首次扫描已覆盖当前滚动窗口，暂见 ${lastConversationSweepCount} 条未读；列表其余部分将在后续轮次继续扫描。`
           : ['SCROLLER_NOT_FOUND', 'PAGE_NOT_READY', 'PREVIEW_OPEN'].includes(lastConversationSweepCode)
           ? lastConversationSweepCode === 'PAGE_NOT_READY'
@@ -528,7 +663,7 @@
       // Always bind the visible detail pane to a positively identified row at
       // startup. Only seed a baseline when this conversation has no persisted
       // history, so an existing changed inbound message is still detectable.
-      const selected = await collectSelectedConversation();
+      const selected = singleAccountHumanTakeover ? { ok: false } : await collectSelectedConversation();
       if (selected.ok && selected.direction === 'OUTBOUND'
           && !singleAccountSelectedMessageBaseline.has(selected.chatDigest)) {
         singleAccountSelectedMessageBaseline.set(selected.chatDigest, selected.messageDigest);
@@ -558,11 +693,12 @@
       singleAccountBacklogMode = !restore;
       singleAccountBacklogSeen = new Map();
       await persistSingleAccountBaseline();
+      }
     }
     clearSingleAccountAutoReplyTimer();
     if (enabled) {
       ensureAutoReplyWakeWatchdog();
-      scheduleSingleAccountAutoReply(800);
+      if (!singleAccountHumanTakeover) scheduleSingleAccountAutoReply(800);
     }
     return { ok: true, enabled, baselineCount: singleAccountUnreadBaseline.size,
       initialUnreadCount: enabled && !restore ? initialUnreadCount : 0 };
@@ -1015,10 +1151,10 @@
   }
 
   function activateConversationListForAutomation(scroller, reason) {
-    if (!(scroller instanceof HTMLElement)) return;
+    if (singleAccountHumanTakeover || !(scroller instanceof HTMLElement)) return false;
     const now = Date.now();
     if (now - lastMouseInConversationListAt < LIST_POINTER_IDLE_FOCUS_MS
-        || now - lastConversationListActivationAt < LIST_POINTER_IDLE_FOCUS_MS) return;
+        || now - lastConversationListActivationAt < LIST_POINTER_IDLE_FOCUS_MS) return false;
     lastConversationListActivationAt = now;
     const active = document.activeElement;
     const userEditing = active instanceof HTMLElement
@@ -1038,6 +1174,7 @@
       outcome: 'INFO',
       reason: `${reason}；已激活会话列表滚动焦点，后续使用 DOM 直接滚动，不依赖物理鼠标位置。`,
     });
+    return true;
   }
 
   function describeDomNode(node) {
@@ -1073,9 +1210,11 @@
   }
 
   async function scanConversationPages(matcher, options = {}) {
+    if (singleAccountHumanTakeover) return { match: null, complete: false, interrupted: true };
     const scroller = conversationScrollContainer();
     if (!scroller) return { match: null, complete: false };
     activateConversationListForAutomation(scroller, '鼠标超过 10 秒未停留在会话列表');
+    const scanHumanGeneration = humanTakeoverGeneration;
     const originalTop = scroller.scrollTop;
     const step = Math.max(120, Math.floor(scroller.clientHeight * .75));
     const maxTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
@@ -1095,31 +1234,54 @@
     let firstMatchTop = originalTop;
     let nextIndex = startIndex;
     let complete = false;
+    let interrupted = false;
     try {
       for (; nextIndex < uniquePositions.length; nextIndex++) {
+        if (singleAccountHumanTakeover || scanHumanGeneration !== humanTakeoverGeneration) {
+          interrupted = true;
+          break;
+        }
         if (nextIndex > startIndex && (nextIndex - startIndex >= LIST_SCAN_MAX_POSITIONS_PER_TURN
             || Date.now() - startedAt >= LIST_SCAN_MAX_TURN_MS)) break;
         const top = uniquePositions[nextIndex];
         scroller.scrollTop = top;
         scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
         await delay(120);
+        if (singleAccountHumanTakeover || scanHumanGeneration !== humanTakeoverGeneration) {
+          interrupted = true;
+          break;
+        }
         const rows = [...document.querySelectorAll(SELECTORS.conversation)].filter(visible);
         for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+          if (singleAccountHumanTakeover || scanHumanGeneration !== humanTakeoverGeneration) {
+            interrupted = true;
+            break;
+          }
           const row = rows[rowIndex];
           await rememberConversationLocator(row, scroller, rowIndex);
           const match = await matcher(row);
+          if (singleAccountHumanTakeover || scanHumanGeneration !== humanTakeoverGeneration) {
+            interrupted = true;
+            break;
+          }
           if (match && !firstMatch) {
             firstMatch = match;
             firstMatchTop = top;
           }
           if (match && options.stopOnMatch !== false) {
             conversationScanCursors.delete(scanKey);
+            if (singleAccountHumanTakeover || scanHumanGeneration !== humanTakeoverGeneration) {
+              interrupted = true;
+              break;
+            }
             scroller.scrollTop = top;
             scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
             return { match, complete: true };
           }
         }
+        if (interrupted) break;
       }
+      if (interrupted) return { match: null, complete: false, interrupted: true };
       complete = nextIndex >= uniquePositions.length;
       if (complete) conversationScanCursors.delete(scanKey);
       else conversationScanCursors.set(scanKey, {
@@ -1135,7 +1297,8 @@
       });
       return { match: firstMatch, complete };
     } finally {
-      if (!firstMatch || options.restorePosition === true) {
+      if ((!firstMatch || options.restorePosition === true)
+          && !singleAccountHumanTakeover && scanHumanGeneration === humanTakeoverGeneration) {
         scroller.scrollTop = originalTop;
         scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
       }
@@ -1154,6 +1317,7 @@
   }
 
   async function locateConversation(chatDigest) {
+    if (singleAccountHumanTakeover) return blocked('HR_PAGE_TAKEOVER', '人事正在操作 BOSS 页面，自动定位已暂停；请在人事操作完成后恢复自动值守。');
     if (!/^[a-f0-9]{64}$/.test(chatDigest || '')) return blocked('INVALID_TARGET', '定位目标无效。');
     let target = await findConversationByDigest(chatDigest);
     let deepLookup = null;
@@ -1163,6 +1327,7 @@
     }
     if (!target) return blocked(deepLookup?.complete === false ? 'CONVERSATION_SCAN_IN_PROGRESS' : 'CONVERSATION_NOT_VISIBLE',
       deepLookup?.complete === false ? '正在分段扫描会话列表，请稍后重试定位。' : '当前会话列表中未找到目标，可能已不在已加载范围。');
+    if (singleAccountHumanTakeover) return blocked('HR_PAGE_TAKEOVER', '人事正在操作 BOSS 页面，自动定位已暂停。');
     target.scrollIntoView({ block: 'center', behavior: 'auto' });
     target.click();
     await delay(260);
@@ -1221,6 +1386,13 @@
     };
     singleAccountPendingReplies.set(result.taskId, task);
     if (!singleAccountCurrentTaskId) promoteNextCurrentTask(result.taskId);
+    return task;
+  }
+
+  function preserveCompletedDecisionTask(taskId, snapshot, pendingRowSignature) {
+    if (!taskId || !snapshot?.chatDigest || !snapshot?.messageDigest) return null;
+    const task = rememberPendingReply({ taskId, recovered: true }, snapshot, pendingRowSignature);
+    task.nextPollAt = 0;
     return task;
   }
 
@@ -1456,7 +1628,7 @@
   }
 
   function scheduleSingleAccountAutoReply(delay) {
-    if (!singleAccountAutoReplyEnabled) return;
+    if (!singleAccountAutoReplyEnabled || singleAccountHumanTakeover) return;
     const dueAt = Date.now() + Math.max(0, Number(delay) || 0);
     if (singleAccountAutoReplyTimer && singleAccountAutoReplyDueAt <= dueAt) return;
     if (singleAccountAutoReplyTimer) clearTimeout(singleAccountAutoReplyTimer);
@@ -1477,7 +1649,7 @@
   function ensureAutoReplyWakeWatchdog() {
     if (autoReplyWakeWatchdogTimer) return;
     autoReplyWakeWatchdogTimer = setInterval(() => {
-      if (!singleAccountAutoReplyEnabled || collecting || transcriptCaptureInProgress
+      if (!singleAccountAutoReplyEnabled || singleAccountHumanTakeover || collecting || transcriptCaptureInProgress
           || singleAccountAutoReplyTimer) return;
       const now = Date.now();
       const busyStalled = autoReplyBusy && autoReplyTraceRunStartedAt > 0
@@ -1754,6 +1926,31 @@
     } });
   }
 
+  async function deferClaimedSendForHumanTakeover(task, lease, snapshot, reason) {
+    if (lease) {
+      await receiptInboundReplySend(lease, 'FAILED',
+        `${snapshot.chatDigest}|${snapshot.messageDigest}|HR_TAKEOVER_BEFORE_CLICK`, reason)
+        .catch(() => null);
+    }
+    if (task) {
+      if (lease) {
+        task.retryable = true;
+        task.recoveredSend = false;
+        task.queueLane = 'REVALIDATION';
+      } else {
+        task.queueLane = task.queueLane || 'SEND';
+      }
+      task.nextPollAt = Date.now();
+      enqueuePipelineTask(task.taskId, queueLaneForTask(task));
+    }
+    const queueLane = task ? queueLaneForTask(task) : lease ? 'REVALIDATION' : 'SEND';
+    traceAutoReply('HR_TAKEOVER_SEND_DEFERRED', {
+      chatDigest: snapshot.chatDigest, messageDigest: snapshot.messageDigest,
+      taskId: task?.taskId || null, queueLane, outcome: 'WAITING', taskState: 'WAITING_HR',
+      reason: `${reason} 未点击发送；任务保留，恢复后重新读取当前会话。`,
+    });
+  }
+
   async function clearPendingSendReconciliation(taskId) {
     singleAccountUnknownReconciliations.delete(taskId);
     await send({ type: 'BRIDGE_CLEAR_SEND_RECONCILIATION', taskId }).catch(() => {});
@@ -1842,6 +2039,13 @@
   }
 
   async function prepareAutoReplyCycle() {
+    if (singleAccountHumanTakeover) {
+      traceAutoReply('HR_PAGE_TAKEOVER_WAITING', {
+        outcome: 'WAITING', taskState: 'WAITING_HR',
+        reason: '人事接管期间不操作 BOSS 页面；后台 AI 与任务队列保持运行，等待插件中的“恢复自动值守”。',
+      });
+      return { ready: false, delay: 0 };
+    }
     if (document.visibilityState !== 'visible') {
       traceAutoReply('PAGE_HIDDEN_PAUSED', {
         outcome: 'WAITING', reason: '当前 BOSS 页面处于隐藏或最小化状态，已保留队列且暂停页面写操作。',
@@ -1889,9 +2093,11 @@
   }
 
   async function collectStableAutoReplySnapshot(target, expectedChatDigest) {
+    if (singleAccountHumanTakeover) return null;
     singleAccountPendingChatDigest = expectedChatDigest;
     const hasTargetRow = target instanceof HTMLElement;
     const switchedConversation = hasTargetRow && !target.matches(SELECTORS.selectedConversation);
+    if (singleAccountHumanTakeover) return null;
     if (switchedConversation) target.click();
     await delay(switchedConversation ? 650 : 120);
     const first = hasTargetRow
@@ -1915,7 +2121,11 @@
   }
 
   async function processNextUnreadConversation() {
-    if (!singleAccountAutoReplyEnabled) return;
+    if (!singleAccountAutoReplyEnabled || singleAccountHumanTakeover) return;
+    const runHumanTakeoverGeneration = humanTakeoverGeneration;
+    const pageAutomationStillOwned = () => singleAccountAutoReplyEnabled
+      && !singleAccountHumanTakeover
+      && humanTakeoverGeneration === runHumanTakeoverGeneration;
     autoReplyWatchdogLastProgressAt = Date.now();
     if (transcriptCaptureInProgress) {
       traceAutoReply('TRANSCRIPT_CAPTURE_HOLD', {
@@ -1933,6 +2143,7 @@
     autoReplyTraceRunId = `${autoReplyTraceRunStartedAt.toString(36)}-${++autoReplyTraceRunSequence}`;
     try {
       const preparation = await prepareAutoReplyCycle();
+      if (!pageAutomationStillOwned()) return;
       if (!preparation.ready) {
         if (!preparation.stopped) scheduleSingleAccountAutoReply(preparation.delay || 3_000);
         return;
@@ -1990,6 +2201,7 @@
       // real-time unread so it cannot monopolize the page.
       const priorityReadyReply = heldReadyReply
         || await nextReadyInboundReply(null, { includeRetryable: false });
+      if (!pageAutomationStillOwned()) return;
       // An unresolved analysis task owns this tab. Do not open a different
       // unread conversation while its result is still pending; once READY it
       // continues through the normal locate, digest and direction checks.
@@ -2009,12 +2221,14 @@
       // conversation that is already open. Detect that changed detail first;
       // otherwise a list-only scan sees zero unread rows and silently misses it.
       const changedCurrent = priorityReadyReply ? { item: null, snapshot: null } : await findChangedCurrentConversation();
+      if (!pageAutomationStillOwned()) return;
       // 没有可发送结果时，实时未读仍优先于库存二次复核。旧失败任务会触发
       // 深度列表定位，如果先处理库存，新到消息会表现为“列表一直滚动但不打开”。
       let realtimeUnread = priorityReadyReply ? null : changedCurrent.item
         ? { item: changedCurrent.item, chatDigest: changedCurrent.snapshot.chatDigest, currentPane: true,
           readReview: changedCurrent.readReview === true }
         : await findNewOrChangedUnreadConversation();
+      if (!pageAutomationStillOwned()) return;
       const hasDeferredInventory = [...singleAccountPendingReplies.values()].some((task) => task.retryable === true);
       if (!realtimeUnread?.item && hasDeferredInventory && Date.now() - lastDeepConversationScanAt >= DEEP_SCAN_COOLDOWN_MS) {
         lastDeepConversationScanAt = Date.now();
@@ -2037,6 +2251,7 @@
         await reconcileRecoveredUnknownSend();
       }
       const readyReply = priorityReadyReply || (realtimeTarget ? null : await nextReadyInboundReply());
+      if (!pageAutomationStillOwned()) return;
       if (readyReply?.terminalTask) {
         const terminalTask = readyReply.terminalTask;
         const terminalReason = readyReply.terminalReason || 'AI 任务已进入终态。';
@@ -2145,6 +2360,7 @@
       }
       let queuedDecision = target || currentConversationAffinity ? readyReply?.decision || null : null;
       let queuedTask = target || currentConversationAffinity ? prioritizedTask : null;
+      let resolvedDecisionTaskId = null;
       if (readyTask && (target || currentConversationAffinity)) {
         readyTask.locateFailures = 0;
         readyTask.firstLocateFailureAt = null;
@@ -2340,6 +2556,7 @@
         outcome: 'INFO', reason: '开始核对选中会话、最新消息摘要和消息方向；通过前不会申请发送租约。',
       });
       const second = await collectStableAutoReplySnapshot(target, expectedChatDigest);
+      if (!pageAutomationStillOwned()) return;
       if (!second) return scheduleSingleAccountAutoReply(1_500);
       if (second.direction === 'OUTBOUND') {
         const pendingTasks = [...new Map([retryTask, queuedTask]
@@ -2671,6 +2888,20 @@
           conversationSignals: second.conversationSignals, observedAt: new Date().toISOString(), continuous: true,
           pendingRowSignature,
         } });
+        resolvedDecisionTaskId = replyResult?.taskId || null;
+        if (singleAccountHumanTakeover) {
+          const heldTask = preserveCompletedDecisionTask(replyResult?.taskId, second, pendingRowSignature);
+          if (heldTask) singleAccountPendingChatDigest = second.chatDigest;
+          traceAutoReply('HR_TAKEOVER_AI_RESULT_PRESERVED', {
+            chatDigest: second.chatDigest, messageDigest: second.messageDigest, taskId: heldTask?.taskId || null,
+            outcome: 'WAITING', taskState: 'WAITING_HR',
+            reason: heldTask
+              ? 'AI 结果保留在同一任务中；暂停页面发送，恢复后重新读取会话并完成原有方向与摘要复核。'
+              : '人事接管期间未执行页面操作；消息保持未完成，恢复后由原有去重与复核流程继续。',
+          });
+          return;
+        }
+        if (!pageAutomationStillOwned()) return;
         if (!replyResult?.ok) {
           const bridgeConflict = /^(?:INBOUND_REPLY_(?:SNAPSHOT_STALE|DETAIL_REQUIRED|TARGET_CHANGED)|OBSERVATION_)/.test(replyResult?.code || '')
             || /最新稳定列表|会话快照|观测/.test(replyResult?.error || '');
@@ -2733,6 +2964,18 @@
         traceAutoReply('STOPPED_BEFORE_SEND', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, outcome: 'STOPPED', reason: 'HR 在 AI 判定期间停止了自动回复。' });
         await reportSingleAccountResult(second, 'SILENT', 'HR 已在判定期间停止持续回复，未写入或发送。');
         singleAccountPendingChatDigest = null;
+        return;
+      }
+      if (singleAccountHumanTakeover) {
+        queuedTask = queuedTask || preserveCompletedDecisionTask(resolvedDecisionTaskId, second, null);
+        traceAutoReply('HR_TAKEOVER_AI_RESULT_PRESERVED', {
+          chatDigest: second.chatDigest, messageDigest: second.messageDigest, taskId: queuedTask?.taskId || null,
+          outcome: 'WAITING', taskState: 'WAITING_HR',
+          reason: decision?.replyAllowed
+            ? 'AI 已生成回复但人事接管了页面；保留待发送任务，恢复后重新复核。'
+            : 'AI 判定已保留于原任务；不在接管期间标记会话完成，恢复后继续原有复核。',
+        });
+        singleAccountPendingChatDigest = queuedTask?.chatDigest || null;
         return;
       }
       if (!decision?.replyAllowed || !decision.content) {
@@ -2825,11 +3068,32 @@
         singleAccountPendingChatDigest = null;
         return scheduleSingleAccountAutoReply(1_500);
       }
+      if (!pageAutomationStillOwned()) {
+        if (singleAccountHumanTakeover) {
+          queuedTask = queuedTask || preserveCompletedDecisionTask(resolvedDecisionTaskId, second, null);
+          await deferClaimedSendForHumanTakeover(queuedTask, sendLease, second, '人事接管发生在自动草稿写入前，未点击发送。');
+          singleAccountPendingChatDigest = queuedTask?.chatDigest || null;
+        }
+        return;
+      }
       writeEditorText(controls.editor, replyText);
       await delay(350);
+      if (!pageAutomationStillOwned()) {
+        if (singleAccountHumanTakeover) {
+          queuedTask = queuedTask || preserveCompletedDecisionTask(resolvedDecisionTaskId, second, null);
+          await deferClaimedSendForHumanTakeover(queuedTask, sendLease, second, '写入草稿后检测到人事接管；保留当前草稿且不点击发送。');
+          traceAutoReply('HR_TAKEOVER_DRAFT_PRESERVED', {
+            chatDigest: second.chatDigest, messageDigest: second.messageDigest, taskId: queuedTask?.taskId || null,
+            outcome: 'WAITING', taskState: 'WAITING_HR',
+            reason: '输入区可能已由人事编辑；不自动清空，待发送任务保留并转入恢复复核。',
+          });
+          singleAccountPendingChatDigest = queuedTask?.chatDigest || null;
+        }
+        return;
+      }
       if (readEditorText(controls.editor).trim() !== replyText) {
         traceAutoReply('DRAFT_FILL_FAILED', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, taskId: queuedTask?.taskId || null, queueLane: 'SEND', outcome: 'FAILED', reason: '安全短回复未稳定写入输入框。' });
-        writeEditorText(controls.editor, '');
+        clearAutoDraftIfStillOwned(controls.editor, replyText);
         if (sendLease) await receiptInboundReplySend(sendLease, 'FAILED', `${second.chatDigest}|${second.messageDigest}|DRAFT_FILL_FAILED`, '安全短回复未稳定写入，未发送。');
         await reportSingleAccountResult(second, 'SILENT', '安全短回复未稳定写入，已清空且未发送。');
         singleAccountPendingChatDigest = null;
@@ -2842,11 +3106,17 @@
         filledControls = findReplyControls();
       }
       const beforeSend = await collectSelectedConversation();
+      if (singleAccountHumanTakeover) {
+        queuedTask = queuedTask || preserveCompletedDecisionTask(resolvedDecisionTaskId, second, null);
+        await deferClaimedSendForHumanTakeover(queuedTask, sendLease, second, '发送前复核期间检测到人事接管；未点击发送。');
+        singleAccountPendingChatDigest = queuedTask?.chatDigest || null;
+        return;
+      }
       if (filledControls.editor !== controls.editor || !filledControls.sendButton || filledControls.sendButtonCount !== 1
           || !beforeSend.ok || beforeSend.chatDigest !== second.chatDigest
           || beforeSend.messageDigest !== second.messageDigest || beforeSend.direction !== 'INBOUND') {
         traceAutoReply('PRE_SEND_BLOCKED', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, outcome: 'BLOCKED', reason: !filledControls.sendButton || filledControls.sendButtonCount !== 1 ? '写入草稿后未找到唯一可用发送按钮。' : '发送前会话或消息状态发生变化。' });
-        writeEditorText(controls.editor, '');
+        clearAutoDraftIfStillOwned(controls.editor, replyText);
         if (sendLease) await receiptInboundReplySend(sendLease, 'FAILED', `${second.chatDigest}|${second.messageDigest}|PRE_SEND_REVALIDATION_FAILED`, '发送前页面或会话状态变化，未点击发送。');
         await reportSingleAccountResult(second, 'SILENT', '发送前页面或会话状态发生变化，已清空且未发送。');
         singleAccountPendingChatDigest = null;
@@ -2854,7 +3124,7 @@
       }
       if (!singleAccountAutoReplyEnabled) {
         traceAutoReply('STOPPED_BEFORE_SEND', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, outcome: 'STOPPED', reason: '发送前自动回复开关已关闭。' });
-        writeEditorText(controls.editor, '');
+        clearAutoDraftIfStillOwned(controls.editor, replyText);
         if (sendLease) await receiptInboundReplySend(sendLease, 'FAILED', `${second.chatDigest}|${second.messageDigest}|STOPPED_BEFORE_SEND`, 'HR 在发送前停止持续回复，未点击发送。');
         await reportSingleAccountResult(second, 'SILENT', 'HR 已在发送前停止持续回复，草稿已清空且未发送。');
         singleAccountPendingChatDigest = null;
@@ -2882,8 +3152,14 @@
           outboundBeforeIdentityDigests: await Promise.all(
             [...outboundBeforeIdentities].slice(-100).map((identity) => digest(identity))),
         } });
+        if (singleAccountHumanTakeover) {
+          queuedTask = queuedTask || preserveCompletedDecisionTask(resolvedDecisionTaskId, second, null);
+          await deferClaimedSendForHumanTakeover(queuedTask, sendLease, second, '发送证据保存期间检测到人事接管；未点击发送。');
+          singleAccountPendingChatDigest = queuedTask?.chatDigest || null;
+          return;
+        }
         if (!staged?.ok || !staged.task) {
-          writeEditorText(controls.editor, '');
+          clearAutoDraftIfStillOwned(controls.editor, replyText);
           await receiptInboundReplySend(sendLease, 'FAILED',
             `${second.chatDigest}|${second.messageDigest}|SEND_EVIDENCE_NOT_PERSISTED`,
             '发送前证据未能持久化，未点击发送。');
@@ -2896,6 +3172,14 @@
           return scheduleSingleAccountAutoReply(2_000);
         }
         singleAccountUnknownReconciliations.set(queuedTask.taskId, { ...staged.task, nextCheckAt: Date.now() + 10_000 });
+      }
+      if (!pageAutomationStillOwned()) {
+        if (singleAccountHumanTakeover) {
+          queuedTask = queuedTask || preserveCompletedDecisionTask(resolvedDecisionTaskId, second, null);
+          await deferClaimedSendForHumanTakeover(queuedTask, sendLease, second, '点击发送前检测到人事接管；未点击发送。');
+          singleAccountPendingChatDigest = queuedTask?.chatDigest || null;
+        }
+        return;
       }
       filledControls.sendButton.click();
       traceAutoReply('SEND_CLICKED', { chatDigest: second.chatDigest, messageDigest: second.messageDigest, taskId: queuedTask?.taskId || null, queueLane: 'SEND', outcome: 'INFO', reason: '已点击唯一可用发送按钮，开始等待页面回执。' });
@@ -3396,7 +3680,7 @@
       await delay(wait);
       const selected = await collectSelectedConversation();
       if (!selected.ok || selected.chatDigest !== chatDigest) return;
-      if (!attachmentViewRequested && !findVisibleResumePdfFrame()) {
+      if (!singleAccountHumanTakeover && !attachmentViewRequested && !findVisibleResumePdfFrame()) {
         const fileControls = [...document.querySelectorAll('a.resume-btn-file, .resume-file-content .btn')]
           .filter((node) => node instanceof HTMLElement && visible(node) && !node.disabled && node.getAttribute('aria-disabled') !== 'true');
         if (fileControls.length === 1) {
@@ -3453,8 +3737,15 @@
             showResumeImportResult(response);
             if (resumeAttachmentProcessing) {
               await waitForResumePdfBackendTerminal();
-              const previewClosed = await ensureResumePreviewClosedForAutoReply(chatDigest, { importTerminal: true });
-              lastResumePdfImportOutcome = response?.ok && previewClosed
+              const previewClosed = singleAccountHumanTakeover
+                ? false : await ensureResumePreviewClosedForAutoReply(chatDigest, { importTerminal: true });
+              if (singleAccountHumanTakeover && response?.ok) {
+                traceAutoReply('RESUME_PREVIEW_HR_OWNED', {
+                  chatDigest, outcome: 'WAITING', taskState: 'WAITING_HR',
+                  reason: '简历已上传；HR 正在操作页面，因此保留预览窗口，不执行自动关闭。',
+                });
+              }
+              lastResumePdfImportOutcome = response?.ok && (previewClosed || singleAccountHumanTakeover)
                 ? { ok: true, chatDigest, intakeId: response.intakeId || '', analysisStatus: response.analysisStatus || '' }
                 : { ok: false, chatDigest, error: response?.ok ? '简历已导入，但预览窗口未确认关闭' : response?.error || '后端导入失败' };
             }
@@ -3993,6 +4284,13 @@
     editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
   }
 
+  function clearAutoDraftIfStillOwned(editor, expectedText) {
+    if (!(editor instanceof HTMLElement) || !expectedText
+        || String(readEditorText(editor)).trim() !== String(expectedText).trim()) return false;
+    writeEditorText(editor, '');
+    return true;
+  }
+
   function isJobDetailPage() {
     return /\/web\/chat\/job\/(?:edit|detail)(?:[/?#]|$)/i.test(location.pathname)
       || Boolean(findJobDetailRoot());
@@ -4325,7 +4623,10 @@
     if (!identity) return blocked('CHAT_ID_MISSING', '当前会话没有稳定 DOM ID。');
     const chatDigest = await digest(identity);
     const result = await collectActiveConversationDetail(chatDigest, hasUnread(selected));
-    if (result.ok) singleAccountActiveChatDigest = chatDigest;
+    if (result.ok) {
+      singleAccountActiveChatDigest = chatDigest;
+      observeResumeAnalysisSelection(chatDigest);
+    }
     return result;
   }
 
@@ -4714,6 +5015,14 @@
   async function ensureResumePreviewClosedForAutoReply(expectedChatDigest = null, options = {}) {
     const dialog = findVisibleResumeDialog();
     if (!dialog) return true;
+    if (singleAccountHumanTakeover) {
+      traceAutoReply('RESUME_PREVIEW_CLOSE_HR_OWNED', {
+        chatDigest: expectedChatDigest || singleAccountPendingChatDigest || null,
+        outcome: 'WAITING', taskState: 'WAITING_HR',
+        reason: 'HR 接管期间不自动关闭简历预览；由 HR 决定何时关闭。',
+      });
+      return false;
+    }
     if ((resumePdfForwardInFlight || resumePdfBackendRequestsInFlight.size > 0)
         && options.importTerminal !== true) {
       traceAutoReply('RESUME_PREVIEW_CLOSE_DEFERRED', {
@@ -4884,8 +5193,15 @@
     }
     if (!isCurrentCapture()) return { ok: false, error: '本轮简历处理已超时，已取消后续页面操作。' };
     showResumeImportResult(response);
-    const previewClosed = await ensureResumePreviewClosedForAutoReply(selected.chatDigest, { importTerminal: true });
-    lastResumePdfImportOutcome = response?.ok && previewClosed
+    const previewClosed = singleAccountHumanTakeover
+      ? false : await ensureResumePreviewClosedForAutoReply(selected.chatDigest, { importTerminal: true });
+    if (singleAccountHumanTakeover && response?.ok) {
+      traceAutoReply('RESUME_PREVIEW_HR_OWNED', {
+        chatDigest: selected.chatDigest, outcome: 'WAITING', taskState: 'WAITING_HR',
+        reason: '简历已上传；HR 正在操作页面，因此保留预览窗口，不执行自动关闭。',
+      });
+    }
+    lastResumePdfImportOutcome = response?.ok && (previewClosed || singleAccountHumanTakeover)
       ? { ok: true, chatDigest: selected.chatDigest, intakeId: response.intakeId || '', analysisStatus: response.analysisStatus || '' }
       : { ok: false, chatDigest: selected.chatDigest, error: response?.ok ? '简历已导入，但预览窗口未确认关闭' : response?.error || '后端导入失败' };
     return response;
@@ -4922,6 +5238,14 @@
   async function closeVisibleResumePreview(expectedChatDigest, options = {}) {
     const dialog = findVisibleResumeDialog();
     if (!dialog) return true;
+    if (singleAccountHumanTakeover) {
+      traceAutoReply('RESUME_PREVIEW_CLOSE_HR_OWNED', {
+        chatDigest: expectedChatDigest || singleAccountPendingChatDigest || null,
+        outcome: 'WAITING', taskState: 'WAITING_HR',
+        reason: 'HR 接管期间不自动操作简历预览关闭按钮。',
+      });
+      return false;
+    }
     const selected = await collectSelectedConversation();
     const canCloseWithoutSelected = Boolean(options.allowWithoutSelected && isKnownResumeDialog(dialog));
     if ((!selected.ok && !canCloseWithoutSelected) || (selected.ok && expectedChatDigest && selected.chatDigest !== expectedChatDigest)) {
@@ -5043,6 +5367,9 @@
     } else {
       showResumeCaptureStatus(`后端已收到简历；AI 状态：${response.analysisStatus || '处理中'}${analysisReason ? `，原因：${analysisReason}` : ''}。`, 'info');
     }
+    if (resumeAnalysisCurrentChatDigest) {
+      queueCurrentResumeAnalysis(resumeAnalysisCurrentChatDigest, resumeAnalysisRequestGeneration, 500);
+    }
   }
 
   async function pollResumeBackendStatus() {
@@ -5070,110 +5397,326 @@
       setTimeout(() => ensureResumeCaptureStatusBar(), 200);
       return;
     }
+    resumeCaptureStatusBar?._cleanupDrag?.();
     resumeCaptureStatusBar = document.createElement('div');
     resumeCaptureStatusBar.id = '__recruitment_capture_status';
     const savedPos = (() => {
       try { return JSON.parse(localStorage.getItem('__recruitment_capture_pos')); } catch { return null; }
     })();
-    const initTop = savedPos?.top ?? 60;
-    const initLeft = savedPos?.left ?? null;
-    resumeCaptureStatusBar.style.cssText = `position:fixed;top:${initTop}px;${initLeft !== null ? `left:${initLeft}px` : 'right:12px'};z-index:2147483647;width:min(280px,calc(100vw - 24px));max-height:60vh;background:rgba(15,23,42,.78);color:#fff;font:12px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;border:1px solid rgba(255,255,255,.10);border-radius:8px;box-shadow:0 4px 16px rgba(15,23,42,.15);overflow:hidden;user-select:text;`;
-    const header = document.createElement('div');
-    header.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid rgba(255,255,255,.08);cursor:grab;user-select:none;';
-    // 折叠/展开按钮
-    const collapseBtn = document.createElement('button');
-    collapseBtn.textContent = resumeCaptureStatusCollapsed ? '▶' : '▼';
-    collapseBtn.title = resumeCaptureStatusCollapsed ? '展开' : '折叠';
-    collapseBtn.style.cssText = 'padding:2px 6px;font:10px/1 monospace;background:transparent;color:#94a3b8;border:1px solid rgba(255,255,255,.15);border-radius:4px;cursor:pointer;flex-shrink:0;';
-    collapseBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
+    const initTop = Number.isFinite(savedPos?.top) ? savedPos.top : 64;
+    const initLeft = Number.isFinite(savedPos?.left) ? savedPos.left : null;
+    resumeCaptureStatusBar.style.cssText = `position:fixed;top:${initTop}px;${initLeft !== null ? `left:${initLeft}px` : 'right:16px'};z-index:2147483647;width:min(380px,calc(100vw - 24px));color-scheme:dark;`;
+    resumeCaptureStatusRoot = resumeCaptureStatusBar.attachShadow({ mode: 'open' });
+    resumeCaptureStatusRoot.innerHTML = `
+      <style>
+        :host{all:initial;display:block;font:12px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#e7edf6}
+        *{box-sizing:border-box}[hidden]{display:none!important}
+        .panel{max-height:min(680px,74vh);display:flex;flex-direction:column;overflow:hidden;border:1px solid rgba(152,177,205,.26);border-radius:12px;background:rgba(13,25,40,.97);box-shadow:0 14px 40px rgba(1,8,18,.42),inset 0 1px 0 rgba(255,255,255,.04);backdrop-filter:blur(14px)}
+        .header{display:flex;align-items:center;gap:10px;min-height:54px;padding:9px 10px 9px 13px;border-bottom:1px solid rgba(161,184,208,.16);cursor:grab;touch-action:none;user-select:none}
+        .header:active{cursor:grabbing}.title-block{display:flex;flex:1;min-width:0;flex-direction:column;gap:2px}
+        .title{font-size:13px;font-weight:700;letter-spacing:.01em;color:#f4f7fb}
+        .header-actions{display:flex;align-items:center;gap:6px;flex:none}button{font:inherit;cursor:pointer}button:focus-visible{outline:2px solid #73dfc0;outline-offset:2px}
+        .collapse{display:grid;place-items:center;width:28px;height:28px;padding:0;border:1px solid rgba(161,184,208,.24);border-radius:7px;background:rgba(255,255,255,.035);color:#d7e1ed}.collapse:hover{background:rgba(255,255,255,.1)}.collapse svg{width:13px;height:13px;stroke:currentColor;stroke-width:1.8;fill:none}
+        .body{min-height:0;overflow:auto;scrollbar-width:thin;scrollbar-color:rgba(146,169,194,.5) transparent}.resume-section{padding:12px 14px 13px}
+        .section-heading,.log-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:9px;color:#dbe5f0;font-size:11px;font-weight:700;letter-spacing:.025em}
+        .status{max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:2px 7px;border:1px solid rgba(161,184,208,.2);border-radius:999px;background:rgba(255,255,255,.045);color:#b7c6d8;font-size:10px;font-weight:550;letter-spacing:0}
+        .status[data-tone="success"]{border-color:rgba(79,198,164,.3);background:rgba(29,126,103,.2);color:#8fe0c6}.status[data-tone="warning"]{border-color:rgba(233,180,93,.32);background:rgba(130,88,25,.2);color:#f1ca82}.status[data-tone="error"]{border-color:rgba(245,131,131,.28);background:rgba(144,48,52,.2);color:#ffb5b5}
+        .resume-empty{padding:2px 0 1px;color:#b7c6d8;font-size:11px;line-height:1.65}.resume-content{display:flex;flex-direction:column;gap:10px}
+        .candidate-row{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0}.candidate{overflow:hidden;color:#f4f7fb;font-size:13px;font-weight:650;text-overflow:ellipsis;white-space:nowrap}
+        .recommendation{flex:none;padding:3px 8px;border:1px solid rgba(79,198,164,.32);border-radius:999px;background:rgba(29,126,103,.18);color:#94e1c8;font-size:10px;font-weight:650}
+        .analysis-field{display:flex;flex-direction:column;gap:4px}.field-label{color:#9fb1c7;font-size:10px;font-weight:650}
+        .summary{max-height:148px;overflow:auto;color:#e1e9f2;font-size:12px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere;scrollbar-width:thin;scrollbar-color:rgba(146,169,194,.4) transparent}
+        .evidence-list{display:flex;flex-direction:column;gap:5px;margin:0;padding:0;list-style:none}.evidence-list li{position:relative;padding-left:11px;color:#cad6e4;font-size:11px;line-height:1.55;overflow-wrap:anywhere}.evidence-list li:before{position:absolute;top:.55em;left:1px;width:4px;height:4px;border-radius:50%;background:#61c8a9;content:""}
+        .failure{padding:8px 9px;border:1px solid rgba(233,180,93,.24);border-radius:7px;background:rgba(126,84,22,.16);color:#e9ca91;font-size:11px;line-height:1.55;overflow-wrap:anywhere}.updated{color:#91a3b8;font-size:10px}
+        .logs{padding:10px 14px 12px;border-top:1px solid rgba(161,184,208,.16)}.log-heading{margin-bottom:6px}.log-count{color:#90a3ba;font-size:10px;font-weight:500;letter-spacing:0}
+        .log-list{display:flex;flex-direction:column;gap:4px}.log-empty{padding:3px 0;color:#9eafc3;font-size:11px}.log-line{display:grid;grid-template-columns:42px minmax(0,1fr);gap:7px;color:#cbd7e5;font-size:10px;line-height:1.5}
+        .log-time{color:#91a3b8;font-variant-numeric:tabular-nums}.log-text{min-width:0;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow-wrap:anywhere}.log-line[data-tone="success"] .log-text{color:#8fe0c6}.log-line[data-tone="error"] .log-text{color:#ffb5b5}.log-line[data-tone="warning"] .log-text{color:#f1ca82}
+        .panel[data-collapsed="true"] .body{display:none}
+        @media(max-width:480px){.panel{max-height:68vh}.header{gap:7px;padding-left:10px}.resume-section{padding:10px 11px}.logs{padding:9px 11px 10px}}
+        @media(prefers-reduced-motion:reduce){*,*:before,*:after{transition:none!important;scroll-behavior:auto!important}}
+      </style>
+      <section class="panel" aria-label="简历分析与运行日志">
+        <header class="header" data-drag-handle>
+          <div class="title-block"><strong class="title">简历分析与运行日志</strong></div>
+          <div class="header-actions">
+            <button class="collapse" type="button" data-collapse aria-label="折叠面板" aria-expanded="true" title="折叠面板"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8h9"/></svg></button>
+          </div>
+        </header>
+        <div class="body" data-panel-body>
+          <section class="resume-section" aria-label="当前会话简历摘要">
+            <div class="section-heading"><span>AI 简历摘要</span><span class="status" data-resume-status data-tone="info">等待会话</span></div>
+            <p class="resume-empty" data-resume-empty>打开包含简历记录的 BOSS 会话后，这里显示 AI 分析结论；不会展示简历原文。</p>
+            <div class="resume-content" data-resume-content hidden>
+              <div class="candidate-row"><span class="candidate" data-candidate></span><span class="recommendation" data-recommendation hidden></span></div>
+              <div class="analysis-field"><span class="field-label">分析摘要</span><div class="summary" data-summary></div></div>
+              <div class="analysis-field" data-evidence-wrap hidden><span class="field-label">关键依据</span><ul class="evidence-list" data-evidence></ul></div>
+              <div class="failure" data-analysis-failure hidden></div><time class="updated" data-analysis-updated></time>
+            </div>
+          </section>
+          <section class="logs" aria-label="最近运行日志"><div class="log-heading"><span>运行日志</span><span class="log-count">最近 5 条</span></div><div class="log-list" data-log-list aria-live="polite"><div class="log-empty">暂无运行日志</div></div></section>
+        </div>
+      </section>`;
+
+    const query = (selector) => resumeCaptureStatusRoot.querySelector(selector);
+    resumeCaptureStatusLog = query('[data-log-list]');
+    resumeAnalysisStatusNode = query('[data-resume-status]');
+    resumeAnalysisEmptyNode = query('[data-resume-empty]');
+    resumeAnalysisContentNode = query('[data-resume-content]');
+    resumeAnalysisCandidateNode = query('[data-candidate]');
+    resumeAnalysisRecommendationNode = query('[data-recommendation]');
+    resumeAnalysisSummaryNode = query('[data-summary]');
+    resumeAnalysisEvidenceNode = query('[data-evidence]');
+    resumeAnalysisEvidenceWrapNode = query('[data-evidence-wrap]');
+    resumeAnalysisFailureNode = query('[data-analysis-failure]');
+    resumeAnalysisUpdatedNode = query('[data-analysis-updated]');
+    resumeAnalysisCollapseButton = query('[data-collapse]');
+    const panel = query('.panel');
+    const body = query('[data-panel-body]');
+    const header = query('[data-drag-handle]');
+
+    resumeAnalysisCollapseButton.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
       resumeCaptureStatusCollapsed = !resumeCaptureStatusCollapsed;
-      collapseBtn.textContent = resumeCaptureStatusCollapsed ? '▶' : '▼';
-      collapseBtn.title = resumeCaptureStatusCollapsed ? '展开' : '折叠';
-      resumeCaptureStatusLog.style.display = resumeCaptureStatusCollapsed ? 'none' : '';
-      resumeCaptureStatusBar.style.maxHeight = resumeCaptureStatusCollapsed ? (header.offsetHeight + 2) + 'px' : '60vh';
+      panel.dataset.collapsed = String(resumeCaptureStatusCollapsed);
+      resumeAnalysisCollapseButton.setAttribute('aria-expanded', String(!resumeCaptureStatusCollapsed));
+      resumeAnalysisCollapseButton.setAttribute('aria-label', resumeCaptureStatusCollapsed ? '展开面板' : '折叠面板');
+      resumeAnalysisCollapseButton.title = resumeCaptureStatusCollapsed ? '展开面板' : '折叠面板';
+      body.hidden = resumeCaptureStatusCollapsed;
     });
-    const title = document.createElement('strong');
-    title.textContent = '自动化运行日志';
-    title.style.flex = '1';
-    const copyBtn = document.createElement('button');
-    copyBtn.textContent = '复制全部';
-    copyBtn.style.cssText = 'padding:3px 8px;font:11px sans-serif;background:#2563eb;color:#fff;border:0;border-radius:5px;cursor:pointer;flex-shrink:0;';
-    copyBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      navigator.clipboard.writeText(resumeCaptureStatusLog?.textContent || '');
-      copyBtn.textContent = '已复制';
-      setTimeout(() => { copyBtn.textContent = '复制全部'; }, 1500);
-    });
-    header.append(collapseBtn, title, copyBtn);
-    resumeCaptureStatusLog = document.createElement('div');
-    resumeCaptureStatusLog.style.cssText = 'max-height:calc(60vh - 42px);overflow-y:auto;padding:8px 10px;white-space:pre-wrap;word-break:break-word;';
-    if (resumeCaptureStatusCollapsed) resumeCaptureStatusLog.style.display = 'none';
-    resumeCaptureStatusBar.append(header, resumeCaptureStatusLog);
-    resumeCaptureCopyBtn = copyBtn;
     mount.appendChild(resumeCaptureStatusBar);
-    // 如果之前折叠，调整 max-height
-    if (resumeCaptureStatusCollapsed) {
-      requestAnimationFrame(() => {
-        resumeCaptureStatusBar.style.maxHeight = (header.offsetHeight + 2) + 'px';
-      });
-    }
-    // ---- 拖拽逻辑 ----
+    panel.dataset.collapsed = String(resumeCaptureStatusCollapsed);
+    body.hidden = resumeCaptureStatusCollapsed;
+    resumeAnalysisCollapseButton.setAttribute('aria-expanded', String(!resumeCaptureStatusCollapsed));
     let isDragging = false;
-    let dragStartX = 0, dragStartY = 0;
-    let dragOrigLeft = 0, dragOrigTop = 0;
-    const onMouseDown = (e) => {
-      if (e.target.closest('button')) return;
+    let dragStartX = 0;
+    let dragStartY = 0;
+    let dragOrigLeft = 0;
+    let dragOrigTop = 0;
+    const clampPosition = () => {
+      const rect = resumeCaptureStatusBar.getBoundingClientRect();
+      const left = Math.max(8, Math.min(window.innerWidth - Math.min(rect.width, window.innerWidth - 16) - 8, rect.left));
+      const top = Math.max(8, Math.min(window.innerHeight - Math.min(rect.height, 80) - 8, rect.top));
+      resumeCaptureStatusBar.style.left = `${left}px`;
+      resumeCaptureStatusBar.style.right = 'auto';
+      resumeCaptureStatusBar.style.top = `${top}px`;
+    };
+    const onPointerDown = (event) => {
+      if (event.button !== 0 || event.target.closest('button')) return;
       isDragging = true;
       const rect = resumeCaptureStatusBar.getBoundingClientRect();
-      dragStartX = e.clientX;
-      dragStartY = e.clientY;
+      dragStartX = event.clientX;
+      dragStartY = event.clientY;
       dragOrigLeft = rect.left;
       dragOrigTop = rect.top;
-      resumeCaptureStatusBar.style.cursor = 'grabbing';
-      resumeCaptureStatusBar.style.transition = 'none';
-      resumeCaptureStatusBar.style.left = rect.left + 'px';
+      resumeCaptureStatusBar.style.left = `${rect.left}px`;
       resumeCaptureStatusBar.style.right = 'auto';
+      event.preventDefault();
     };
-    const onMouseMove = (e) => {
+    const onPointerMove = (event) => {
       if (!isDragging) return;
-      const dx = e.clientX - dragStartX;
-      const dy = e.clientY - dragStartY;
-      const newLeft = Math.max(0, Math.min(window.innerWidth - 50, dragOrigLeft + dx));
-      const newTop = Math.max(0, Math.min(window.innerHeight - 30, dragOrigTop + dy));
-      resumeCaptureStatusBar.style.left = newLeft + 'px';
-      resumeCaptureStatusBar.style.top = newTop + 'px';
+      const rect = resumeCaptureStatusBar.getBoundingClientRect();
+      const left = Math.max(8, Math.min(window.innerWidth - rect.width - 8, dragOrigLeft + event.clientX - dragStartX));
+      const top = Math.max(8, Math.min(window.innerHeight - Math.min(rect.height, 80) - 8, dragOrigTop + event.clientY - dragStartY));
+      resumeCaptureStatusBar.style.left = `${left}px`;
+      resumeCaptureStatusBar.style.top = `${top}px`;
     };
-    const onMouseUp = () => {
+    const onPointerUp = () => {
       if (!isDragging) return;
       isDragging = false;
-      resumeCaptureStatusBar.style.cursor = 'grab';
-      resumeCaptureStatusBar.style.transition = '';
+      clampPosition();
       const rect = resumeCaptureStatusBar.getBoundingClientRect();
       try { localStorage.setItem('__recruitment_capture_pos', JSON.stringify({ top: rect.top, left: rect.left })); } catch {}
     };
-    header.addEventListener('mousedown', onMouseDown);
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
-    // 清理旧监听（在重新创建时）
-    resumeCaptureStatusBar._cleanupDrag?.();
+    header.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('pointermove', onPointerMove, { passive: true });
+    window.addEventListener('pointerup', onPointerUp, { passive: true });
+    window.addEventListener('resize', clampPosition, { passive: true });
+    requestAnimationFrame(clampPosition);
     resumeCaptureStatusBar._cleanupDrag = () => {
-      header.removeEventListener('mousedown', onMouseDown);
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
+      header.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('resize', clampPosition);
     };
+  }
+
+  function handleResumeAnalysisSelectionGesture(event) {
+    if (!event?.isTrusted || !CHAT_URL.test(location.pathname)) return;
+    if (event.type === 'keydown' && !['Enter', ' '].includes(event.key)) return;
+    const target = event.target instanceof Element ? event.target : null;
+    if (target?.closest('#__recruitment_capture_status')) return;
+    if (!target?.closest(SELECTORS.conversation)) return;
+    if (event.type === 'pointerdown' || event.type === 'keydown') {
+      resumeAnalysisCurrentChatDigest = '';
+      resumeAnalysisRequestGeneration += 1;
+      clearTimeout(resumeAnalysisFetchTimer);
+      clearTimeout(resumeAnalysisSelectionTimer);
+      clearTimeout(resumeAnalysisPollTimer);
+      setResumeAnalysisEmpty('正在确认当前会话，避免展示其他候选人的简历信息。', '核对中', 'info');
+      if (event.type === 'pointerdown') return;
+    }
+    scheduleResumeAnalysisSelectionCheck(350);
+  }
+
+  function scheduleResumeAnalysisSelectionCheck(delay = 350) {
+    clearTimeout(resumeAnalysisSelectionTimer);
+    resumeAnalysisSelectionTimer = setTimeout(() => {
+      resumeAnalysisSelectionTimer = null;
+      void refreshResumeAnalysisForSelectedRow();
+    }, delay);
+  }
+
+  async function refreshResumeAnalysisForSelectedRow() {
+    if (!CHAT_URL.test(location.pathname)) return;
+    const selected = [...document.querySelectorAll(SELECTORS.selectedConversation)].find(visible);
+    if (!selected) return;
+    const identity = stableIdentity(selected);
+    if (!identity) return;
+    const chatDigest = await digest(identity);
+    if (!selected.isConnected || !selected.matches(SELECTORS.selectedConversation)
+        || [...document.querySelectorAll(SELECTORS.selectedConversation)].find(visible) !== selected) return;
+    observeResumeAnalysisSelection(chatDigest);
+  }
+
+  function observeResumeAnalysisSelection(chatDigest) {
+    if (!/^[a-f0-9]{64}$/.test(String(chatDigest || '')) || chatDigest === resumeAnalysisCurrentChatDigest) return;
+    resumeAnalysisCurrentChatDigest = chatDigest;
+    resumeAnalysisRequestGeneration += 1;
+    resumeAnalysisPollCount = 0;
+    clearTimeout(resumeAnalysisFetchTimer);
+    clearTimeout(resumeAnalysisPollTimer);
+    setResumeAnalysisEmpty('已切换会话，正在核对这份简历的分析结果。', '读取中', 'info');
+    queueCurrentResumeAnalysis(chatDigest, resumeAnalysisRequestGeneration, 150);
+  }
+
+  function queueCurrentResumeAnalysis(chatDigest, generation, delay = 0) {
+    clearTimeout(resumeAnalysisFetchTimer);
+    clearTimeout(resumeAnalysisPollTimer);
+    resumeAnalysisPollTimer = null;
+    resumeAnalysisFetchTimer = setTimeout(() => {
+      resumeAnalysisFetchTimer = null;
+      void fetchCurrentResumeAnalysis(chatDigest, generation);
+    }, delay);
+  }
+
+  async function fetchCurrentResumeAnalysis(chatDigest, generation) {
+    if (generation !== resumeAnalysisRequestGeneration || chatDigest !== resumeAnalysisCurrentChatDigest) return;
+    setResumeAnalysisStatus('正在读取', 'info');
+    const response = await send({ type: 'BRIDGE_GET_CURRENT_RESUME_ANALYSIS', chatDigest });
+    if (generation !== resumeAnalysisRequestGeneration || chatDigest !== resumeAnalysisCurrentChatDigest) return;
+    const selected = [...document.querySelectorAll(SELECTORS.selectedConversation)].find(visible);
+    const selectedIdentity = selected ? stableIdentity(selected) : '';
+    if (!selectedIdentity || await digest(selectedIdentity) !== chatDigest) {
+      if (generation === resumeAnalysisRequestGeneration) {
+        setResumeAnalysisEmpty('当前会话发生变化，正在重新核对简历分析。', '核对中', 'warning');
+        void refreshResumeAnalysisForSelectedRow();
+      }
+      return;
+    }
+    if (!response?.ok || !response.analysis) {
+      setResumeAnalysisEmpty(response?.error || '暂时无法读取当前会话的简历分析。', '读取失败', 'error');
+      showResumeCaptureStatus(`简历分析读取失败：${response?.error || '扩展后台无响应'}`, 'error');
+      return;
+    }
+    const analysis = response.analysis;
+    renderCurrentResumeAnalysis(analysis);
+    const status = String(analysis?.analysisStatus || '');
+    const processing = String(analysis?.processingStatus || '');
+    const terminal = ['SUCCEEDED', 'FAILED', 'UNAVAILABLE', 'NOT_AUTHORIZED', 'RESULT_EXPIRED', 'RESULT_UNAVAILABLE'].includes(status)
+      || /FAILED|ERROR/.test(processing);
+    const pending = Boolean(analysis?.hasResume) && !terminal
+      && (['QUEUED', 'PROCESSING', 'RETRY_WAIT', 'READY_FOR_AI'].includes(processing)
+        || ['QUEUED', 'PROCESSING', 'RETRY_WAIT', 'PENDING'].includes(status));
+    if (pending && resumeAnalysisPollCount < 20) {
+      resumeAnalysisPollCount += 1;
+      clearTimeout(resumeAnalysisPollTimer);
+      resumeAnalysisPollTimer = setTimeout(() => {
+        resumeAnalysisPollTimer = null;
+        void fetchCurrentResumeAnalysis(chatDigest, generation);
+      }, 15_000);
+    } else if (pending) {
+      setResumeAnalysisStatus('分析耗时较长', 'warning');
+    }
+  }
+
+  function renderCurrentResumeAnalysis(analysis) {
+    if (!analysis?.hasResume) {
+      setResumeAnalysisEmpty(analysis?.failureReason || '当前会话尚未关联简历记录。简历进入后台后会自动显示摘要。', '暂无简历', 'info');
+      return;
+    }
+    const status = String(analysis.analysisStatus || '');
+    const processing = String(analysis.processingStatus || '');
+    const labels = { PRIORITY_VIEW: '优先查看', NORMAL_VIEW: '常规查看', INFORMATION_NEEDED: '信息待补充' };
+    const failed = ['FAILED', 'UNAVAILABLE', 'NOT_AUTHORIZED', 'RESULT_UNAVAILABLE'].includes(status) || /FAILED|ERROR/.test(processing);
+    const waiting = /PROCESS|QUEUE|RETRY|READY|PENDING/.test(`${status} ${processing}`);
+    const statusLabel = status === 'SUCCEEDED' ? '分析完成'
+      : status === 'RESULT_EXPIRED' ? '结果已过期'
+        : failed ? '分析未完成'
+          : waiting ? '分析处理中' : '等待分析';
+    const tone = status === 'SUCCEEDED' ? 'success'
+      : status === 'RESULT_EXPIRED' ? 'warning' : failed ? 'error' : waiting ? 'warning' : 'info';
+    setResumeAnalysisStatus(statusLabel, tone);
+    resumeAnalysisEmptyNode.hidden = true;
+    resumeAnalysisContentNode.hidden = false;
+    resumeAnalysisCandidateNode.textContent = String(analysis.candidateName || '候选人姓名未识别').slice(0, 80);
+    const recommendation = labels[analysis.recommendation] || String(analysis.recommendation || '');
+    resumeAnalysisRecommendationNode.textContent = recommendation;
+    resumeAnalysisRecommendationNode.hidden = !recommendation;
+    resumeAnalysisSummaryNode.textContent = String(analysis.summary || 'AI 暂未返回摘要，请到简历分析页面复核。').slice(0, 800);
+    resumeAnalysisEvidenceNode.replaceChildren();
+    const evidence = Array.isArray(analysis.evidence) ? analysis.evidence.slice(0, 3) : [];
+    for (const item of evidence) {
+      const row = document.createElement('li');
+      row.textContent = String(item || '').slice(0, 320);
+      if (row.textContent) resumeAnalysisEvidenceNode.appendChild(row);
+    }
+    resumeAnalysisEvidenceWrapNode.hidden = resumeAnalysisEvidenceNode.children.length === 0;
+    const failure = String(analysis.failureReason || '');
+    resumeAnalysisFailureNode.textContent = failure;
+    resumeAnalysisFailureNode.hidden = !failure;
+    const updatedAt = Date.parse(analysis.updatedAt || '');
+    resumeAnalysisUpdatedNode.textContent = Number.isFinite(updatedAt)
+      ? `分析更新于 ${new Date(updatedAt).toLocaleString()}` : '';
+  }
+
+  function setResumeAnalysisEmpty(message, status, tone) {
+    if (!resumeAnalysisEmptyNode) return;
+    resumeAnalysisContentNode.hidden = true;
+    resumeAnalysisEmptyNode.hidden = false;
+    resumeAnalysisEmptyNode.textContent = String(message || '等待当前会话。').slice(0, 240);
+    setResumeAnalysisStatus(status, tone);
+  }
+
+  function setResumeAnalysisStatus(status, tone) {
+    if (!resumeAnalysisStatusNode) return;
+    resumeAnalysisStatusNode.textContent = String(status || '等待会话').slice(0, 40);
+    resumeAnalysisStatusNode.dataset.tone = tone || 'info';
   }
 
   function showResumeCaptureStatus(text, tone = 'info') {
     ensureResumeCaptureStatusBar();
     if (!resumeCaptureStatusBar || !resumeCaptureStatusLog) return;
+    const message = String(text || '').trim();
+    if (!message || /^(?:🖱️|🔍 启动诊断:|简历卡片 DOM（可选中复制）|状态面板仍在运行)/.test(message)) return;
+    const inferredTone = tone === 'info' && /失败|异常|未找到|无法|停止|无响应/.test(message) ? 'error'
+      : tone === 'info' && /成功|完成|已导入|已接收/.test(message) ? 'success' : tone;
+    resumeCaptureStatusLog.querySelector('.log-empty')?.remove();
     const line = document.createElement('div');
-    const inferredTone = tone === 'info' && /失败|异常|未找到|无法|停止|无响应/.test(text) ? 'error'
-      : tone === 'info' && /成功|完成|已导入|已接收/.test(text) ? 'success' : tone;
-    line.style.cssText = `padding:4px 0;border-bottom:1px solid rgba(255,255,255,.07);color:${inferredTone === 'error' ? '#fca5a5' : inferredTone === 'success' ? '#86efac' : '#e2e8f0'};`;
-    line.textContent = '[' + new Date().toLocaleTimeString() + '] ' + String(text);
+    line.className = 'log-line';
+    line.dataset.tone = inferredTone;
+    const time = document.createElement('time');
+    time.className = 'log-time';
+    time.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const detail = document.createElement('span');
+    detail.className = 'log-text';
+    detail.textContent = message.slice(0, 280);
+    detail.title = message.slice(0, 600);
+    line.append(time, detail);
     resumeCaptureStatusLog.appendChild(line);
-    while (resumeCaptureStatusLog.children.length > 30) resumeCaptureStatusLog.firstChild.remove();
+    while (resumeCaptureStatusLog.querySelectorAll('.log-line').length > 5) {
+      resumeCaptureStatusLog.querySelector('.log-line')?.remove();
+    }
     resumeCaptureStatusLog.scrollTop = resumeCaptureStatusLog.scrollHeight;
   }
 
@@ -5228,9 +5771,11 @@
 
   function autoClickResumeCard(card) {
     try {
-      if (transcriptCaptureInProgress || !singleAccountAutoReplyEnabled
+      if (singleAccountHumanTakeover || transcriptCaptureInProgress || !singleAccountAutoReplyEnabled
           || !resumeAttachmentProcessing || !resumePreviewOpenPending) {
-        showResumeCaptureStatus('跳过点击: 当前没有经过上下文判定的本轮新简历处理许可');
+        showResumeCaptureStatus(singleAccountHumanTakeover
+          ? '跳过点击: HR 正在操作 BOSS 页面，保留当前简历状态'
+          : '跳过点击: 当前没有经过上下文判定的本轮新简历处理许可');
         return;
       }
       if (resumeAttachmentProcessing && findVisibleResumeDialog()) {
@@ -5277,7 +5822,7 @@
 
   function scheduleResumePreviewOpenRetry(control, expectedEpoch) {
     setTimeout(() => {
-      if (!singleAccountAutoReplyEnabled || !resumeAttachmentProcessing
+      if (singleAccountHumanTakeover || !singleAccountAutoReplyEnabled || !resumeAttachmentProcessing
           || resumeAttachmentEpoch !== expectedEpoch || lastResumePdfImportOutcome
           || resumePdfForwardInFlight || findVisibleResumeDialog()) return;
       if (resumePreviewOpenAttempts >= 3) {

@@ -93,12 +93,23 @@ const selectedCandidateId = computed(() => selectedIntake.value
   ? contacts.value.find((item) => item.id === selectedIntake.value?.contactId)?.candidateId
   : undefined)
 const selectedTalentDetail = computed(() => selectedCandidateId.value ? talentDetails.value[selectedCandidateId.value] : undefined)
-const selectedCandidateDisplayName = computed(() => selectedTalentDetail.value?.candidate.displayName
-  || (selectedIntake.value ? candidateNameForIntake(selectedIntake.value) : '')
-  || selectedIntake.value?.candidateName
+const selectedCandidateDisplayName = computed(() => (selectedIntake.value ? candidateNameForIntake(selectedIntake.value) : '')
+  || selectedTalentDetail.value?.candidate.displayName
   || '')
 const queueSearch = ref('')
 const queueFilter = ref<'all' | 'pending' | 'processing' | 'analyzed' | 'exception'>('all')
+const queueFilterCounts = computed(() => ({
+  all: intakes.value.length,
+  pending: intakes.value.filter((item) => item.status === 'PENDING_REVIEW').length,
+  processing: processing.value.length,
+  analyzed: intakes.value.filter((item) => latestAnalysis(item.id)?.status === 'SUCCEEDED').length,
+  exception: exceptionCount.value,
+}))
+const hasQueueFilters = computed(() => Boolean(queueSearch.value.trim()) || queueFilter.value !== 'all')
+function clearQueueFilters() {
+  queueSearch.value = ''
+  queueFilter.value = 'all'
+}
 const filteredIntakes = computed(() => {
   const q = queueSearch.value.trim().toLowerCase()
   return intakes.value.filter((item) => {
@@ -114,6 +125,7 @@ const filteredIntakes = computed(() => {
     return true
   })
 })
+const selectedIntakeOutsideQueue = computed(() => Boolean(selectedIntake.value && !filteredIntakes.value.some((item) => item.id === selectedIntake.value?.id)))
 const currentIntakeIndex = computed(() => filteredIntakes.value.findIndex((item) => item.id === selectedIntakeId.value))
 const canNavigatePrev = computed(() => currentIntakeIndex.value > 0)
 const canNavigateNext = computed(() => currentIntakeIndex.value >= 0 && currentIntakeIndex.value < filteredIntakes.value.length - 1)
@@ -146,9 +158,16 @@ function latestAnalysis(id: string) {
 
 function candidateNameForIntake(item: ResumeIntake) {
   const candidateId = contacts.value.find((contact) => contact.id === item.contactId)?.candidateId
-  return (candidateId ? talentDetails.value[candidateId]?.candidate.displayName : undefined)
-    || talentPage.value?.items.find((candidate) => candidate.candidateId === candidateId)?.displayName
-    || item.candidateName
+  const names = [
+    item.candidateName,
+    talentPage.value?.items.find((candidate) => candidate.candidateId === candidateId)?.displayName,
+    candidateId ? talentDetails.value[candidateId]?.candidate.displayName : undefined,
+  ].filter((name): name is string => Boolean(name?.trim()))
+  return names.find((name) => !isAnonymousCandidateName(name)) || names[0] || '姓名未识别'
+}
+
+function isAnonymousCandidateName(name: string) {
+  return /^(匿名候选人|已匿名候选人|匿名|unknown)/i.test(name.trim())
 }
 
 function processingLabel(item: ResumeIntake) {
@@ -698,7 +717,7 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
 </script>
 
 <template>
-  <div class="page-shell resume-page">
+  <div class="page-shell resume-page resume-page--viewport">
     <PageHeader>
       <div></div>
       <div class="heading-actions">
@@ -747,14 +766,26 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
           <div class="queue-filter-row">
             <el-input v-model="queueSearch" size="small" placeholder="搜索姓名或岗位" clearable class="queue-search-input" />
             <div class="queue-filter-pills">
-              <button type="button" class="filter-pill" :class="{ 'filter-pill--active': queueFilter === 'all' }" @click="queueFilter = 'all'">全部</button>
-              <button type="button" class="filter-pill filter-pill--amber" :class="{ 'filter-pill--active': queueFilter === 'pending' }" @click="queueFilter = 'pending'">待处理</button>
-              <button type="button" class="filter-pill filter-pill--violet" :class="{ 'filter-pill--active': queueFilter === 'processing' }" @click="queueFilter = 'processing'">分析中</button>
-              <button type="button" class="filter-pill filter-pill--teal" :class="{ 'filter-pill--active': queueFilter === 'analyzed' }" @click="queueFilter = 'analyzed'">已完成</button>
-              <button type="button" class="filter-pill filter-pill--red" :class="{ 'filter-pill--active': queueFilter === 'exception' }" @click="queueFilter = 'exception'">需关注</button>
+              <button type="button" class="filter-pill" :aria-pressed="queueFilter === 'all'" :class="{ 'filter-pill--active': queueFilter === 'all' }" @click="queueFilter = 'all'">全部 <b>{{ queueFilterCounts.all }}</b></button>
+              <button type="button" class="filter-pill filter-pill--amber" :aria-pressed="queueFilter === 'pending'" :class="{ 'filter-pill--active': queueFilter === 'pending' }" @click="queueFilter = 'pending'">待处理 <b>{{ queueFilterCounts.pending }}</b></button>
+              <button type="button" class="filter-pill filter-pill--violet" :aria-pressed="queueFilter === 'processing'" :class="{ 'filter-pill--active': queueFilter === 'processing' }" @click="queueFilter = 'processing'">分析中 <b>{{ queueFilterCounts.processing }}</b></button>
+              <button type="button" class="filter-pill filter-pill--teal" :aria-pressed="queueFilter === 'analyzed'" :class="{ 'filter-pill--active': queueFilter === 'analyzed' }" @click="queueFilter = 'analyzed'">已完成 <b>{{ queueFilterCounts.analyzed }}</b></button>
+              <button type="button" class="filter-pill filter-pill--red" :aria-pressed="queueFilter === 'exception'" :class="{ 'filter-pill--active': queueFilter === 'exception' }" @click="queueFilter = 'exception'">需关注 <b>{{ queueFilterCounts.exception }}</b></button>
             </div>
           </div>
+          <div v-if="hasQueueFilters" class="queue-result-state" aria-live="polite">
+            <span>{{ queueSearch.trim() ? `搜索“${queueSearch.trim()}”` : '当前分类' }} · {{ filteredIntakes.length }} / {{ intakes.length }} 份</span>
+            <button type="button" @click="clearQueueFilters">清除筛选</button>
+          </div>
+          <div v-if="selectedIntakeOutsideQueue" class="queue-selection-note" role="status">
+            <span>右侧仍在查看「{{ selectedCandidateDisplayName }}」，它不在当前筛选结果中。</span>
+            <button type="button" @click="clearQueueFilters">显示当前简历</button>
+          </div>
           <div class="resume-queue">
+            <AsyncState v-if="!filteredIntakes.length" state="empty" embedded title="没有匹配的简历" message="试试更短的姓名或岗位关键词，或清除筛选条件。">
+              <template #icon><el-icon><UploadFilled /></el-icon></template>
+              <el-button size="small" type="primary" plain @click="clearQueueFilters">清除筛选</el-button>
+            </AsyncState>
             <article
               v-for="item in filteredIntakes"
               :key="item.id"
@@ -1196,17 +1227,26 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
 .ai-service-inline strong { font-size: 12px; }
 .ai-service-inline small { margin-top: 3px; color: var(--text-secondary); font-size: 11px; line-height: 1.4; }
 .ai-service-inline__actions { grid-column:1/-1; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:6px; }
-.queue-filter-row { display:flex; align-items:center; gap:8px; padding:8px 18px 10px; border-bottom:1px solid var(--border); }
+.queue-filter-row { display:flex; flex-direction:column; align-items:stretch; gap:7px; padding:8px 18px 10px; border-bottom:1px solid var(--border); }
 .queue-search-input { flex:1; min-width:0; }
 .queue-search-input :deep(.el-input__wrapper) { border-radius:var(--radius-pill); }
-.queue-filter-pills { display:flex; flex-wrap:wrap; gap:4px; }
-.filter-pill { padding:3px 10px; border:1px solid var(--border); border-radius:var(--radius-pill); background:var(--surface); color:var(--text-secondary); font-size:11px; font-weight:600; cursor:pointer; transition:all var(--transition-fast); }
+.queue-filter-pills { display:flex; flex-wrap:nowrap; gap:4px; overflow-x:auto; padding:1px 1px 3px; scrollbar-width:thin; }
+.filter-pill { display:inline-flex; align-items:center; gap:4px; padding:3px 10px; border:1px solid var(--border); border-radius:var(--radius-pill); background:var(--surface); color:var(--text-secondary); font-size:11px; font-weight:600; cursor:pointer; transition:all var(--transition-fast); }
+.filter-pill b { min-width:14px; color:var(--text-tertiary); font-size:10px; font-variant-numeric:tabular-nums; text-align:center; }
+.filter-pill { flex:0 0 auto; white-space:nowrap; }
 .filter-pill:hover { border-color:var(--primary); color:var(--text-main); }
 .filter-pill--active { border-color:var(--primary); background:var(--surface-teal); color:var(--primary); }
+.filter-pill--active b { color:inherit; }
 .filter-pill--amber.filter-pill--active { background:var(--surface-amber); border-color:rgba(183,110,0,.3); color:#92400e; }
 .filter-pill--violet.filter-pill--active { background:var(--surface-violet); border-color:rgba(114,83,166,.3); color:#5b21b6; }
 .filter-pill--teal.filter-pill--active { background:var(--surface-teal); border-color:rgba(13,148,136,.3); color:var(--primary); }
 .filter-pill--red.filter-pill--active { background:var(--surface-rose); border-color:rgba(180,35,24,.3); color:#991b1b; }
+.queue-result-state, .queue-selection-note { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:0 12px 6px; padding:6px 9px; border:1px solid var(--border-subtle); border-radius:9px; color:var(--text-secondary); font-size:11px; line-height:1.4; }
+.queue-result-state { background:var(--surface-soft); }
+.queue-selection-note { border-color:var(--border-teal); background:var(--surface-teal); color:var(--text-primary); }
+.queue-result-state button, .queue-selection-note button { flex:0 0 auto; padding:2px 5px; border:0; background:transparent; color:var(--primary); font:inherit; font-weight:650; cursor:pointer; }
+.queue-result-state button:focus-visible, .queue-selection-note button:focus-visible { outline:2px solid var(--border-focus); outline-offset:2px; border-radius:4px; }
+.resume-queue > .async-state { margin:8px; }
 .authorization-checks { display: grid; gap: 12px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface-muted); }
 .authorization-checks .el-checkbox { height: auto; margin: 0; white-space: normal; }
 .resume-queue { display:grid; align-content:start; max-height:760px; overflow:auto; padding:8px; gap:6px; scrollbar-width:thin; }
@@ -1397,9 +1437,19 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
 .merge-preview-grid strong { color:var(--text-main); font-size:20px; line-height:1; }
 .merge-warning ul { margin:6px 0 0; padding-left:18px; }
 .merge-preview-safe { margin:0; padding:12px 14px; border-radius:var(--radius-control); background:var(--surface-teal); color:var(--brand-800); font-size:12px; line-height:1.6; }
-@media(min-width:1181px) {
- .analysis-workspace { height:calc(100dvh - 80px); min-height:620px; }
- .resume-queue-panel { display:flex; flex-direction:column; min-height:0; }.resume-queue { flex:1; max-height:none; min-height:0; }.analysis-board { overflow-y:auto; overscroll-behavior:contain; }
+@media(min-width:900px) {
+ .resume-page--viewport { display:flex; flex-direction:column; width:min(100%,1480px); height:100%; min-height:0; overflow:hidden; }
+ .resume-page--viewport > .analysis-workspace { flex:1 1 auto; height:auto; min-height:0; }
+ .resume-page--viewport > .async-state { flex:1 1 auto; min-height:0; }
+ .resume-page--viewport > .external-pdf-drop { flex:0 0 auto; }
+ .resume-page--viewport .resume-queue-panel { display:flex; flex-direction:column; min-height:0; }
+ .resume-page--viewport .resume-queue { flex:1; max-height:none; min-height:0; overflow:auto; overscroll-behavior:contain; }
+ .resume-page--viewport .analysis-board { min-height:0; overflow-y:auto; overscroll-behavior:contain; }
+}
+@media(min-width:900px) and (max-width:1180px) {
+ .resume-page--viewport > .analysis-workspace { grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(180px,38%) minmax(0,1fr); }
+ .resume-page--viewport .resume-queue-panel { overflow:hidden; }
+ .resume-page--viewport .resume-queue { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }
 }
 @media(min-width:1181px) and (max-width:1480px) {
  .analysis-workspace { grid-template-columns:min(320px, 25vw) minmax(0,1fr); }

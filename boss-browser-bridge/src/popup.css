@@ -112,6 +112,9 @@ details[open] summary::before { transform: rotate(90deg); }
 .reply-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
 .reply-heading strong { font-size: 12px; }
 .reply-heading small { color: var(--muted); font-size: 11px; }
+.takeover-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; }
+.takeover-row small { min-width: 0; line-height: 1.4; }
+.takeover-row button { flex: 0 0 auto; }
 
 .stats { display: flex; gap: 8px; }
 .stats article {

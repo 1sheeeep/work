@@ -397,7 +397,7 @@ function showJobsHelp() {
 </script>
 
 <template>
-  <div class="page-shell positions-page">
+  <div class="page-shell positions-page positions-page--viewport">
     <PageHeader>
       <div></div>
     </PageHeader>
@@ -421,7 +421,8 @@ function showJobsHelp() {
           <small class="metrics-panel__hint"><el-icon><InfoFilled /></el-icon> 实时统计</small>
         </div>
       </div>
-      <div class="positions-workspace card-panel">
+      <div class="positions-workspace positions-workspace--viewport card-panel" :class="{ 'positions-workspace--has-meta': visibleCompanies.length || reviewQueue.length }">
+      <div v-if="visibleCompanies.length || reviewQueue.length" class="positions-meta-grid">
       <section v-if="visibleCompanies.length" class="company-knowledge-panel">
         <div class="section-title-row">
           <div>
@@ -483,6 +484,7 @@ function showJobsHelp() {
           </article>
         </div>
       </section>
+      </div>
       <section class="jobs-panel">
         <div class="section-title-row jobs-title">
           <div>
@@ -512,6 +514,7 @@ function showJobsHelp() {
           <template #icon><el-icon><Briefcase /></el-icon></template>
         </AsyncState>
         <template v-else>
+          <div class="jobs-table-scroll">
           <el-table :data="jobs" row-key="id" :expand-row-keys="expandedJobIds" @expand-change="handleJobExpandChange" class="jobs-table" table-layout="fixed"
             ><el-table-column type="expand" width="44"
               ><template #default="{ row }"
@@ -676,6 +679,7 @@ function showJobsHelp() {
               ></el-table-column
             ></el-table
           >
+          </div>
           <div class="job-cards">
             <article v-for="job in jobs" :key="job.id" class="entity-card">
               <header>
@@ -749,18 +753,20 @@ function showJobsHelp() {
     </template>
 
     <el-dialog
+      class="review-dialog--fit"
       v-model="reviewDialogOpen"
       :title="`${reviewJob?.title ?? ''} · 完成真实岗位审核`"
-      width="820px"
+      width="min(980px, calc(100vw - 32px))"
       append-to-body
       destroy-on-close
       ><div class="review-dialog-header"><span>请对照真实BOSS职位页面信息填写以下字段</span><el-button :icon="InfoFilled" size="small" type="text" @click="showReviewHelp">查看说明</el-button></div><el-form
+        class="job-review-form"
         ref="reviewFormRef"
         :model="reviewForm"
         :rules="reviewRules"
         label-position="top"
         ><h3 class="boss-section-title">基础信息</h3>
-        <div class="form-grid boss-field-grid">
+        <div class="form-grid boss-field-grid job-review-grid">
           <el-form-item label="公司">
             <el-input :model-value="reviewJob?.company.name" disabled />
           </el-form-item>
@@ -778,16 +784,16 @@ function showJobsHelp() {
           </el-form-item>
         </div>
         <h3 class="boss-section-title">岗位内容</h3>
-        <el-form-item label="职位描述" prop="description"
+        <el-form-item label="职位描述" prop="description" class="review-wide-field"
           ><el-input
             v-model="reviewForm.description"
             type="textarea"
-            :rows="5"
+            :rows="2"
             maxlength="10000"
             show-word-limit
             placeholder="与 BOSS 职位描述保持一致"
         /></el-form-item>
-        <div class="form-grid boss-field-grid">
+        <div class="form-grid boss-field-grid job-review-grid">
           <el-form-item label="经验" prop="experienceRequirement">
             <el-input
               v-model="reviewForm.experienceRequirement"
@@ -817,8 +823,8 @@ function showJobsHelp() {
           </el-form-item>
         </div>
         <h3 class="boss-section-title">回复内容</h3>
-        <el-form-item label="岗位工作内容" prop="replySummary">
-          <el-input v-model="reviewForm.replySummary" type="textarea" :rows="4" maxlength="1000" show-word-limit placeholder="仅填写主要工作内容；地点、薪资和公司介绍由系统使用上方已审核字段组合" />
+        <el-form-item label="岗位工作内容" prop="replySummary" class="review-wide-field">
+          <el-input v-model="reviewForm.replySummary" type="textarea" :rows="2" maxlength="1000" show-word-limit placeholder="仅填写主要工作内容；地点、薪资和公司介绍由系统使用上方已审核字段组合" />
         </el-form-item>
         <h3 class="boss-section-title">审核结果</h3>
         <div class="review-confirmations">
@@ -838,13 +844,13 @@ function showJobsHelp() {
         ></template
       ></el-dialog
     >
-    <el-dialog v-model="companyDialogOpen" :title="`${selectedCompany?.name ?? ''} · 公司统一回复资料`" width="620px" append-to-body>
-      <el-form label-position="top">
+    <el-dialog class="company-knowledge-dialog--fit" v-model="companyDialogOpen" :title="`${selectedCompany?.name ?? ''} · 公司统一回复资料`" width="620px" append-to-body>
+      <el-form class="company-knowledge-form" label-position="top">
         <div class="form-grid company-form-grid">
           <el-form-item label="所属行业" required><el-input v-model="companyForm.industry" maxlength="120" /></el-form-item>
           <el-form-item label="公司规模"><el-input v-model="companyForm.scale" maxlength="120" /></el-form-item>
         </div>
-        <el-form-item label="公司介绍" required><el-input v-model="companyForm.summary" type="textarea" :rows="5" maxlength="1000" show-word-limit /></el-form-item>
+        <el-form-item label="公司介绍" required><el-input v-model="companyForm.summary" type="textarea" :rows="3" maxlength="1000" show-word-limit /></el-form-item>
         <el-checkbox v-model="companyForm.approved">我已核对上述公开资料，确认可用于挂机回复</el-checkbox>
       </el-form>
       <template #footer><el-button @click="companyDialogOpen = false">取消</el-button><el-button type="primary" :loading="companySaving" @click="saveCompanyKnowledge">保存并生效</el-button></template>
@@ -854,6 +860,11 @@ function showJobsHelp() {
 
 <style scoped>
 .positions-workspace { overflow:hidden; container-type:inline-size; box-shadow:var(--shadow-raised); }
+.positions-page--viewport { width:min(100%,1480px); }
+.positions-workspace--viewport { min-height:0; }
+.positions-meta-grid { min-height:0; }
+.jobs-panel { min-height:0; }
+.jobs-table-scroll { min-height:0; }
 .jobs-title { display:grid; grid-template-columns:minmax(200px,1fr) minmax(0,1.15fr); align-items:center; }
 .filters { display:grid; grid-template-columns:minmax(0,1fr) 140px auto; gap:10px; min-width:0; }
 .filters :deep(.el-input),.filters :deep(.el-select) { width:100%; min-width:0; }
@@ -939,8 +950,53 @@ function showJobsHelp() {
 .review-dialog-header { display:flex; align-items:center; justify-content:space-between; gap:10px; }.review-confirmations { display:grid; gap:12px; background:var(--color-warning-bg); }
 .review-confirmations :deep(.el-checkbox) { height:auto; white-space:normal; margin:0; }.form-tip { margin-top:6px; font-size:12px; line-height:1.6; }.form-tip.warning,.reply-preview small { color:var(--warning); }.reply-preview p { line-height:1.7; }.dialog-alert { margin-bottom:18px; }
 .boss-section-title { font-size:16px; padding-bottom:12px; border-bottom:1px solid var(--border); margin:20px 0 16px; }
+/* Keep the two岗位资料 editing flows inside the visible desktop viewport. */
+:global(.review-dialog--fit) { margin-top:2vh!important; max-height:96vh; display:flex; flex-direction:column; }
+:global(.review-dialog--fit .el-dialog__body),:global(.company-knowledge-dialog--fit .el-dialog__body) { min-height:0; overflow-y:auto; }
+:global(.review-dialog--fit .el-dialog__body) { padding-top:10px; padding-bottom:10px; }
+:global(.review-dialog--fit .el-dialog__footer) { flex:0 0 auto; padding-top:10px; padding-bottom:12px; }
+:global(.review-dialog--fit .el-dialog__header) { flex:0 0 auto; padding-top:14px; padding-bottom:10px; }
+.job-review-form .boss-section-title { font-size:13px; padding-bottom:5px; margin:8px 0 6px; }
+.job-review-form :deep(.el-form-item) { margin-bottom:5px; }
+.job-review-form :deep(.el-form-item__label) { padding-bottom:2px; line-height:18px; }
+.job-review-form :deep(.el-input__wrapper) { min-height:30px; }
+.job-review-form :deep(.el-textarea__inner) { min-height:48px!important; line-height:1.45; }
+.job-review-grid { grid-template-columns:repeat(4,minmax(0,1fr)); gap:0 12px; }
+.review-wide-field { margin-bottom:6px!important; }
+.review-dialog-header { padding:8px 12px; margin-bottom:6px; }
+.review-confirmations { grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px 16px; padding:8px 12px; margin:8px 0 0; }
+.company-knowledge-form :deep(.el-form-item) { margin-bottom:10px; }
+.company-knowledge-form :deep(.el-form-item__label) { padding-bottom:3px; }
+:global(.company-knowledge-dialog--fit .el-dialog__body) { padding-top:12px; padding-bottom:10px; }
+@media(min-width:900px) and (min-height:760px) {
+  :global(.review-dialog--fit .el-dialog__body),:global(.company-knowledge-dialog--fit .el-dialog__body) { overflow:hidden; }
+}
 @container (max-width:1100px) { .jobs-table { display:none; }.job-cards { display:block; }.jobs-title { grid-template-columns:1fr; } }
+@media(min-width:900px) {
+  .positions-page--viewport { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; }
+  .positions-page--viewport > .async-state { flex:1 1 auto; min-height:0; }
+  .positions-page--viewport > .metrics-panel { flex:0 0 auto; margin-bottom:10px; }
+  .positions-workspace--viewport { flex:1 1 auto; display:grid; grid-template-rows:minmax(0,1fr); gap:10px; }
+  .positions-workspace--has-meta { grid-template-rows:minmax(120px,34%) minmax(0,1fr); }
+  .positions-meta-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr)); gap:10px; overflow:auto; overscroll-behavior:contain; }
+  .company-knowledge-panel,.review-queue { min-height:0; overflow:auto; overscroll-behavior:contain; }
+  .company-knowledge-list { padding:10px 14px 14px; }
+  .review-cards { padding:10px 14px; }
+  .jobs-panel { display:flex; flex-direction:column; overflow:hidden; }
+  .jobs-title { flex:0 0 auto; }
+  .jobs-table-scroll { flex:1 1 auto; overflow:auto; overscroll-behavior:contain; }
+  .jobs-table { min-height:100%; }
+  .jobs-panel > .job-cards { flex:1 1 auto; min-height:0; overflow:auto; overscroll-behavior:contain; }
+  .jobs-panel > .async-state { flex:1 1 auto; min-height:0; }
+}
+@media(max-width:899px) {
+  .positions-page--viewport { height:auto; min-height:100%; overflow:visible; }
+  .positions-workspace--viewport { display:block; }
+  .positions-meta-grid { display:grid; grid-template-columns:1fr; }
+  .jobs-table-scroll { overflow:visible; }
+}
 @media(max-width:760px) { .review-cards { grid-template-columns:1fr; padding:16px; }.company-knowledge-list { padding:16px; }.company-knowledge-list article { align-items:flex-start; flex-direction:column; }.form-grid,.company-form-grid,.boss-field-grid { grid-template-columns:1fr; }.filters { grid-template-columns:minmax(0,1fr) auto; }.filters > :first-child { grid-column:1/-1; }.review-cards footer { flex-wrap:wrap; }.captured-job-detail { padding:18px 16px; }.detail-heading { gap:10px; }.detail-hint { display:none; }.detail-grid { grid-template-columns:repeat(2,minmax(0,1fr)); margin-inline:8px; }.detail-item-wide { grid-column:1/-1; }.metrics-panel { display:flex; flex-wrap:wrap; gap:10px; padding:12px 14px; }.metrics-panel__left { flex-basis:100%; margin-bottom:2px; }.metrics-panel__items { order:3; flex-basis:100%; justify-content:flex-start; overflow-x:auto; scrollbar-width:thin; padding-bottom:2px; }.metrics-panel__right { order:2; margin-top:-30px; } }
+@media(max-width:760px) { .job-review-grid,.review-confirmations { grid-template-columns:1fr; } :global(.review-dialog--fit .el-dialog__body),:global(.company-knowledge-dialog--fit .el-dialog__body) { overflow-y:auto; } }
 @media(max-width:480px) { .job-cards article { padding:14px; }.job-cards dl { gap:8px; }.review-cards article { padding:14px; }.review-steps { gap:4px; }.review-steps span { font-size:10px; } }
 
 :global(:root[data-theme="dark"]) .company-knowledge-panel { background:linear-gradient(135deg, rgba(15,31,29,.88), rgba(30,36,51,.72)); }

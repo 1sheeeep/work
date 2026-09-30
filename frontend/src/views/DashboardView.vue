@@ -3,14 +3,14 @@ import PageHeader from '../components/PageHeader.vue'
 import AsyncState from '../components/AsyncState.vue'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowLeft, Calendar, ChatDotRound, Clock, Close, InfoFilled, Location, Refresh, Search } from '@element-plus/icons-vue'
+import { ArrowLeft, ChatDotRound, Clock, Close, InfoFilled, Location, Refresh, Search } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, apiErrorMessage, ensureCsrf } from '../services/api'
 import { useNotificationCenter } from '../composables/useNotificationCenter'
 import { replyIsActive, replyLifecycle, replyUiStatus } from '../utils/inboundReplyLifecycle'
 import type { AiDutyConversationTimeline, AiDutyEvent, AiDutyReviewRequired, AiReplyQualitySummary, AutoReplyPolicy, BrowserDevice, BrowserUnreadObservation, ConversationMessage } from '../types'
 
-const router = useRouter(); const notify = useNotificationCenter(); const loading = ref(true); const switching = ref(false); const loadError = ref('')
+const router = useRouter(); const notify = useNotificationCenter(); const loading = ref(true); const refreshing = ref(false); const hasLoaded = ref(false); const switching = ref(false); const loadError = ref('')
 const policies = ref<AutoReplyPolicy[]>([]); const devices = ref<BrowserDevice[]>([]); const observations = ref<BrowserUnreadObservation[]>([])
 const dutyReplies = ref<AiDutyEvent[]>([])
 const dutyReviewRequired = ref<AiDutyReviewRequired[]>([])
@@ -28,9 +28,12 @@ type DutySessionState = 'SUCCESS' | 'REVIEW' | 'PROCESSING' | 'UNREAD'
 interface DutySession {
   observationId: string
   anonymousKey: string
+  candidateName?: string | null
   accountName: string
   jobTitle: string
   latestAt: string
+  messageDigest?: string | null
+  messageAt?: string | null
   unread: boolean
   unreadCount: number
   state: DutySessionState
@@ -198,9 +201,21 @@ const attentionTotal = computed(() => attentionUnconfirmed.value + attentionRevi
 const dutySessionSearch = ref('')
 const dutySessionFilter = ref<DutySessionFilter>('ALL')
 const dutyJobFilter = ref('')
+const hasDutyFilters = computed(() => Boolean(dutyJobFilter.value || dutySessionSearch.value.trim() || dutySessionFilter.value !== 'ALL'))
+const dutyFilterSummary = computed(() => {
+  const labels: string[] = []
+  if (dutySessionFilter.value !== 'ALL') labels.push(`状态：${dutyFilterOptions.find(([key]) => key === dutySessionFilter.value)?.[1] || '已筛选'}`)
+  if (dutyJobFilter.value) labels.push(`岗位：${dutyJobFilter.value}`)
+  if (dutySessionSearch.value.trim()) labels.push(`搜索：${dutySessionSearch.value.trim()}`)
+  return labels.join(' · ')
+})
 const selectedDutySessionId = ref<string | null>(null)
-const dutyContextOpen = ref(true)
+const dutySessionPage = ref(0)
+const dutySessionPageSize = 4
+const dutyContextOpen = ref(typeof window === 'undefined' || window.innerWidth > 1200)
 const mobileDutyDetailOpen = ref(false)
+const timelineDialogOpen = ref(false)
+const timelinePreviewLimit = 5
 const dutySessionSearchInput = ref<HTMLInputElement | null>(null)
 const dutyTimelineCache = ref<Record<string, AiDutyConversationTimeline>>({})
 const dutyTimelineLoading = ref<string | null>(null)
@@ -299,9 +314,13 @@ const dutySessions = computed<DutySession[]>(() => {
     const safeObservationId = String(observationId || 'unknown')
     const observation = observationsById.get(observationId)
     const current = grouped.get(observationId)
-    if (current) return current
+    if (current) {
+      if (base.candidateName && !current.candidateName) current.candidateName = base.candidateName
+      return current
+    }
     const created: DutySession = {
       observationId: safeObservationId, anonymousKey: base.anonymousKey || observation?.anonymousKey || `会话 ${safeObservationId.slice(0, 8)}`,
+      candidateName: base.candidateName || observation?.candidateName,
       accountName: base.accountName || observation?.accountName || '招聘账号',
       jobTitle: base.jobTitle || observation?.observedJobTitle || '未识别岗位',
       latestAt: base.latestAt || observation?.latestMessageAt || observation?.lastSeenAt || observation?.firstSeenAt || new Date().toISOString(),
@@ -314,56 +333,75 @@ const dutySessions = computed<DutySession[]>(() => {
     return created
   }
   for (const event of dutyReplies.value) {
-    const session = ensure(event.observationId, { anonymousKey: event.anonymousKey, accountName: event.accountName, jobTitle: event.jobTitle })
+    const session = ensure(event.observationId, { anonymousKey: event.anonymousKey, candidateName: event.candidateName, accountName: event.accountName, jobTitle: event.jobTitle })
     if (!session.event || dutyTimestamp(dutyEventTime(event)) >= dutyTimestamp(dutyEventTime(session.event))) {
       session.event = event; session.latestAt = dutyEventTime(event) || session.latestAt; session.state = sessionState(event, session.review, session.observation)
-      session.category = event.category; session.messageText = event.messageText; session.replyContent = event.replyContent; session.detail = event.detail; session.attemptCount = event.attemptCount
+      session.category = event.category; session.messageText = event.messageText; session.messageDigest = event.messageDigest; session.messageAt = event.messageAt; session.replyContent = event.replyContent; session.detail = event.detail; session.attemptCount = event.attemptCount
     }
   }
   for (const review of dutyReviewRequired.value) {
-    const session = ensure(review.observationId, { anonymousKey: review.anonymousKey, accountName: review.accountName, jobTitle: review.jobTitle, latestAt: review.decidedAt })
+    const session = ensure(review.observationId, { anonymousKey: review.anonymousKey, candidateName: review.candidateName, accountName: review.accountName, jobTitle: review.jobTitle, latestAt: review.decidedAt })
     session.review = review
+    session.candidateName = review.candidateName || session.candidateName
     session.resumeReceived = Boolean(review.resumeReceived || session.resumeReceived)
     if (!session.event || dutyTimestamp(review.decidedAt) >= dutyTimestamp(session.latestAt)) {
       session.latestAt = review.decidedAt; session.state = sessionState(session.event, review, session.observation); session.category = review.category
-      session.messageText = review.incomingMessage || session.messageText; session.detail = review.reason; session.attemptCount = session.attemptCount || 1
+      session.messageText = review.incomingMessage || session.messageText; session.messageDigest = review.messageDigest; session.messageAt = review.messageAt; session.detail = review.reason; session.attemptCount = session.attemptCount || 1
     }
   }
   for (const observation of observations.value) {
     if (!observation.unread && observation.latestDirection !== 'INBOUND') continue
     // lastSeenAt changes on every scan, even when the actual message is days old.
     if (!isInDutyDateRange(observation.latestMessageAt)) continue
-    ensure(observation.id, { state: sessionState(undefined, undefined, observation) })
+    ensure(observation.id, { candidateName: observation.candidateName, state: sessionState(undefined, undefined, observation) })
   }
   const query = dutySessionSearch.value.trim().toLowerCase()
   return [...grouped.values()]
     .filter(matchesDutyFilter)
     .filter(session => !dutyJobFilter.value || session.jobTitle === dutyJobFilter.value)
-    .filter(session => !query || [session.anonymousKey, session.accountName, session.jobTitle, session.messageText].some(value => value?.toLowerCase().includes(query)))
+    .filter(session => !query || [session.candidateName, session.anonymousKey, session.accountName, session.jobTitle, session.messageText].some(value => value?.toLowerCase().includes(query)))
     .sort((a, b) => dutyTimestamp(b.latestAt) - dutyTimestamp(a.latestAt))
 })
 
 const selectedDutySession = computed(() => dutySessions.value.find(item => item.observationId === selectedDutySessionId.value) || dutySessions.value[0] || null)
-type DutyTimelineRow = { id: string; kind: 'candidate' | 'ai' | 'status'; label: string; content: string; at?: string; tone?: string; deliveryStatus?: string }
+function dutySessionName(session: Pick<DutySession, 'candidateName'>): string {
+  const name = session.candidateName?.trim()
+  if (!name) return '姓名未同步'
+  return /^(?:匿名候选人|候选人|未识别姓名)$/u.test(name) ? '姓名未同步' : name
+}
+function hasDutySessionName(session: Pick<DutySession, 'candidateName'>): boolean {
+  return dutySessionName(session) !== '姓名未同步' && dutySessionName(session) !== '已匿名候选人'
+}
+const selectedTimelineRefreshKey = computed(() => {
+  const session = selectedDutySession.value
+  if (!session) return ''
+  return JSON.stringify([
+    session.observationId, session.latestAt, session.event?.id, session.event?.taskStatus, session.event?.messageDigest, session.event?.messageAt,
+    session.event?.sendStatus, session.event?.dispositionCode, session.messageText,
+    session.replyContent, session.detail, session.review?.reason, session.review?.messageDigest, session.review?.messageAt,
+  ])
+})
+const dutySessionPageCount = computed(() => Math.max(1, Math.ceil(dutySessions.value.length / dutySessionPageSize)))
+const visibleDutySessions = computed(() => dutySessions.value.slice(dutySessionPage.value * dutySessionPageSize, (dutySessionPage.value + 1) * dutySessionPageSize))
+type DutyTimelineRow = { id: string; externalMessageId?: string; kind: 'candidate' | 'ai' | 'status'; label: string; content: string; at?: string; tone?: string; deliveryStatus?: string }
 
 function timelineMessageRow(sessionId: string, message: ConversationMessage): DutyTimelineRow {
   const candidate = message.direction === 'INBOUND' || message.senderType === 'CANDIDATE'
   const label = message.senderType === 'AI' ? 'AI 回复' : message.senderType === 'HR' ? 'HR' : message.senderType === 'SYSTEM' ? '系统' : '候选人'
   const at = message.senderType === 'AI' && message.deliveryStatus === 'SENT'
     ? message.approvedAt || message.createdAt : message.createdAt
-  return { id: `${sessionId}-${message.id}`, kind: candidate ? 'candidate' : message.senderType === 'SYSTEM' ? 'status' : 'ai', label, content: cleanConversationDisplayText(message.content), at, deliveryStatus: message.deliveryStatus }
+  return { id: `${sessionId}-${message.id}`, externalMessageId: message.externalMessageId, kind: candidate ? 'candidate' : message.senderType === 'SYSTEM' ? 'status' : 'ai', label, content: cleanConversationDisplayText(message.content), at, deliveryStatus: message.deliveryStatus }
 }
 
 function cleanConversationDisplayText(value?: string) {
   return String(value || '').replace(/(?:^|[\s|｜·•])(?:已?送达|已读|未读|发送中|发送失败|发送成功)(?=$|[\s|｜·•])/g, ' ').replace(/\s{2,}/g, ' ').trim()
 }
 
-/** 前端最后一道展示幂等保护：历史导入可能因摘要变化产生重复气泡。 */
+/** 仅按稳定消息身份去重；相同文案可能是候选人后来再次发送的真实消息。 */
 function deduplicateDutyTimelineRows(rows: DutyTimelineRow[]): DutyTimelineRow[] {
   const seen = new Set<string>()
   return rows.filter(row => {
-    const minute = row.at && Number.isFinite(Date.parse(row.at)) ? Math.floor(Date.parse(row.at) / 60_000) : 'unknown'
-    const key = `${row.kind}|${minute}|${cleanConversationDisplayText(row.content)}`
+    const key = row.externalMessageId || `${row.kind}|${row.id}`
     if (seen.has(key)) return false
     seen.add(key)
     return true
@@ -377,21 +415,32 @@ const selectedDutyTimeline = computed<DutyTimelineRow[]>(() => {
   const rows: DutyTimelineRow[] = imported?.available
     ? imported.messages.map(message => timelineMessageRow(session.observationId, message))
     : []
-  const contains = (kind: DutyTimelineRow['kind'], content: string, at?: string) => rows.some(row => {
-    if (row.kind !== kind || row.content.trim() !== cleanConversationDisplayText(content)) return false
-    const left = at ? Date.parse(at) : Number.NaN
-    const right = row.at ? Date.parse(row.at) : Number.NaN
-    return !Number.isFinite(left) || !Number.isFinite(right) || Math.abs(left - right) <= 120_000
-  })
-  const candidateAt = session.event?.createdAt || session.review?.decidedAt
-  if (session.messageText && !contains('candidate', session.messageText, candidateAt)) {
-    rows.push({ id: `${session.observationId}-candidate-${session.event?.id || 'latest'}`, kind: 'candidate', label: '候选人', content: cleanConversationDisplayText(session.messageText), at: candidateAt })
+  const contains = (kind: DutyTimelineRow['kind'], content: string, externalMessageId?: string, at?: string) => {
+    if (externalMessageId) {
+      if (rows.some(row => row.externalMessageId === externalMessageId)) return true
+      // 已导入完整 BOSS 记录时，AI 的成功发送行可能已被对应的真实外发消息取代；
+      // 仅对这类 AI 回执保留短时间文本匹配，候选人消息始终按摘要 ID 精确匹配。
+      if (kind !== 'ai') return false
+    }
+    return rows.some(row => {
+      if (row.kind !== kind || row.content.trim() !== cleanConversationDisplayText(content)) return false
+      const left = at ? Date.parse(at) : Number.NaN
+      const right = row.at ? Date.parse(row.at) : Number.NaN
+      return Number.isFinite(left) && Number.isFinite(right) && Math.abs(left - right) <= 120_000
+    })
+  }
+  const candidateAt = session.messageAt || undefined
+  const candidateMessageId = session.messageDigest ? `boss:${session.messageDigest}` : undefined
+  const candidateFallbackIsAmbiguous = Boolean(imported?.available && !candidateMessageId && !candidateAt)
+  if (session.messageText && !candidateFallbackIsAmbiguous && !contains('candidate', session.messageText, candidateMessageId, candidateAt)) {
+    rows.push({ id: `${session.observationId}-candidate-${session.event?.id || session.review?.id || 'latest'}`, externalMessageId: candidateMessageId, kind: 'candidate', label: '候选人', content: cleanConversationDisplayText(session.messageText), at: candidateAt })
   }
   const replyAt = session.event?.sendCompletedAt || session.event?.completedAt || session.event?.updatedAt
-  if (session.replyContent && !contains('ai', session.replyContent, replyAt)) {
+  const replyMessageId = session.event?.id ? `ai-task:${session.event.id}` : undefined
+  if (session.replyContent && !contains('ai', session.replyContent, replyMessageId, replyAt)) {
     const deliveryStatus = replyUiStatus(session.event) === 'SUCCESS' ? 'SENT'
       : replyUiStatus(session.event) === 'FAILED' ? 'FAILED' : 'PENDING_REVIEW'
-    rows.push({ id: `${session.observationId}-ai-${session.event?.id || 'latest'}`, kind: 'ai', label: 'AI 回复', content: cleanConversationDisplayText(session.replyContent), at: replyAt, deliveryStatus })
+    rows.push({ id: `${session.observationId}-ai-${session.event?.id || 'latest'}`, externalMessageId: replyMessageId, kind: 'ai', label: 'AI 回复', content: cleanConversationDisplayText(session.replyContent), at: replyAt, deliveryStatus })
   }
   if (session.detail && !session.replyContent) rows.push({ id: `${session.observationId}-status`, kind: 'status', label: sessionStateLabel(session.state), content: session.detail, at: session.latestAt, tone: sessionStateTone(session.state) })
   return deduplicateDutyTimelineRows(rows.sort((left, right) => {
@@ -400,14 +449,22 @@ const selectedDutyTimeline = computed<DutyTimelineRow[]>(() => {
     return leftAt - rightAt
   }))
 })
+const visibleDutyTimeline = computed(() => selectedDutyTimeline.value.slice(-timelinePreviewLimit))
 function startsTimelineDay(rows: DutyTimelineRow[], index: number): boolean {
   const day = dutyTimelineDay(rows[index]?.at)
   return Boolean(day && (index === 0 || day !== dutyTimelineDay(rows[index - 1]?.at)))
 }
 
 watch(dutySessions, (sessions) => {
-  if (!sessions.some(item => item.observationId === selectedDutySessionId.value)) selectedDutySessionId.value = sessions[0]?.observationId || null
+  const selectedIndex = sessions.findIndex(item => item.observationId === selectedDutySessionId.value)
+  if (selectedIndex < 0) {
+    selectedDutySessionId.value = sessions[0]?.observationId || null
+    dutySessionPage.value = 0
+  } else {
+    dutySessionPage.value = Math.floor(selectedIndex / dutySessionPageSize)
+  }
 }, { immediate: true })
+watch([dutySessionSearch, dutySessionFilter, dutyJobFilter], () => { dutySessionPage.value = 0 })
 
 async function loadDutyTimeline(observationId: string, refresh = false) {
   if (!observationId || (!refresh && dutyTimelineCache.value[observationId]) || dutyTimelineLoading.value === observationId) return
@@ -428,15 +485,32 @@ async function loadDutyTimeline(observationId: string, refresh = false) {
   }
 }
 
-watch(selectedDutySessionId, (observationId) => {
-  if (observationId) void loadDutyTimeline(observationId)
+let lastTimelineObservationId: string | null = null
+watch(selectedTimelineRefreshKey, () => {
+  const observationId = selectedDutySession.value?.observationId
+  timelineDialogOpen.value = false
+  if (!observationId) return
+  const refresh = lastTimelineObservationId === observationId
+  lastTimelineObservationId = observationId
+  void loadDutyTimeline(observationId, refresh)
 }, { immediate: true })
 
-function selectDutySession(session: DutySession) { selectedDutySessionId.value = session.observationId; dutyContextOpen.value = true; mobileDutyDetailOpen.value = true }
+function selectDutySession(session: DutySession) {
+  const index = dutySessions.value.findIndex(item => item.observationId === session.observationId)
+  if (index >= 0) dutySessionPage.value = Math.floor(index / dutySessionPageSize)
+  selectedDutySessionId.value = session.observationId
+  dutyContextOpen.value = true
+  mobileDutyDetailOpen.value = true
+}
 function timelineDeliveryLabel(status?: string) { return status === 'PENDING_REVIEW' ? '待发送确认' : status === 'FAILED' ? '发送失败' : status === 'REJECTED' ? '已拒绝' : '' }
-function filterDutyByJob(jobTitle: string) { dutyJobFilter.value = jobTitle; dutySessionSearch.value = ''; dutySessionFilter.value = 'ALL' }
-function clearDutyFilters() { dutySessionSearch.value = ''; dutyJobFilter.value = ''; dutySessionFilter.value = 'ALL' }
+function filterDutyByJob(jobTitle: string) { dutySessionPage.value = 0; dutyJobFilter.value = jobTitle; dutySessionSearch.value = ''; dutySessionFilter.value = 'ALL' }
+function clearDutyFilters() { dutySessionPage.value = 0; dutySessionSearch.value = ''; dutyJobFilter.value = ''; dutySessionFilter.value = 'ALL' }
 function showAllDutySessions() { clearDutyFilters(); void nextTick(() => dutySessionSearchInput.value?.focus()) }
+function changeDutySessionPage(nextPage: number) { dutySessionPage.value = Math.max(0, Math.min(dutySessionPageCount.value - 1, nextPage)) }
+function refreshSelectedTimeline() {
+  const observationId = selectedDutySession.value?.observationId
+  if (observationId) void loadDutyTimeline(observationId, true)
+}
 function handleDutySessionKeydown(event: KeyboardEvent) {
   if (event.key === '/' && document.activeElement !== dutySessionSearchInput.value) { event.preventDefault(); dutySessionSearchInput.value?.focus(); return }
   if (event.key === 'Escape') { dutyContextOpen.value = false; mobileDutyDetailOpen.value = false; return }
@@ -454,7 +528,6 @@ function revealUnconfirmedSends() {
 
 function revealReviewRequired() {
   dutySessionFilter.value = 'REVIEW'
-  void nextTick(() => document.querySelector('.duty-chat-workspace')?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
 }
 
 // 类别分布：把模型的原始细分类别归并为人可读的语义组，组内以词云呈现（字号表达量级）
@@ -496,7 +569,12 @@ const outcomeRows = computed(() => {
 
 async function load(silent = false){
   const requestId = ++loadRequestId
-  if (!silent) { loading.value = true; loadError.value = '' }
+  const initialLoad = !hasLoaded.value
+  if (!silent) {
+    loadError.value = ''
+    if (initialLoad) loading.value = true
+    else refreshing.value = true
+  }
   const previousReviewIds = new Set(dutyReviewRequired.value.map(x => x.id))
   const requestLabels = ['值守策略', '桥接设备', '未读会话', 'AI 处理记录', '待 HR 复核', '回复质量']
   try {
@@ -521,21 +599,29 @@ async function load(silent = false){
       partialRefreshWarning.value = failedLabels.length === results.length
         ? '全部数据刷新失败，请重试；未更新的数据可能仍是上次结果'
         : `${failedLabels.join('、')}刷新失败，请重试；未更新的数据不会视为本次结果`
-      if (failedLabels.length === results.length && !lastRefreshed.value && !silent) loadError.value = '今日值守数据加载失败，请检查网络后重试'
+      if (failedLabels.length === results.length && initialLoad) loadError.value = '今日值守数据加载失败，请检查网络后重试'
+      else if (failedLabels.length !== results.length) hasLoaded.value = true
     } else {
       partialRefreshWarning.value = ''
       lastRefreshed.value = new Date()
+      hasLoaded.value = true
     }
     const newManualReviews = dutyReviewRequired.value.filter(x => !previousReviewIds.has(x.id))
     for (const item of newManualReviews) {
       notify.addNotification('MANUAL_REVIEW_REQUIRED', 'AI 已读未回复', `${item.jobTitle} · ${item.accountName}`, '/dashboard', item.id)
     }
     if (newManualReviews.length) liveMessage.value = `${newManualReviews.length} 条会话需要 HR 手动处理`
-    if (selectedDutySessionId.value) void loadDutyTimeline(selectedDutySessionId.value, true)
   } catch (e) {
-    if (!silent && requestId === loadRequestId) { loadError.value = apiErrorMessage(e, '值守状态加载失败') }
+    if (requestId === loadRequestId) {
+      const message = apiErrorMessage(e, '值守状态刷新失败')
+      if (initialLoad) loadError.value = message
+      else partialRefreshWarning.value = message
+    }
   } finally {
-    if (!silent && requestId === loadRequestId) { loading.value = false }
+    if (requestId === loadRequestId) {
+      loading.value = false
+      refreshing.value = false
+    }
   }
 }
 
@@ -618,9 +704,30 @@ onMounted(() => { load(); startPolling(); noticeTimer = setTimeout(() => { notic
 onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer); noticeTimer = null } })
 </script>
 <template>
-  <div class="page-shell duty-page duty-page--talent">
-    <PageHeader>
-      <div></div>
+  <div class="page-shell duty-page duty-page--talent duty-page--viewport">
+    <PageHeader class="duty-page-header">
+      <div class="duty-page-heading">
+        <h1>今日值守</h1>
+        <p>先处理候选人新消息，再核对 AI 回复与待人工事项。</p>
+      </div>
+      <div class="duty-page-actions">
+        <el-date-picker
+          v-model="dutyDateRange"
+          class="duty-history-filter__picker"
+          type="daterange"
+          format="YYYY/MM/DD"
+          range-separator="至"
+          start-placeholder="开始日期"
+          end-placeholder="结束日期"
+          :clearable="false"
+          :disabled-date="disableFutureDutyDate"
+          :shortcuts="dutyDateShortcuts"
+          unlink-panels
+          aria-label="选择值守记录日期范围"
+          @change="applyDutyDateRange"
+        />
+        <el-button size="small" :icon="Refresh" :loading="refreshing" @click="load()">刷新</el-button>
+      </div>
     </PageHeader>
 
     <AsyncState v-if="loading" state="loading" :rows="8" aria-label="正在加载今日值守" />
@@ -656,7 +763,8 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
         <div class="dashboard-bar__right">
           <span v-if="partialRefreshWarning" class="refresh-warning" role="status" :title="partialRefreshWarning">
             <el-icon :size="13"><InfoFilled /></el-icon>
-            部分刷新失败
+            刷新未完整
+            <button type="button" class="refresh-warning__retry" :disabled="refreshing" :aria-label="`${partialRefreshWarning}，点击重试`" @click="load()">重试</button>
           </span>
           <span class="refresh-indicator" :class="{ 'refresh-indicator--stale': refreshIsStale }" :title="lastRefreshed ? `上次完整刷新：${lastRefreshed.toLocaleString()}` : partialRefreshWarning">
             <el-icon :key="`refresh-${refreshTick}`" class="refresh-indicator__icon" :size="13"><Refresh /></el-icon>
@@ -736,35 +844,13 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
         </button>
       </div>
 
-      <div class="duty-history-filter" role="group" aria-label="筛选值守记录日期">
-        <div class="duty-history-filter__label">
-          <span class="duty-history-filter__icon"><el-icon><Calendar /></el-icon></span>
-          <span><strong>记录日期</strong><small>同时筛选成功回复与待 HR 复核</small></span>
-        </div>
-        <el-date-picker
-          v-model="dutyDateRange"
-          class="duty-history-filter__picker"
-          type="daterange"
-          format="YYYY/MM/DD"
-          range-separator="至"
-          start-placeholder="开始日期"
-          end-placeholder="结束日期"
-          :clearable="false"
-          :disabled-date="disableFutureDutyDate"
-          :shortcuts="dutyDateShortcuts"
-          unlink-panels
-          aria-label="选择值守记录日期范围"
-          @change="applyDutyDateRange"
-        />
-      </div>
-
       <section class="duty-chat-workspace duty-chat-workspace--timeline card-panel" aria-label="BOSS 会话工作区">
         <aside class="duty-chat-list" @keydown="handleDutySessionKeydown">
           <header class="duty-chat-list__header">
             <div>
               <span class="duty-chat-list__eyebrow">最近处理 · {{ dutyDateRangeLabel }}</span>
               <h2>BOSS 会话</h2>
-              <p>AI 值守回顾 · 已读未回复待 HR 复核 · {{ dutySessions.length }} 条近期处理记录</p>
+              <p>AI 值守回顾 · 已读未回复待 HR 复核 · {{ dutySessions.length }} 条匹配记录</p>
             </div>
             <div class="duty-chat-list__header-actions">
               <span class="duty-chat-list__count">{{ successfulDutyReplies.length }} 已回复</span>
@@ -779,15 +865,19 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
           <div class="duty-chat-filters" role="tablist" aria-label="会话筛选">
             <button v-for="filter in dutyFilterOptions" :key="filter[0]" type="button" role="tab" :aria-selected="dutySessionFilter === filter[0]" :class="{ active: dutySessionFilter === filter[0] }" @click="dutySessionFilter = filter[0]">{{ filter[1] }}</button>
           </div>
-          <div v-if="dutyJobFilter || dutySessionSearch || dutySessionFilter !== 'ALL'" class="duty-chat-list__filter-state">
-            <span>{{ dutyJobFilter ? `岗位：${dutyJobFilter}` : '已应用筛选' }}</span>
-            <button type="button" @click="clearDutyFilters">清除</button>
+          <el-select v-model="dutySessionFilter" class="duty-chat-filter-select" size="small" aria-label="会话筛选">
+            <el-option v-for="filter in dutyFilterOptions" :key="filter[0]" :value="filter[0]" :label="filter[1]" />
+          </el-select>
+          <div v-if="hasDutyFilters" class="duty-chat-list__filter-state" aria-live="polite">
+            <span :title="dutyFilterSummary">{{ dutyFilterSummary }}</span>
+            <b>{{ dutySessions.length }} 条</b>
+            <button type="button" aria-label="清除会话筛选条件" @click="clearDutyFilters">清除</button>
           </div>
           <TransitionGroup v-if="dutySessions.length" name="duty-session" tag="div" class="duty-chat-list__items">
-            <button v-for="session in dutySessions" :key="session.observationId" type="button" class="duty-chat-session" :class="{ selected: selectedDutySession?.observationId === session.observationId }" @click="selectDutySession(session)">
+            <button v-for="session in visibleDutySessions" :key="session.observationId" type="button" class="duty-chat-session" :class="{ selected: selectedDutySession?.observationId === session.observationId }" :aria-label="`${dutySessionName(session)}，${session.jobTitle}，${dutyOutcomeLabel(session)}`" @click="selectDutySession(session)">
               <span class="duty-chat-session__dot" :class="`is-${dutyOutcomeTone(session)}`"></span>
               <span class="duty-chat-session__body">
-                <span class="duty-chat-session__top"><strong>{{ session.anonymousKey }}</strong><time :datetime="session.latestAt">{{ dutyTimelineDay(session.latestAt) === dutyTimelineDay(new Date().toISOString()) ? dutyTimeLabel(session.latestAt) : `${dutyTimelineDay(session.latestAt).slice(5)} ${dutyTimeLabel(session.latestAt)}` }}</time></span>
+                <span class="duty-chat-session__top"><strong :title="hasDutySessionName(session) ? session.candidateName || '' : `姓名暂不可用 · 会话 ${session.anonymousKey}`">{{ dutySessionName(session) }}<small v-if="!hasDutySessionName(session)"> · {{ session.anonymousKey.slice(0, 6) }}</small></strong><time :datetime="session.latestAt">{{ dutyTimelineDay(session.latestAt) === dutyTimelineDay(new Date().toISOString()) ? dutyTimeLabel(session.latestAt) : `${dutyTimelineDay(session.latestAt).slice(5)} ${dutyTimeLabel(session.latestAt)}` }}</time></span>
                 <span class="duty-chat-session__context" :title="`${session.jobTitle} · ${session.accountName}`">{{ session.jobTitle }} · {{ session.accountName }}</span>
                 <span class="duty-chat-session__preview" :title="cleanConversationDisplayText(session.messageText) || cleanConversationDisplayText(session.replyContent) || session.detail || '等待新的会话消息'">{{ cleanConversationDisplayText(session.messageText) || cleanConversationDisplayText(session.replyContent) || session.detail || '等待新的会话消息' }}</span>
                 <span class="duty-chat-session__state" :class="`is-${dutyOutcomeTone(session)}`">{{ dutyOutcomeLabel(session) }}</span>
@@ -797,7 +887,15 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
           </TransitionGroup>
           <AsyncState v-else state="empty" embedded title="暂无会话" message="当前日期和筛选条件下没有可展示的值守记录。">
             <template #icon><el-icon><ChatDotRound /></el-icon></template>
+            <el-button v-if="hasDutyFilters" size="small" type="primary" plain @click="clearDutyFilters">清除筛选条件</el-button>
           </AsyncState>
+          <footer class="duty-chat-list__pagination" aria-label="会话分页">
+            <span>{{ dutySessions.length ? `${dutySessionPage + 1} / ${dutySessionPageCount} 页 · ${dutySessions.length} 条` : '0 条会话' }}</span>
+            <div>
+              <button type="button" :disabled="dutySessionPage <= 0" aria-label="上一页会话" @click="changeDutySessionPage(dutySessionPage - 1)">上一页</button>
+              <button type="button" :disabled="dutySessionPage >= dutySessionPageCount - 1" aria-label="下一页会话" @click="changeDutySessionPage(dutySessionPage + 1)">下一页</button>
+            </div>
+          </footer>
         </aside>
 
         <section class="duty-chat-thread" :class="{ 'duty-chat-thread--mobile-open': mobileDutyDetailOpen }" aria-live="polite">
@@ -805,22 +903,29 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
             <button type="button" class="duty-chat-mobile-back" aria-label="返回会话列表" @click="mobileDutyDetailOpen = false"><el-icon><ArrowLeft /></el-icon></button>
             <div v-if="selectedDutySession" class="duty-chat-thread__title">
               <span class="duty-chat-thread__eyebrow">值守时间轴</span>
-              <h2>{{ selectedDutySession.anonymousKey }}</h2>
-              <p>{{ selectedDutySession.jobTitle }} · {{ selectedDutySession.accountName }}</p>
+              <h2 :title="hasDutySessionName(selectedDutySession) ? selectedDutySession.candidateName || '' : `会话 ${selectedDutySession.anonymousKey}`">{{ dutySessionName(selectedDutySession) }}</h2>
+              <p>{{ selectedDutySession.jobTitle }} · {{ selectedDutySession.accountName }}<small v-if="!hasDutySessionName(selectedDutySession)"> · {{ selectedDutySession.anonymousKey }}</small></p>
             </div>
             <button v-if="selectedDutySession" type="button" class="duty-chat-context-toggle" :aria-expanded="dutyContextOpen" @click="dutyContextOpen = !dutyContextOpen"><el-icon><InfoFilled /></el-icon><span>详情</span></button>
             <span v-if="selectedDutySession" class="duty-chat-status" :class="`duty-chat-status--${dutyOutcomeTone(selectedDutySession)}`">{{ dutyOutcomeLabel(selectedDutySession) }}</span>
           </header>
           <Transition name="duty-thread" mode="out-in">
             <div v-if="selectedDutySession" :key="selectedDutySession.observationId" class="duty-chat-thread__body">
-              <p class="duty-chat-thread__notice">
-                <span v-if="dutyTimelineLoading === selectedDutySession.observationId">正在加载已导入的完整沟通时间线…</span>
-                <span v-else-if="dutyTimelineErrors[selectedDutySession.observationId]">{{ dutyTimelineErrors[selectedDutySession.observationId] }}，当前保留值守处理片段。</span>
-                <span v-else>按 BOSS 会话消息时间排列；尚未同步的值守处理结果会补充在相应位置。</span>
-              </p>
-              <div v-if="selectedDutyTimeline.length" class="duty-chat-timeline">
-                <template v-for="(row, index) in selectedDutyTimeline" :key="row.id">
-                  <div v-if="startsTimelineDay(selectedDutyTimeline, index)" class="duty-chat-timeline__date" role="separator" :aria-label="dutyTimelineDayLabel(row.at)">
+              <div class="duty-chat-thread__notice-row">
+                <p class="duty-chat-thread__notice">
+                  <span v-if="dutyTimelineLoading === selectedDutySession.observationId">正在加载已导入的完整沟通时间线…</span>
+                  <span v-else-if="dutyTimelineErrors[selectedDutySession.observationId]">{{ dutyTimelineErrors[selectedDutySession.observationId] }}，当前保留值守处理片段。</span>
+                  <span v-else-if="selectedDutyTimeline.length > timelinePreviewLimit">显示最近 {{ timelinePreviewLimit }} 条，共 {{ selectedDutyTimeline.length }} 条。</span>
+                  <span v-else>按 BOSS 会话消息时间排列；尚未同步的值守处理结果会补充在相应位置。</span>
+                </p>
+                <div class="duty-chat-thread__notice-actions">
+                  <button type="button" class="duty-chat-thread__history" :disabled="dutyTimelineLoading === selectedDutySession.observationId" @click="refreshSelectedTimeline">刷新时间线</button>
+                  <button v-if="selectedDutyTimeline.length > timelinePreviewLimit" type="button" class="duty-chat-thread__history" @click="timelineDialogOpen = true">查看完整时间线</button>
+                </div>
+              </div>
+              <div v-if="visibleDutyTimeline.length" class="duty-chat-timeline">
+                <template v-for="(row, index) in visibleDutyTimeline" :key="row.id">
+                  <div v-if="startsTimelineDay(visibleDutyTimeline, index)" class="duty-chat-timeline__date" role="separator" :aria-label="dutyTimelineDayLabel(row.at)">
                     <time :datetime="dutyTimelineDay(row.at)">{{ dutyTimelineDayLabel(row.at) }}</time>
                   </div>
                   <article class="duty-chat-bubble" :class="[`duty-chat-bubble--${row.kind}`, { 'duty-chat-bubble--latest': index === selectedDutyTimeline.length - 1, 'duty-chat-bubble--pending': row.deliveryStatus === 'PENDING_REVIEW', 'duty-chat-bubble--failed': row.deliveryStatus === 'FAILED' }]" :style="{ '--timeline-index': index }" :aria-label="`${row.label}消息`">
@@ -845,7 +950,7 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
         <Transition name="duty-context" mode="out-in">
         <aside v-if="selectedDutySession" :key="selectedDutySession.observationId" class="duty-chat-context" :class="{ 'duty-chat-context--closed': !dutyContextOpen }">
           <template v-if="selectedDutySession">
-            <header class="duty-chat-context__header"><div><span class="duty-chat-context__eyebrow">处理详情</span><h2>会话上下文</h2></div><span>{{ selectedDutySession.anonymousKey }}</span><button type="button" class="duty-chat-context__close" aria-label="关闭会话详情" @click="dutyContextOpen = false"><el-icon :size="14"><Close /></el-icon></button></header>
+            <header class="duty-chat-context__header"><div><span class="duty-chat-context__eyebrow">处理详情</span><h2>{{ dutySessionName(selectedDutySession) }}</h2></div><span v-if="!hasDutySessionName(selectedDutySession)" :title="`会话 ${selectedDutySession.anonymousKey}`">{{ selectedDutySession.anonymousKey.slice(0, 6) }}</span><button type="button" class="duty-chat-context__close" aria-label="关闭会话详情" @click="dutyContextOpen = false"><el-icon :size="14"><Close /></el-icon></button></header>
             <dl class="duty-chat-facts">
               <div><dt>岗位</dt><dd><button type="button" class="duty-chat-context__job" @click="filterDutyByJob(selectedDutySession.jobTitle)">{{ selectedDutySession.jobTitle }}</button></dd></div>
               <div><dt>招聘账号</dt><dd>{{ selectedDutySession.accountName }}</dd></div>
@@ -867,6 +972,25 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
         <aside v-else key="empty-context" class="duty-chat-context duty-chat-context__empty">选中会话后显示岗位与处理上下文。</aside>
         </Transition>
       </section>
+
+      <el-dialog
+        v-model="timelineDialogOpen"
+        :title="selectedDutySession ? `${dutySessionName(selectedDutySession)} · 完整时间线` : '完整时间线'"
+        width="min(920px, calc(100vw - 32px))"
+        append-to-body
+        destroy-on-close
+        class="duty-timeline-dialog"
+      >
+        <div v-if="selectedDutyTimeline.length" class="duty-timeline-dialog__list">
+          <article v-for="row in selectedDutyTimeline" :key="row.id" class="duty-timeline-dialog__row" :class="`duty-timeline-dialog__row--${row.kind}`">
+            <time v-if="row.at" :datetime="row.at">{{ new Date(row.at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) }}</time>
+            <span>{{ row.kind === 'candidate' ? '候选人' : row.kind === 'status' ? '处理记录' : 'HR 回复' }}</span>
+            <p>{{ row.content }}</p>
+            <small v-if="timelineDeliveryLabel(row.deliveryStatus)">{{ timelineDeliveryLabel(row.deliveryStatus) }}</small>
+          </article>
+        </div>
+        <AsyncState v-else state="empty" embedded title="暂无消息片段" message="该会话暂未同步可展示的正文，将保留处理状态。" />
+      </el-dialog>
 
       <!-- ── 屏幕阅读器实时播报 ── -->
       <div aria-live="polite" aria-atomic="true" class="sr-only">{{ liveMessage }}</div>
@@ -1081,6 +1205,9 @@ onUnmounted(() => { stopPolling(); if (noticeTimer) { clearTimeout(noticeTimer);
 .dashboard-bar--active .refresh-indicator { color: rgba(255,255,255,.5); }
 .refresh-warning { display: inline-flex; align-items: center; gap: 5px; color: var(--warning); font-size: 11px; font-weight: 600; white-space: nowrap; }
 .dashboard-bar--active .refresh-warning { color: rgba(255,230,170,.9); }
+.refresh-warning__retry { padding: 0 2px; border: 0; border-bottom: 1px solid currentColor; background: transparent; color: inherit; font: inherit; font-size: inherit; cursor: pointer; }
+.refresh-warning__retry:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; border-radius: 2px; }
+.refresh-warning__retry:disabled { cursor: wait; opacity: .65; }
 .refresh-indicator__icon { animation: refresh-spin 380ms cubic-bezier(.16,1,.3,1), refreshPulse 600ms ease-in 380ms; }
 @keyframes refresh-spin { from { transform: rotate(-35deg); } to { transform: rotate(0deg); } }
 @keyframes refreshPulse { 0% { opacity: 1; } 40% { opacity: .4; } 100% { opacity: 1; } }
@@ -1461,7 +1588,7 @@ h2 { margin: 0; font-size: 16px; }
 .duty-chat-list,
 .duty-chat-thread,
 .duty-chat-context { min-width: 0; min-height: 0; background: var(--surface); }
-.duty-chat-list { display: flex; min-height: 0; flex-direction: column; overflow: hidden; border-right: 1px solid var(--border-subtle); background: color-mix(in srgb, var(--surface) 88%, var(--surface-teal)); backdrop-filter: blur(8px) saturate(1.08); -webkit-backdrop-filter: blur(8px) saturate(1.08); }
+.duty-chat-list { display: flex; min-height: 0; flex-direction: column; overflow: hidden; border-right: 1px solid var(--border-subtle); background: color-mix(in srgb, var(--surface) 88%, var(--surface-teal)); backdrop-filter: blur(8px) saturate(1.08); -webkit-backdrop-filter: blur(8px) saturate(1.08); container: duty-list / inline-size; }
 .duty-chat-thread { display: flex; min-height: 0; flex-direction: column; overflow: hidden; border-right: 1px solid var(--border-subtle); }
 .duty-chat-context { min-height: 0; overflow-y: auto; transition: opacity 180ms cubic-bezier(.16,1,.3,1), transform 180ms cubic-bezier(.16,1,.3,1); }
 .duty-chat-list__header,
@@ -1495,12 +1622,15 @@ h2 { margin: 0; font-size: 16px; }
 .duty-chat-search button:hover { background: var(--surface-row); color: var(--text-primary); }
 .duty-chat-filters { display: flex; gap: 5px; padding: 0 12px 10px; overflow-x: auto; scrollbar-width: none; }
 .duty-chat-filters::-webkit-scrollbar { display: none; }
+.duty-chat-filter-select { display:none; width:auto; margin:0 8px 5px; }
+.duty-chat-filter-select:focus-visible { outline:2px solid var(--border-focus); outline-offset:2px; border-radius:8px; }
 .duty-chat-filters button { min-height: 28px; padding: 4px 10px; border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--text-secondary); font-size: 11px; cursor: pointer; transition: background var(--transition-fast), color var(--transition-fast), transform 180ms cubic-bezier(.16,1,.3,1), box-shadow 180ms cubic-bezier(.16,1,.3,1); }
 .duty-chat-filters button:hover { background: var(--surface-row); }
 .duty-chat-filters button:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
 .duty-chat-filters button.active { background: var(--surface-teal); color: var(--primary); font-weight: 700; box-shadow: 0 1px 4px color-mix(in srgb, var(--brand-600) 12%, transparent), inset 0 1px 0 rgba(255,255,255,.42); }
 .duty-chat-list__filter-state { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: -2px 12px 8px; padding: 5px 8px; border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--surface-soft); color: var(--text-secondary); font-size: 10px; }
 .duty-chat-list__filter-state span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.duty-chat-list__filter-state b { flex: 0 0 auto; color: var(--text-primary); font-size: 10px; font-variant-numeric: tabular-nums; }
 .duty-chat-list__filter-state button { flex: 0 0 auto; padding: 0; border: 0; background: transparent; color: var(--primary); font: inherit; cursor: pointer; }
 .duty-chat-list__filter-state button:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; border-radius: 3px; }
 .duty-chat-list__items { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--border-subtle) transparent; }
@@ -1530,6 +1660,7 @@ h2 { margin: 0; font-size: 16px; }
 .duty-chat-session__body { display: grid; min-width: 0; flex: 1; gap: 4px; }
 .duty-chat-session__top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .duty-chat-session__top strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.duty-chat-session__top strong small { color: var(--text-tertiary); font-size: 9px; font-weight: 500; }
 .duty-chat-session__top time { flex: 0 0 auto; color: var(--text-tertiary); font-size: 10px; font-variant-numeric: tabular-nums; }
 .duty-chat-session__context,
 .duty-chat-session__preview { display: -webkit-box; overflow: hidden; color: var(--text-secondary); font-size: 11px; text-overflow: ellipsis; -webkit-box-orient: vertical; -webkit-line-clamp: 1; }
@@ -2452,4 +2583,152 @@ h2 { margin: 0; font-size: 16px; }
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 30%, transparent), var(--shadow-raised);
 }
 :global(:root[data-theme="dark"]) .duty-page--talent .duty-chat-thread__body { background: var(--surface); }
+
+/* Viewport-fit operating workspace: core actions stay visible without page scrolling. */
+.duty-page--viewport { display:flex; flex-direction:column; gap:8px; width:100%; max-width:1480px; height:100%; min-height:0; overflow:hidden; }
+.duty-page--viewport :deep(.duty-page-header) { flex:0 0 auto; min-height:42px; margin:0; padding:0 2px 2px; }
+.duty-page-heading { min-width:0; }
+.duty-page-heading h1 { margin:0; color:var(--text-primary); font-size:18px; font-weight:700; line-height:1.25; letter-spacing:-.02em; }
+.duty-page-heading p { margin:3px 0 0; color:var(--text-secondary); font-size:11px; line-height:1.35; }
+.duty-page-actions { display:flex; align-items:center; gap:8px; flex:0 0 auto; }
+.duty-page-actions .duty-history-filter__picker { width:248px !important; }
+.duty-page-actions :deep(.el-range-editor) { min-height:30px; border-radius:8px; box-shadow:0 0 0 1px var(--border-subtle) inset; }
+.duty-page-actions :deep(.el-range-input), .duty-page-actions :deep(.el-range-separator) { font-size:11px; }
+.duty-page-actions :deep(.el-button) { min-height:32px; }
+.duty-page--viewport .dashboard-bar { flex:0 0 auto; min-height:44px; margin:0; padding:6px 10px; border-radius:12px; box-shadow:var(--shadow-rest); animation:none; }
+.duty-page--viewport .dashboard-bar:hover { box-shadow:var(--shadow-rest); }
+.duty-page--viewport .dashboard-bar::before, .duty-page--viewport .dashboard-bar::after { display:none; }
+.duty-page--viewport .dashboard-bar--active { background:linear-gradient(110deg,var(--brand-800),var(--brand-900)); }
+.duty-page--viewport .dashboard-bar__left { gap:8px; }
+.duty-page--viewport .duty-badge { padding:4px 9px; font-size:11px; }
+.duty-page--viewport .duty-sub { font-size:10px; }
+.duty-page--viewport .dashboard-bar__metrics { justify-content:flex-start; gap:5px; }
+.duty-page--viewport .metric-pill { min-height:28px; padding:3px 9px; border-radius:8px; box-shadow:none; font-size:10px; }
+.duty-page--viewport .dashboard-bar__metrics .metric-pill { animation:none; }
+.duty-page--viewport .metric-pill:hover { transform:none; box-shadow:none; }
+.duty-page--viewport .metric-pill b { font-size:13px; }
+.duty-page--viewport .dashboard-bar__right { gap:8px; }
+.duty-page--viewport .refresh-indicator, .duty-page--viewport .refresh-warning { font-size:10px; }
+.duty-page--viewport .refresh-indicator__icon { animation:none; }
+.duty-page--viewport .quality-strip { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:5px 12px; flex:0 0 auto; margin:0; padding:7px 10px; border-top-width:1px; border-radius:12px; box-shadow:var(--shadow-rest); animation:none; }
+.duty-page--viewport .quality-strip__head { grid-column:1; grid-row:1; gap:6px; white-space:nowrap; }
+.duty-page--viewport .quality-strip__head h2 { font-size:11px; }
+.duty-page--viewport .quality-strip__period, .duty-page--viewport .quality-strip__shadow { font-size:10px; }
+.duty-page--viewport .quality-metrics { grid-column:2; grid-row:1; flex-wrap:nowrap; gap:4px; min-width:0; }
+.duty-page--viewport .quality-metric { min-height:24px; gap:4px; padding:2px 7px; border-radius:7px; box-shadow:none; font-size:10px; white-space:nowrap; }
+.duty-page--viewport .quality-metric b { font-size:13px; }
+.duty-page--viewport .quality-funnel, .duty-page--viewport .quality-strip__empty { grid-column:1 / 3; grid-row:2; }
+.duty-page--viewport .quality-funnel__track { height:4px; padding:0; border:0; }
+.duty-page--viewport .quality-funnel__seg { animation:none; }
+.duty-page--viewport .quality-strip__empty { font-size:10px; }
+.duty-page--viewport .quality-strip__foot { grid-column:3; grid-row:1 / span 2; justify-content:flex-end; flex-wrap:nowrap; gap:5px; }
+.duty-page--viewport .quality-strip__attention, .duty-page--viewport .quality-strip__clear { font-size:10px; white-space:nowrap; }
+.duty-page--viewport .quality-strip__action { min-height:24px; padding:2px 7px; font-size:10px; white-space:nowrap; }
+.duty-page--viewport .quality-strip__detail { grid-column:1 / -1; margin:0; }
+.duty-page--viewport .quality-strip__detail-toggle { padding:2px 0; font-size:10px; }
+.duty-page--viewport .notice-bar { flex:0 0 auto; min-height:26px; margin:0; padding:4px 9px; border-radius:8px; font-size:10px; }
+.duty-page--viewport .duty-chat-workspace { flex:1 1 auto; width:100%; height:auto; min-height:0; max-height:none; margin:0; grid-template-columns:minmax(220px,24%) minmax(0,1fr) minmax(220px,24%); border-radius:12px; box-shadow:var(--shadow-rest); animation:none; }
+.duty-page--viewport .duty-chat-workspace::before { display:none; }
+.duty-page--viewport .duty-chat-list, .duty-page--viewport .duty-chat-thread, .duty-page--viewport .duty-chat-context { min-height:0; }
+.duty-page--viewport .duty-chat-list__header, .duty-page--viewport .duty-chat-thread__header, .duty-page--viewport .duty-chat-context__header { min-height:48px; padding:8px 11px; gap:8px; }
+.duty-page--viewport .duty-chat-list__eyebrow, .duty-page--viewport .duty-chat-thread__eyebrow, .duty-page--viewport .duty-chat-context__eyebrow { margin-bottom:2px; font-size:9px; }
+.duty-page--viewport .duty-chat-list__header h2, .duty-page--viewport .duty-chat-thread__header h2, .duty-page--viewport .duty-chat-context__header h2 { font-size:13px; }
+.duty-page--viewport .duty-chat-list__header p, .duty-page--viewport .duty-chat-thread__header p { margin-top:2px; font-size:10px; }
+.duty-page--viewport .duty-chat-list__count { padding:3px 6px; font-size:10px; }
+.duty-page--viewport .duty-chat-list__all { font-size:10px; white-space:nowrap; }
+.duty-page--viewport .duty-chat-search { height:30px; margin:7px 9px 5px; padding-inline:8px; }
+.duty-page--viewport .duty-chat-filters { gap:2px; padding:0 8px 5px; }
+.duty-page--viewport .duty-chat-filters button { min-height:24px; padding:3px 7px; font-size:10px; white-space:nowrap; }
+.duty-page--viewport .duty-chat-filter-select :deep(.el-select__wrapper) { min-height:26px; padding:2px 8px; border-radius:7px; font-size:10px; box-shadow:0 0 0 1px var(--border-subtle) inset; }
+.duty-page--viewport .duty-chat-filter-select :deep(.el-select__selected-item) { font-size:10px; }
+.duty-page--viewport .duty-chat-list__filter-state { margin:0 8px 5px; padding:3px 6px; font-size:9px; }
+.duty-page--viewport .duty-chat-list__items { display:flex; flex:1 1 auto; flex-direction:column; gap:3px; min-height:0; overflow:hidden; padding:4px 7px; }
+.duty-page--viewport .duty-chat-session { flex:1 1 0; min-height:0; margin:0; padding:6px 8px; border-radius:10px; border-left-width:2px; box-shadow:none; animation:none; }
+.duty-page--viewport .duty-chat-session:hover, .duty-page--viewport .duty-chat-session.selected { transform:none; box-shadow:var(--shadow-rest); }
+.duty-page--viewport .duty-chat-session__body { gap:1px; }
+.duty-page--viewport .duty-chat-session__top strong { font-size:11px; }
+.duty-page--viewport .duty-chat-session__top time, .duty-page--viewport .duty-chat-session__state { font-size:9px; }
+.duty-page--viewport .duty-chat-session__context, .duty-page--viewport .duty-chat-session__preview { font-size:10px; line-height:1.3; }
+.duty-page--viewport .duty-chat-session__unread { width:16px; min-width:16px; height:16px; font-size:9px; animation:none; }
+.duty-chat-list__pagination { display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:32px; padding:4px 9px; border-top:1px solid var(--border-subtle); color:var(--text-secondary); font-size:10px; font-variant-numeric:tabular-nums; }
+.duty-chat-list__pagination > div { display:flex; gap:4px; }
+.duty-chat-list__pagination button { min-height:24px; padding:2px 7px; border:1px solid var(--border-subtle); border-radius:6px; background:var(--surface); color:var(--text-primary); font:inherit; cursor:pointer; transition:background var(--transition-fast),border-color var(--transition-fast); }
+.duty-chat-list__pagination button:hover:not(:disabled) { border-color:var(--border-teal); background:var(--surface-teal); }
+.duty-chat-list__pagination button:focus-visible { outline:2px solid var(--border-focus); outline-offset:2px; }
+.duty-chat-list__pagination button:disabled { cursor:not-allowed; opacity:.45; }
+.duty-page--viewport .duty-chat-thread__body { padding:10px 12px; overflow:hidden; }
+.duty-chat-thread__notice-row { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:7px; }
+.duty-chat-thread__notice-actions { display:flex; flex:0 0 auto; align-items:center; gap:5px; }
+.duty-page--viewport .duty-chat-thread__notice { min-width:0; margin:0; font-size:10px; line-height:1.35; }
+.duty-chat-thread__history { flex:0 0 auto; padding:3px 7px; border:1px solid var(--border-teal); border-radius:7px; background:var(--surface-teal); color:var(--primary); font:inherit; font-size:10px; cursor:pointer; }
+.duty-chat-thread__history:hover { background:var(--brand-100); }
+.duty-chat-thread__history:focus-visible { outline:2px solid var(--border-focus); outline-offset:2px; }
+.duty-chat-thread__history:disabled { cursor:wait; opacity:.6; }
+.duty-page--viewport .duty-chat-timeline { gap:7px; padding:2px 3px 4px; }
+.duty-page--viewport .duty-chat-timeline__date { gap:8px; margin:2px 0; font-size:10px; }
+.duty-page--viewport .duty-chat-timeline__date time { padding:2px 7px; }
+.duty-page--viewport .duty-chat-bubble { max-width:88%; padding:8px 11px; border-radius:12px 12px 12px 4px; box-shadow:var(--shadow-rest); animation:none; }
+.duty-page--viewport .duty-chat-bubble:hover { transform:none; box-shadow:var(--shadow-rest); }
+.duty-page--viewport .duty-chat-bubble--ai { border-radius:12px 12px 4px 12px; }
+.duty-page--viewport .duty-chat-bubble p { font-size:12px; line-height:1.45; }
+.duty-page--viewport .duty-chat-bubble__time, .duty-page--viewport .duty-chat-bubble__delivery { margin-bottom:3px; font-size:9px; }
+.duty-page--viewport .duty-chat-context { overflow:auto; }
+.duty-page--viewport .duty-chat-context__header { align-items:center; }
+.duty-page--viewport .duty-chat-facts { padding:2px 11px 6px; }
+.duty-page--viewport .duty-chat-facts div { grid-template-columns:60px minmax(0,1fr); gap:8px; padding:7px 0; }
+.duty-page--viewport .duty-chat-facts dt { font-size:10px; }
+.duty-page--viewport .duty-chat-facts dd { font-size:11px; }
+.duty-page--viewport .duty-chat-context__section { margin:8px 10px; padding:9px; }
+.duty-page--viewport .duty-chat-context__section h3 { margin-bottom:4px; font-size:11px; }
+.duty-page--viewport .duty-chat-context__section p { font-size:10px; line-height:1.4; }
+.duty-page--viewport .duty-chat-context__actions { gap:5px; padding:5px 10px 10px; }
+.duty-page--viewport .duty-chat-action { min-height:32px; padding:6px 10px; border-radius:8px; font-size:10px; box-shadow:none; }
+.duty-page--viewport .duty-chat-action:hover, .duty-page--viewport .duty-chat-action--primary:hover { transform:none; box-shadow:var(--shadow-rest); }
+.duty-timeline-dialog__list { display:grid; gap:0; max-height:min(66vh,640px); overflow:auto; overscroll-behavior:contain; }
+.duty-timeline-dialog__row { display:grid; grid-template-columns:92px 72px minmax(0,1fr) auto; align-items:start; gap:12px; padding:12px 4px; border-bottom:1px solid var(--border-subtle); }
+.duty-timeline-dialog__row time, .duty-timeline-dialog__row > span, .duty-timeline-dialog__row small { color:var(--text-secondary); font-size:11px; }
+.duty-timeline-dialog__row > span { color:var(--primary); font-weight:600; }
+.duty-timeline-dialog__row p { margin:0; color:var(--text-primary); font-size:13px; line-height:1.55; white-space:pre-wrap; overflow-wrap:anywhere; }
+.duty-timeline-dialog__row small { text-align:right; }
+@media (max-width:1200px) {
+  .duty-page--viewport .duty-chat-workspace { grid-template-columns:minmax(210px,29%) minmax(0,1fr); }
+  .duty-page--viewport .duty-chat-context { position:absolute; z-index:6; inset:0 0 0 auto; width:min(320px,46%); border-left:1px solid var(--border-subtle); box-shadow:var(--shadow-floating); }
+  .duty-page--viewport .duty-chat-context--closed { display:none; }
+}
+@container duty-list (max-width:280px) {
+  .duty-chat-filters { display:none; }
+  .duty-chat-filter-select { display:block; }
+}
+@media (max-width:899px) {
+  .duty-page--viewport { height:auto; overflow:visible; }
+  .duty-page--viewport::before, .duty-page--viewport::after { inset:0; }
+  .duty-page--viewport .duty-chat-workspace { min-height:460px; height:460px; flex:none; }
+  .duty-page--viewport .duty-chat-list { height:100%; }
+  .duty-page--viewport .duty-chat-thread { height:100%; }
+}
+@media (max-width:768px) {
+  .duty-page--viewport :deep(.duty-page-header) { align-items:stretch; flex-direction:column; gap:8px; }
+  .duty-page-actions { flex-wrap:wrap; }
+  .duty-page-actions .duty-history-filter__picker { width:min(248px, calc(100vw - 48px)) !important; }
+  .duty-page--viewport .dashboard-bar { align-items:flex-start; flex-wrap:wrap; }
+  .duty-page--viewport .dashboard-bar__metrics { flex:1 0 100%; order:3; overflow-x:auto; }
+  .duty-page--viewport .quality-strip { grid-template-columns:minmax(0,1fr) auto; }
+  .duty-page--viewport .quality-strip__head { grid-column:1; grid-row:1; }
+  .duty-page--viewport .quality-metrics { grid-column:1 / -1; grid-row:2; flex-wrap:wrap; }
+  .duty-page--viewport .quality-strip__foot { grid-column:1 / -1; grid-row:3; justify-content:flex-start; flex-wrap:wrap; }
+  .duty-page--viewport .quality-funnel, .duty-page--viewport .quality-strip__empty { grid-column:1 / -1; grid-row:4; }
+  .duty-page--viewport .quality-strip__detail { grid-column:1 / -1; grid-row:5; }
+  .duty-page--viewport .duty-chat-workspace { display:block; height:460px; min-height:460px; }
+  .duty-page--viewport .duty-chat-list { height:100%; min-height:0; border-right:0; }
+  .duty-page--viewport .duty-chat-thread { display:none; height:100%; min-height:0; border-right:0; }
+  .duty-page--viewport .duty-chat-thread--mobile-open { display:flex; }
+  .duty-page--viewport .duty-chat-context { width:min(340px,88%); }
+  .duty-page--viewport .duty-chat-bubble { max-width:92%; }
+  .duty-timeline-dialog__row { grid-template-columns:72px minmax(0,1fr); gap:5px 10px; }
+  .duty-timeline-dialog__row p { grid-column:1 / -1; }
+  .duty-timeline-dialog__row small { grid-column:2; text-align:left; }
+}
+@media (prefers-reduced-motion:reduce) {
+  .duty-page--viewport .dashboard-bar, .duty-page--viewport .quality-strip, .duty-page--viewport .duty-chat-workspace, .duty-page--viewport .duty-chat-session, .duty-page--viewport .duty-chat-bubble { animation:none; transition:none; }
+}
 </style>

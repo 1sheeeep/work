@@ -34,6 +34,7 @@ import java.util.UUID;
  void storeExtractedText(String text){extractedText=text == null ? null : text; updatedAt=Instant.now();}
  void clearExtractedText(){extractedText=null;updatedAt=Instant.now();}
  public byte[] getSourcePdf(){return sourcePdf == null ? null : sourcePdf.clone();}
+ boolean hasSourcePdf(){return sourcePdf != null && sourcePdf.length > 0;}
  public String getExtractedText(){return extractedText;}
  boolean retryDocumentProcessing(String reason,Instant now){if(processingAttempts>=MAX_DOCUMENT_PROCESSING_ATTEMPTS){processingFailed("RESUME_PROCESSING_RETRY_EXHAUSTED",reason,now);return false;}processingStatus="RETRY_WAIT";processingLastError=bounded(reason);processingNextAttemptAt=now.plusSeconds(Math.min(MAX_DOCUMENT_PROCESSING_RETRY_DELAY_SECONDS,10L*(1L<<Math.max(0,processingAttempts-1))));processingLeaseUntil=null;failureCode=null;failureReason=null;updatedAt=now;return true;}
  void recoverDocumentProcessingLease(Instant now){if("PROCESSING".equals(processingStatus)&&processingLeaseUntil!=null&&!processingLeaseUntil.isAfter(now)){processingStatus="QUEUED";processingNextAttemptAt=now;processingLeaseUntil=null;updatedAt=now;}}
@@ -47,7 +48,7 @@ import java.util.UUID;
   analysisFailureReason=analyzed.analysisFailureReason;analysisCompletedAt=analyzed.analysisCompletedAt;
   updatedAt=Instant.now();
  }
- void queueAnalysis(Instant now){if("SUCCEEDED".equals(analysisQueueStatus)||"PROCESSING".equals(analysisQueueStatus))return;if("FAILED".equals(analysisQueueStatus)||"NONE".equals(analysisQueueStatus))analysisQueueAttempts=0;analysisQueueStatus="QUEUED";analysisQueueNextAttemptAt=now;analysisQueueQueuedAt=now;analysisQueueLeaseUntil=null;analysisQueueLastError=null;updatedAt=now;}
+ void queueAnalysis(Instant now){if("SUCCEEDED".equals(analysisStatus)||"SUCCEEDED".equals(analysisQueueStatus)||"PROCESSING".equals(analysisQueueStatus))return;if("FAILED".equals(analysisQueueStatus)||"NONE".equals(analysisQueueStatus))analysisQueueAttempts=0;analysisQueueStatus="QUEUED";analysisQueueNextAttemptAt=now;analysisQueueQueuedAt=now;analysisQueueLeaseUntil=null;analysisQueueLastError=null;updatedAt=now;}
  boolean claimAnalysis(Instant now){if(analysisQueueAttempts>=MAX_ANALYSIS_ATTEMPTS){failAnalysisQueue("AI 分析重试次数已达上限",now);return false;}analysisQueueStatus="PROCESSING";analysisQueueAttempts++;analysisQueueLeaseUntil=now.plusSeconds(180);analysisQueueNextAttemptAt=null;updatedAt=now;return true;}
  void deferAnalysisForReplyPriority(Instant now){analysisQueueStatus="QUEUED";analysisQueueAttempts=Math.max(0,analysisQueueAttempts-1);analysisQueueNextAttemptAt=now.plusSeconds(5);analysisQueueLeaseUntil=null;updatedAt=now;}
  void completeAnalysisQueue(Instant now){analysisQueueStatus="SUCCEEDED";analysisQueueLeaseUntil=null;analysisQueueNextAttemptAt=null;analysisQueueLastError=null;updatedAt=now;}

@@ -15,7 +15,8 @@ final class ResumeCandidateName {
             "(?:姓\\s*名|候选人\\s*姓\\s*名|真\\s*实\\s*姓\\s*名)\\s*[:：]\\s*([\\p{IsHan}·]{2,20})");
     private static final Pattern LABELED_ENGLISH_NAME = Pattern.compile(
             "(?i)(?:name|candidate\\s*name)\\s*[:：]\\s*([A-Za-z][A-Za-z .'-]{1,80})");
-    private static final Pattern HAN_NAME = Pattern.compile("[\\p{IsHan}·]{2,4}");
+    private static final Pattern HAN_NAME = Pattern.compile("[\\p{IsHan}·]{2,20}");
+    private static final Pattern SHORT_HAN_NAME = Pattern.compile("[\\p{IsHan}·]{2,4}");
     private static final Pattern ENGLISH_NAME = Pattern.compile("[A-Za-z][A-Za-z .'-]{1,80}");
     private static final Set<String> FIELD_TOKENS = Set.of(
             "姓", "名", "姓名", "候选人", "候选人姓名", "真实", "真实姓名",
@@ -53,7 +54,7 @@ final class ResumeCandidateName {
                 }
                 continue;
             }
-            if (nameLabelSeen && fieldScore >= 1 && HAN_NAME.matcher(token).matches()
+            if (nameLabelSeen && fieldScore >= 1 && SHORT_HAN_NAME.matcher(token).matches()
                     && !NON_NAME_VALUES.contains(token)) {
                 return cleanDisplayName(token);
             }
@@ -63,7 +64,7 @@ final class ResumeCandidateName {
         String[] lines = text.replace('\u0000', ' ').replace('\r', '\n').split("\\n");
         for (int i = 0; i < Math.min(lines.length, 20); i++) {
             String line = lines[i].replaceAll("[\\t ]+", " ").trim();
-            if (HAN_NAME.matcher(line).matches() && !NON_NAME_VALUES.contains(line)
+            if (SHORT_HAN_NAME.matcher(line).matches() && !NON_NAME_VALUES.contains(line)
                     && !FIELD_TOKENS.contains(line)) return cleanDisplayName(line);
         }
         return null;

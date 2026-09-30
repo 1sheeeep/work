@@ -24,4 +24,12 @@ class ResumeCandidateNameTest {
         assertThat(ResumeCandidateName.verified("张三", "基本信息 李四")).isNull();
         assertThat(ResumeCandidateName.verified("匿名候选人 c87c1ca2", "匿名候选人 c87c1ca2")).isNull();
     }
+
+    @Test
+    void recognizesAndVerifiesLongChineseNamesWhenTheResumeLabelsTheField() {
+        String text = "姓名：甲乙丙丁戊\n电话：13800000000";
+
+        assertThat(ResumeCandidateName.recognize(text)).isEqualTo("甲乙丙丁戊");
+        assertThat(ResumeCandidateName.verified("甲乙丙丁戊", text)).isEqualTo("甲乙丙丁戊");
+    }
 }

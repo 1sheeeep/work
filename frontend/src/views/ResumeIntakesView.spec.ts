@@ -36,6 +36,29 @@ describe('ResumeIntakesView', () => {
     vi.mocked(api.put).mockReset()
   })
 
+  it('prefers a newly recognized talent name over a stale anonymous detail cache', async () => {
+    vi.mocked(api.get).mockImplementation(async (url: string) => {
+      if (url === '/resume-intakes') return { data: [{ ...baseIntake, id: 'intake-anonymous', candidateName: '匿名候选人 c914f60a' }] }
+      if (url === '/candidate-contacts') return { data: [{ id: 'contact-1', candidateId: 'candidate-1' }] }
+      if (url === '/ai-configuration/status') return { data: { ready: true, model: 'qwen-plus' } }
+      if (url === '/organization/companies') return { data: [] }
+      if (url === '/talent-candidates/page?page=0&pageSize=100') return { data: {
+        items: [{ candidateId: 'candidate-1', displayName: '林嘉明' }], page: 0, pageSize: 100, total: 1,
+        counts: { total: 1, withResume: 1, analyzed: 0, processing: 0, failed: 0 },
+      } }
+      if (url === '/talent-candidates/candidate-1') return { data: {
+        candidate: { displayName: '匿名候选人 c914f60a' }, contacts: [], resumes: [], analyses: [], timeline: [],
+      } }
+      return { data: [] }
+    })
+
+    const wrapper = mount(ResumeIntakesView)
+    await flushPromises()
+
+    expect(wrapper.get('.resume-ticket .ticket-person strong').text()).toBe('林嘉明')
+    wrapper.unmount()
+  })
+
   it('lets HR drag a BOSS resume into the analysis workspace without submitting it', async () => {
     vi.mocked(api.get)
       .mockResolvedValueOnce({ data: [
@@ -149,6 +172,37 @@ describe('ResumeIntakesView', () => {
     expect(wrapper.text()).toContain('已关联简历')
     expect(wrapper.text()).toContain('候选人已提供附件简历')
     expect(wrapper.text()).toContain('技能摘要：Java、Spring')
+  })
+
+  it('shows queue counts and explains when the selected resume is outside the active filter', async () => {
+    vi.mocked(api.get).mockImplementation(async (url: string) => {
+      if (url === '/resume-intakes') return { data: [
+        { ...baseIntake, id: 'intake-pending', candidateName: '候选人甲', jobTitle: '运营专员', status: 'PENDING_REVIEW' },
+        { ...baseIntake, id: 'intake-failed', candidateName: '候选人乙', jobTitle: '剪辑', processingStatus: 'FAILED', analysisStatus: 'FAILED' },
+      ] }
+      if (url === '/candidate-contacts') return { data: [] }
+      if (url === '/ai-configuration/status') return { data: { ready: true, model: 'qwen-plus' } }
+      if (url === '/organization/companies') return { data: [] }
+      if (url === '/talent-candidates/page?page=0&pageSize=100') return { data: { items: [], page: 0, pageSize: 100, total: 0, counts: { total: 0, withResume: 0, analyzed: 0, processing: 0, failed: 0 } } }
+      if (url === '/resume-intakes/intake-failed/analysis-runs') return { data: [] }
+      return { data: [] }
+    })
+
+    const wrapper = mount(ResumeIntakesView)
+    await flushPromises()
+
+    expect(wrapper.get('.queue-filter-pills').text()).toContain('待处理 1')
+    expect(wrapper.get('.queue-filter-pills').text()).toContain('需关注 1')
+    await wrapper.get('.filter-pill--red').trigger('click')
+    expect(wrapper.findAll('.resume-ticket')).toHaveLength(1)
+    expect(wrapper.get('.queue-selection-note').text()).toContain('仍在查看「候选人甲」')
+    await wrapper.get('.queue-selection-note button').trigger('click')
+    expect(wrapper.find('.queue-selection-note').exists()).toBe(false)
+
+    await wrapper.get('input[placeholder="搜索姓名或岗位"]').setValue('没有这个人')
+    expect(wrapper.get('.resume-queue').text()).toContain('没有匹配的简历')
+    await wrapper.get('.resume-queue button').trigger('click')
+    expect(wrapper.findAll('.resume-ticket')).toHaveLength(2)
   })
 
   it('scans duplicate candidates and requests a final merge preview', async () => {

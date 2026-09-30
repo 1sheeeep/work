@@ -25,6 +25,7 @@ public class CandidateNameBackfillService {
     private final CandidateProfileRepository candidates;
     private final ResumeIntakeRepository intakes;
     private final AiAssistanceRunRepository runs;
+    private final ResumeDocumentProcessingQueueService documentQueue;
     private final ObjectMapper mapper;
     private final TransactionTemplate transactions;
     private final AtomicBoolean started = new AtomicBoolean();
@@ -35,11 +36,13 @@ public class CandidateNameBackfillService {
     public CandidateNameBackfillService(CandidateProfileRepository candidates,
                                         ResumeIntakeRepository intakes,
                                         AiAssistanceRunRepository runs,
+                                        ResumeDocumentProcessingQueueService documentQueue,
                                         ObjectMapper mapper,
                                         PlatformTransactionManager manager) {
         this.candidates = candidates;
         this.intakes = intakes;
         this.runs = runs;
+        this.documentQueue = documentQueue;
         this.mapper = mapper;
         this.transactions = new TransactionTemplate(manager);
     }
@@ -48,9 +51,10 @@ public class CandidateNameBackfillService {
     public void backfillOnce() {
         if (!enabled || !started.compareAndSet(false, true)) return;
         try {
-            Integer updated = transactions.execute(status -> backfill());
+            int[] result = transactions.execute(status -> backfill());
             System.getLogger(CandidateNameBackfillService.class.getName()).log(System.Logger.Level.INFO,
-                    "历史匿名候选人姓名安全回填完成，更新档案数=" + (updated == null ? 0 : updated));
+                    "历史匿名候选人姓名安全回填完成，更新档案数=" + (result == null ? 0 : result[0])
+                            + "，已排队重提取数=" + (result == null ? 0 : result[1]));
         } catch (RuntimeException exception) {
             // 回填不能阻断主服务启动；下次重启仍会再次幂等尝试。
             System.getLogger(CandidateNameBackfillService.class.getName()).log(System.Logger.Level.WARNING,
@@ -58,18 +62,36 @@ public class CandidateNameBackfillService {
         }
     }
 
-    int backfill() {
+    int[] backfill() {
         int updated = 0;
+        int requeued = 0;
         List<CandidateProfile> profiles = candidates.findAll(Sort.by(Sort.Direction.DESC, "updatedAt"));
         for (CandidateProfile candidate : profiles) {
             if (!shouldBackfill(candidate)) continue;
             String verified = findVerifiedName(candidate);
-            if (verified == null) continue;
-            candidate.updateRecognizedName(verified);
-            candidates.saveAndFlush(candidate);
-            updated++;
+            if (verified != null) {
+                candidate.updateRecognizedName(verified);
+                candidates.saveAndFlush(candidate);
+                updated++;
+                continue;
+            }
+            if (queueMissingTextForExtraction(candidate)) requeued++;
         }
-        return updated;
+        return new int[]{updated, requeued};
+    }
+
+    private boolean queueMissingTextForExtraction(CandidateProfile candidate) {
+        for (ResumeIntake intake : intakes.findByContact_Candidate_IdOrderByReceivedAtDesc(candidate.getId())) {
+            if (intake.getSource() != ResumeIntakeSource.BOSS_VISIBLE
+                    || !"READY_FOR_AI".equals(intake.getProcessingStatus())
+                    || (intake.getExtractedText() != null && !intake.getExtractedText().isBlank())
+                    || !intake.hasSourcePdf()) continue;
+            // Reuse the existing malware-scan/extraction queue. A succeeded AI result
+            // is not enqueued again by ResumeIntake.queueAnalysis().
+            documentQueue.enqueue(intake);
+            return true;
+        }
+        return false;
     }
 
     private boolean shouldBackfill(CandidateProfile candidate) {
